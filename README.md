@@ -4,8 +4,9 @@ A **Bloomberg-style operating system** for the securities finance business — u
 **Securities Lending, Prime Finance, Collateral Optimization, Cash Optimization,
 Cash Collateral Reinvestment, Liquidity & Funding Stress, Sources & Uses Matching,
 Treasury & Funding Analytics, Borrow-Demand / Squeeze Radar, Macro Regime Playbooks,
-Market News, Investor Sentiment, DataOps/Lineage, and AI-driven decision support**
-into a single dense, keyboard-driven, multi-monitor terminal — **43 modules** in all.
+Market News, Investor Sentiment, Prediction Markets, DataOps/Lineage, and AI-driven
+decision support** into a single dense, keyboard-driven, multi-monitor terminal —
+**45 modules** in all.
 
 Built to look and feel like the software that runs a multi-trillion-dollar book at
 State Street, Goldman Sachs, Morgan Stanley, J.P. Morgan, BNY Mellon, Citi, UBS, or
@@ -13,6 +14,13 @@ BlackRock.
 
 > **Design language:** black canvas (`#0A0A0A`), amber command accent (`#FF8C00`),
 > green / red P&L semantics, tabular numerics, minimal whitespace, real-time streaming feel.
+
+| | |
+|---|---|
+| ![Command Center](screenshots/home-dashboard.png) | ![Live Markets](screenshots/markets-overview.png) |
+| ![Macro Dashboard](screenshots/macro-dashboard.png) | ![Optimization Center](screenshots/optimization-center.png) |
+
+*30 full-resolution captures live in [`screenshots/`](screenshots/).*
 
 ---
 
@@ -41,6 +49,12 @@ BlackRock.
 | `MGC`  | **Macro Chart Studio** | Charting studio over the **104-series FRED catalog** — build/compare/transform any series (`/api/chart/series`) |
 | `MOTN` | **Macro Motion Studio** | Animated macro-series motion / racing-series visualizations over the FRED catalog |
 | `FUND` | **Funding & Liquidity** | The funding tape — overnight corridor (IORB/EFFR/OBFR/SOFR/BGCR/TGCR), liquidity balances (RRP/reserves/Fed B-S), T-bills, FX-basis, funding spreads (SOFR−EFFR, SOFR−IORB, GC−OIS, bill−OIS, FRA−OIS), and a 0–100 quarter-end **funding-stress gauge** |
+| `BMRK` | **Benchmark Rates** | 33-rate status board — trends, spreads, correlations, regime classification, and PDF export over the FRED → master JSON → snapshot → SIM fallback chain |
+| `BRA`  | **Rate Analysis Hub** | Unified economics workflow aggregating Benchmark Rates, Yield Curve Analytics, Rate Volatility, Funding Cost, and Utilization Analytics |
+| `YCURV` | **Yield Curve Analytics** | Daily curve construction, slope/curvature/butterfly history, curve regimes, and PDF export reusing the benchmark-rate series map |
+| `RVOL` | **Rate Volatility** | Realized-vol surface, vol regimes, vol-of-vol, and term-structure analytics over Treasury/rate histories |
+| `FCOST` | **Funding Cost Monitor** | Blended borrowing-cost monitor by counterparty tier with desk attribution — live benchmark inputs with modeled internal-book overlays |
+| `UTIL` | **Utilization Analytics** | Aggregate securities-lending utilization analytics, benchmark-rate overlays, custom rate blends, sensitivity, and PDF export |
 | `CURV` | **Treasury Curve Lab** | Multi-snapshot curve overlay (today vs 1M/3M/6M/1Y/2Y/pre-hiking/GFC), level/slope/curvature, point-in-time scrubber, **user-selectable spread** (10Y-2Y default + 10Y-3M, 30Y-5Y, 10Y-1Y, 5Y-2Y, 2Y-3M, 30Y-10Y), inversion → recession lead-time analysis, and term funding carry |
 | `INFL` | **Inflation Explorer** | CPI / Core CPI / PCE / Core PCE to item level — index reading, MoM %, YoY %, and ΔMoM/ΔYoY acceleration; contribution waterfall; CPI/PCE basket toggle; every item drills to 24m |
 | `GCPI` | **Global Inflation** | CPI YoY/MoM by country with trend-vs-prior, consecutive-print streaks, vs-target, heat map |
@@ -49,11 +63,13 @@ BlackRock.
 | `FOMC` | **Rate Probabilities** | CME-FedWatch meeting hike/cut odds computed by the **`macro_data_etl` FedProbabilityEngine** (Fed Funds futures → day-weighted FOMC probabilities), **Policy Path Evolution** overlay, implied path, FOMC dot plot, and policy-path transmission into REINV/CASH/COLL/OPT |
 | `CAL`  | **Economic Calendar** | Release stream (FRED release dates) with importance/category filters, beat/miss vs consensus, downstream desk sensitivity tags, and pre/post release factor-move summaries |
 | `STAT` | **Statistical Analysis** | **Live FRED, up to 20y** — adjustable lookback (5/10/20Y/Max), transform (levels/Δ/YoY), Granger lag, rolling window & series selection; correlation matrix, **Granger causality** (F-test), OLS regression, ADF stationarity, rolling correlation, ACF, distributions & moments, plus desk-ready study packs |
+| `EDA`  | **EDA / Lead-Lag Lab** | Exploratory lead-lag analytics from the `market_data_pipeline` gold `eda` view — cross-correlation (CCF) with best-lag detection, Granger causality, lagged OLS, and CUSUM/PELT change-point detection |
 | `REGIME` | **Macro Regime Playbook** | Macro regime scoring across growth, inflation, liquidity, credit, and policy factors; playbook actions for collateral, reinvestment, lending, optimization, and funding desks |
 | `EML`  | **ML Applications** | Recession probit (AUC 0.89), inflation nowcast, rate-path BVAR+LSTM, regime HMM, feature importances, model registry |
 | `SFE`  | **Sec-Finance Economics** | Differentiator — repo complex, rate sensitivities ("greeks for the book") with a Fed-cut scenario stepper, cash-collateral reinvestment ladder, macro factor links, P&L bridge, shared scenario library, and macro→business linkage |
 | `NEWS` | **News & Signal Intel** | Market news + social + signal engine — headline tape, narrative monitor, social intelligence, market-impact, attention heatmap, event clusters, and a signal engine. Live via a provider chain (Alpha Vantage → Marketaux → Finnhub → NewsAPI) + Reddit/StockTwits social, with optional FinBERT NLP |
 | `SENT` | **Investor Sentiment** | Survey + social fear/greed & positioning — AAII bull/bear, NAAIM exposure, an explainable 0–100 Sentiment Index, contrarian signals + historical analogs, survey-vs-social divergence, and a per-ticker drill cross-linked to `SQZ`. VIX component live via FRED |
+| `POLY` | **Prediction Markets** | Polymarket boards — markets, events, movers, and category views with probability sparklines and volume analytics. Live via the public **Polymarket Gamma API** (`/api/polymarket/markets·events·history`), deterministic SIM fallback |
 | `AI`   | **AI Copilot** | Built-in "Bloomberg GPT" — natural-language Q&A over every dataset, with narratives, tables, charts, and recommended actions |
 | `DATAOPS` | **Data Ops** | Provider health, data lineage, SLA/quality scores, freshness monitoring, fallback status, and scaling hooks for FRED, Yahoo, `macro_data_etl`, `news_nlp`, and future licensed feeds |
 | `ALRT` | **Alert Center** | Streaming risk & ops alerts with severity/category filters and a rules engine |
@@ -165,6 +181,8 @@ analytics/model modules are computed layers. Honest per-module status:
 | Liquidity & Funding Stress | 🔴 Sim / local model | — | stress ladder and signal console designed for FRED/Yahoo/local-book inputs |
 | Global Policy Rates | 🟡 Partial live | 🟡 Live (most) | FRED OECD/ECB central-bank-rate series where available |
 | Rate Probabilities | 🔵 ETL (FedWatch) | — | `macro_data_etl` gold `fed_probabilities`; live CME with network, else deterministic fallback curve |
+| EDA / Lead-Lag Lab | 🔵 Pipeline snapshot | — | `market_data_pipeline` gold `eda` view (committed under `src/data/market/eda.json`), refreshable via the pipeline's analytics stage |
+| Prediction Markets | 🟡 Live (Gamma API) | 🟡 Live history | public Polymarket Gamma API, no key needed; per-route fallback to deterministic SIM when unreachable |
 | Data Ops | 🟡 Ops metadata | — | local provider health/lineage snapshot designed for `market_data_pipeline` manifests and quality tables |
 | ML Applications | 🔴 Sim / model | — | model outputs, not a feed |
 
@@ -179,9 +197,33 @@ The **FRED units correction** (`resolveFred`) maps each series to the right tran
 > FRED does not send CORS headers, so it is only ever called server-side from the route
 > handlers — the key is never exposed to the browser.
 
+**Worst-source aggregation.** Panels that blend multiple series report the **worst
+(lowest-tier) source** among their inputs (`worstSource` in `src/lib/provenance.ts`,
+tiered FRED/LIVE → DB → FILE → ETL → SNAPSHOT → ECON → SIM) — so a card never shows a
+green LIVE badge while quietly mixing in simulated series. The contract is enforced by
+unit tests (`src/lib/provenance.test.ts`, `src/tests/badge-coverage.test.ts`,
+`src/tests/snapshot-staleness.test.ts`).
+
 ### Ongoing integration log
 
 Use this section as the running handoff log whenever a feature moves from planning into the integrated terminal. Keep each entry dated, list the module codes affected, and update the module count / provenance table above at the same time.
+
+#### 2026-07-02 — Prediction markets, EDA lab, module toggles, test suite & CI
+
+- Added **Prediction Markets (`POLY`)** — Polymarket market/event/mover/category boards served
+  live from the public **Gamma API** via `/api/polymarket/{markets,events,history}` with a
+  deterministic SIM fallback (see `docs/POLYMARKET_INTEGRATION_HANDOFF.md`).
+- Added the **EDA / Lead-Lag Lab (`EDA`)** at `/economics/eda` — CCF/Granger/lagged-OLS/
+  change-point analytics rendered from the `market_data_pipeline` gold `eda` view.
+- Added **module toggles**: `settings/modules.config.json` + `src/lib/moduleConfig.ts` let you
+  enable/disable any of the 45 modules — disabled modules disappear from navigation and routing.
+- Hardened **data provenance**: `worstSource` badge aggregation, provenance badges on the
+  DataOps and Market Lens pages, staleness markers, and provenance/source-resolution unit tests.
+- Added the **test suite & CI**: Vitest unit tests, a **Playwright E2E smoke suite**
+  (`test/smoke.spec.ts` — 44 pages checked for JS errors, headers, and `undefined`/`NaN`
+  leaks), and `.github/workflows/ci.yml` running typecheck → lint → unit tests → build → E2E
+  on every push/PR. Plan and status live in `TESTING_HANDOFF.md`.
+- Added a **`screenshots/` gallery** — 30 full-resolution module captures for docs/marketing.
 
 #### 2026-06-25 — Benchmark-rate analysis suite integrated
 
@@ -212,13 +254,15 @@ fixtures today, can use free **FRED** and **Yahoo Finance/yfinance** style input
 can later scale to licensed feeds, internal books, optimizer outputs, and the
 `market_data_pipeline` quality/lineage tables without changing the terminal UX.
 
-**Since then** the terminal has grown to **43 modules**, adding the charting studios
+**Since then** the terminal has grown to **45 modules**, adding the charting studios
 (`MGC`/`MOTN`/`LENS`/`MKC`), **Funding & Liquidity (`FUND`)** and **Squeeze Radar
-(`SQZ`)**, and the **News (`NEWS`)** + **Investor Sentiment (`SENT`)** intelligence
-layer, plus the benchmark-rate analysis suite (`BMRK`/`BRA`/`YCURV`/`RVOL`/`FCOST`/`UTIL`) — backed by an expanded **104-series FRED catalog**, a news provider chain
-(Alpha Vantage / Marketaux / Finnhub / NewsAPI), Reddit/StockTwits social, and the
-**`news_nlp`** FinBERT NLP stage. See `docs/PLATFORM_DATA_CONNECTIVITY.md` for the
-full live-vs-simulated map.
+(`SQZ`)**, the **News (`NEWS`)** + **Investor Sentiment (`SENT`)** intelligence
+layer, the benchmark-rate analysis suite (`BMRK`/`BRA`/`YCURV`/`RVOL`/`FCOST`/`UTIL`),
+the **EDA / Lead-Lag Lab (`EDA`)**, and **Prediction Markets (`POLY`)** — backed by an
+expanded **104-series FRED catalog**, a news provider chain
+(Alpha Vantage / Marketaux / Finnhub / NewsAPI), Reddit/StockTwits social, the
+**`news_nlp`** FinBERT NLP stage, and the Polymarket Gamma API. See
+`docs/PLATFORM_DATA_CONNECTIVITY.md` for the full live-vs-simulated map.
 
 ---
 
@@ -396,7 +440,7 @@ NEWS_NLP_URL=http://localhost:8088 npm run dev   # → /api/news re-scores with 
 The `news_nlp` package installs/imports on a lexicon fallback without the model
 stack and surfaces in **DATAOPS** under the `NEWS_NLP` provider. See
 `news_nlp/README.md` and `docs/PLATFORM_DATA_CONNECTIVITY.md` for the full
-data-connectivity map across all 43 modules.
+data-connectivity map across all 45 modules.
 
 ---
 
@@ -414,7 +458,7 @@ data-connectivity map across all 43 modules.
 ## Tech stack
 
 **This build** is a **Vite + React single-page app** over **deterministic, seeded data
-generators**, so all 43 modules run with **zero configuration** — no database, no required
+generators**, so all 45 modules run with **zero configuration** — no database, no required
 keys. The `/api/*` endpoints are standard Web `Request → Response` handlers in `src/app/api/**`,
 served from **one shared route registry** (`src/server/registry.ts`) in every environment (see
 "How `/api/*` is served"). Optional live integrations include FRED for economics (104-series
@@ -434,7 +478,11 @@ provenance badge) when no key/service is present.
   `market_data_pipeline` via `MARKET_PIPELINE_URL` for FRED/Yahoo-backed market cards
 - **Provenance & freshness:** every data surface carries a `ProvenanceBadge`
   (`FRED`/`DB`/`FILE`/`SNAPSHOT`/`ETL`/`SIM`) plus a staleness marker (`AGING`/`STALE`) derived
-  from the data's `asOf` date — see `docs/LIVE_DATA_READINESS_ASSESSMENT.md` for the full audit
+  from the data's `asOf` date; multi-series panels aggregate to the **worst source present**
+  (`worstSource`) — see `docs/LIVE_DATA_READINESS_ASSESSMENT.md` for the full audit
+- **Module toggles:** `settings/modules.config.json` switches any module on/off —
+  disabled modules are removed from the sidebar, command palette, and routing
+  (`src/lib/moduleConfig.ts`)
 
 **Production architecture** (what the demo simulates) — see `ARCHITECTURE.md`:
 - Backend: **Python · FastAPI**, analytics in **Pandas / Polars / NumPy**
@@ -472,7 +520,23 @@ no second source of truth:
 | `npm run export:econ-snapshot` | Capture real FRED series into `src/data/econSnapshot.json` (needs `FRED_API_KEY` + egress) |
 | `npm run refresh:fred-master` | Incrementally refresh local `data/master/fred/*.json` real-data cache files (needs `FRED_API_KEY` + egress) |
 | `npm run refresh:aaii-sentiment` | Refresh the AAII sentiment snapshot used by `SENT` when network access is available |
-| `npm run typecheck` / `npm run test` | `tsc --noEmit` / Vitest |
+| `npm run typecheck` / `npm run lint` | `tsc --noEmit` (strict type-check doubles as the lint gate) |
+| `npm run test` / `npm run test:watch` | Vitest unit tests (run once / watch mode) |
+| `npx playwright test test/smoke.spec.ts` | Playwright E2E smoke suite (starts its own Vite dev server) |
+
+### Testing & CI
+
+- **Unit tests (Vitest)** — provenance/freshness contracts (`src/lib/provenance.test.ts`),
+  hook fallback chains (`src/lib/useEcon.test.ts`, `src/lib/useMarket.test.ts`), market data
+  invariants (`src/data/markets.test.ts`), charting math (`src/lib/charting/*.test.ts`), and
+  badge-coverage / snapshot-staleness audits (`src/tests/`).
+- **E2E smoke suite (Playwright)** — `test/smoke.spec.ts` visits all 44 routed pages and
+  asserts each loads without JS errors, renders its header, and leaks no `undefined`/`NaN`
+  into primary content. `playwright.config.ts` boots the Vite dev server automatically.
+- **CI (`.github/workflows/ci.yml`)** — every push/PR runs type-check → lint → unit tests →
+  build, then the E2E smoke job (with the Playwright report uploaded as an artifact).
+  `market-data-refresh.yml` separately drives the daily Yahoo/FRED → Postgres refresh.
+- The overall test plan and provenance-audit checklist live in `TESTING_HANDOFF.md`.
 
 ### Diagnostics
 
@@ -487,9 +551,11 @@ no second source of truth:
 ## Run locally
 
 The terminal is a **Vite + React** SPA — **zero config, no database, no keys**.
-All 43 modules (including Rate Probabilities, which renders the committed ETL
+All 45 modules (including Rate Probabilities, which renders the committed ETL
 FedWatch snapshot, and the news/sentiment modules backed by deterministic local
-fixtures) work fully offline.
+fixtures) work fully offline. To hide modules you don't need, flip them off in
+`settings/modules.config.json` — they vanish from the sidebar, command palette,
+and routing.
 
 ```bash
 npm install                 # first time only
@@ -588,6 +654,8 @@ modules serve the committed snapshot. Internal-book modules (lending, prime, col
 
 ```
 vercel.json                  # Vercel deploy: framework vite, build:vercel, /api routing, cron
+settings/
+└── modules.config.json      # module on/off toggles (consumed by src/lib/moduleConfig.ts)
 api/                         # Vercel-only serverless entry points
 ├── [...path].ts             #   catch-all → adapts the request to the shared route registry
 └── _ping.ts                 #   zero-dep diagnostic (functions-run + env-present check)
@@ -596,15 +664,16 @@ src/
 │   ├── (HOME, markets, securities-lending [+ /squeeze], prime-finance, collateral,
 │   │    cash-optimizer, reinvestment, liquidity, sources-uses, optimization, trading-desk,
 │   │    market-snapshot, market-lens, market-chart, macro-chart, news, sentiment,
-│   │    dataops, copilot, alerts)
+│   │    polymarket, dataops, copilot, alerts)
 │   ├── economics/           # ECON + curve, inflation, global-cpi, policy-rates, credit,
-│   │                         #   rates, calendar, stats, regime, ml, sec-finance, funding, benchmark, rate-analysis, utilization, yield-curve, rate-vol, funding-cost, motion
+│   │                         #   rates, calendar, stats, eda, regime, ml, sec-finance, funding, benchmark, rate-analysis, utilization, yield-curve, rate-vol, funding-cost, motion
 │   └── api/                 # Web Request→Response handlers (served by the registry, see below)
 │       ├── econ/            # series, batch, indicators, curve, curve-history, calendar, stats, inversions
 │       ├── market/[view]/   # committed snapshot or live DB/file/FastAPI market-data view
 │       ├── chart/series/    # unified econ/market chart resolver
 │       ├── dataops/health/  # live provider probe (FRED reachability, market, news_nlp)
 │       ├── news/ · social/  # provider-chain headlines · Reddit + StockTwits aggregate
+│       ├── polymarket/      # markets · events · history (live Gamma API → SIM)
 │       ├── copilot/ · market-lens/   # Claude Q&A · Market Lens proxy
 │       └── cron/refresh/    # daily cache warmer (cron target)
 ├── server/                  # the API runtime, shared by dev + standalone + Vercel
@@ -623,13 +692,19 @@ src/
 ├── data/                    # deterministic domain generators + committed snapshots
 │                            #   (markets, securitiesLending, primeFinance, collateral, cash, …,
 │                            #   econSeries [104-series FRED catalog], benchmarkRates, yieldCurveAnalytics, rateVolatility, fundingCost, utilizationAnalytics, masterJson, econSnapshot.json, etl/, market/)
-└── lib/                     # rng, format, hooks, nav, provenance (badge + freshness),
-                             #   useEcon, useMarket, useNews, useSocial, charting/,
-                             #   server/fred.ts, server/fetchProxy.ts (proxy support),
-                             #   server/newsProviders.ts, server/socialProviders.ts, server/sentimentNlp.ts
+├── lib/                     # rng, format, hooks, nav, moduleConfig, provenance (badge +
+│                            #   freshness + worstSource), useEcon, useMarket, useNews,
+│                            #   useSocial, usePolymarket, charting/, server/fred.ts,
+│                            #   server/fetchProxy.ts (proxy support), server/polymarket.ts,
+│                            #   server/newsProviders.ts, server/socialProviders.ts, server/sentimentNlp.ts
+└── tests/                   # badge-coverage + snapshot-staleness provenance audits
 
+test/smoke.spec.ts           # Playwright E2E smoke suite (44 pages) — playwright.config.ts
+.github/workflows/ci.yml     # CI: typecheck → lint → unit tests → build → E2E smoke
+screenshots/                 # 30 full-resolution module captures
 news_nlp/                    # Python FinBERT NLP stage (sentiment · NER · event clustering)
-docs/LIVE_DATA_READINESS_ASSESSMENT.md   # full live-vs-snapshot-vs-sim audit of all 43 modules
+TESTING_HANDOFF.md           # test-suite plan + data-provenance audit checklist
+docs/LIVE_DATA_READINESS_ASSESSMENT.md   # full live-vs-snapshot-vs-sim audit of all 45 modules
 ```
 
 ---
