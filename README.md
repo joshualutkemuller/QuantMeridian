@@ -46,7 +46,7 @@ BlackRock.
 | `OPT`  | **Optimization Center** | Flagship — solver runs (Gurobi / OR-Tools / Pyomo), objective/runtime/status/duals, before-after comparison, recommended trades |
 | `DESK` | **Trading Desk** | Trader scorecards, execution analytics (slippage / VWAP / TWAP / fill rates), risk analytics, position concentration |
 | `ECON` | **Macro Dashboard** | FRED-connected economic indicators grouped by category, surprise index, breadth, live series explorer |
-| `MGC`  | **Macro Chart Studio** | Charting studio over the **104-series FRED catalog** — build/compare/transform any series (`/api/chart/series`) |
+| `MGC`  | **Macro Chart Studio** | Charting studio over the **166-series FRED catalog** — build/compare/transform any series (`/api/chart/series`) |
 | `MOTN` | **Macro Motion Studio** | Animated macro-series motion / racing-series visualizations over the FRED catalog |
 | `FUND` | **Funding & Liquidity** | The funding tape — overnight corridor (IORB/EFFR/OBFR/SOFR/BGCR/TGCR), liquidity balances (RRP/reserves/Fed B-S), T-bills, FX-basis, funding spreads (SOFR−EFFR, SOFR−IORB, GC−OIS, bill−OIS, FRA−OIS), and a 0–100 quarter-end **funding-stress gauge** |
 | `BMRK` | **Benchmark Rates** | 33-rate status board — trends, spreads, correlations, regime classification, and PDF export over the FRED → master JSON → snapshot → SIM fallback chain |
@@ -76,6 +76,205 @@ BlackRock.
 
 ---
 
+## Economic & Macro modules — detailed reference
+
+This is the deep-dive spec for every module in the **Economics & Macro** navigation group
+(`src/lib/nav.ts`, group `ECONOMICS`) — **22 modules** — plus the three macro-adjacent
+**Markets** surfaces (`SNAP`/`QUILT`/`IRET`) that are FRED/pipeline-fed. Each entry lists the
+**route**, the **data module** that computes it, the **FRED series / upstream** it draws on, the
+**analytics it produces**, the **API endpoints**, and its **live-vs-sim provenance**. Everything
+runs offline against a deterministic, seeded simulation and transparently upgrades to live FRED
+(and, where noted, the `macro_data_etl` / `market_data_pipeline` companions) — the resolution
+order per series is always **live FRED → committed SNAPSHOT → SIM**.
+
+> **Shared foundation.** All rates/macro modules read the **166-series FRED catalog**
+> (`src/data/econSeries.ts`, `FRED_CATALOG`) categorised as `GROWTH · INFLATION · LABOR · RATES ·
+> CREDIT · HOUSING · CONSUMER · MONEY · ACTIVITY · FX`. Each series carries a units hint that
+> `resolveFred()` maps to the correct FRED transform (`pc1` YoY for CPI, `pch` MoM for retail,
+> `chg` for payrolls, bps ×100 for OAS/spreads, $T scaling for Fed balance-sheet). Client hooks
+> `useEcon`/`useMarket` render the fallback instantly, then upgrade; the `ProvenanceBadge`
+> (+ `AGING`/`STALE` staleness marker) always reflects what's actually shown, and multi-series
+> panels aggregate to the **worst source present** (`worstSource`, `src/lib/provenance.ts`).
+
+### Macro overview & indicators
+
+- **`ECON` — Macro Dashboard** — `/economics` · `src/data/econSeries.ts`
+  - The FRED landing page. `getIndicators()` derives, per catalog series: latest **value**,
+    **prior**, absolute **change**, **YoY**, a **surprise** (actual − consensus in unit terms),
+    a 36-point **sparkline**, and a `bullish` polarity flag.
+  - Indicators are grouped by the 10 `EconCategory` buckets with a **surprise index** and
+    **breadth** roll-ups, plus a live series explorer; every card drills to a 24-month history.
+  - **API:** `/api/econ/indicators` (dashboard rows), `/api/econ/batch` (raw multi-series),
+    `/api/econ/series` (24m history per id). **Provenance:** 🟢 Live (units-corrected) with `FRED_API_KEY`.
+
+- **`CAL` — Economic Calendar** — `/economics/calendar` · `src/data/econRates.ts` + `econEnhancements.ts`
+  - Release stream built from **real FRED release dates** with **importance** (`HIGH/MEDIUM/LOW`)
+    and **category** filters, **beat/miss vs consensus**, downstream **desk-sensitivity tags**
+    (`getCalendarSensitivity` → `Rates P&L · Haircut Risk · Borrow Demand · Funding Liquidity ·
+    Margin Risk`), and pre/post-release **factor-move summaries** (`getReleaseMoveSummaries`).
+  - **API:** `/api/econ/calendar`. **Provenance:** 🟢 Live release dates; sensitivities/factor moves computed.
+
+- **`STAT` — Statistical Analysis** — `/economics/stats` · `src/data/statsConfig.ts` + `econModels.ts`
+  - **Live FRED up to 20y** over a **32-series** study universe (`STAT_SERIES`) with adjustable
+    lookback (5/10/20Y/Max), transform (levels / Δ / YoY), a Granger lag, and rolling window.
+  - Produces a **correlation matrix**, **Granger causality** (F-test), **OLS regression**
+    (`getRegression`, default `T10Y2Y → BAMLH0A0HYM2`), **ADF stationarity**, **rolling
+    correlation**, **ACF**, and **distribution/moments** (`getDistribution` — mean, sd, skew,
+    latest z-score), plus packaged desk-ready **study packs** (`getStatStudyPacks`).
+  - **API:** `/api/econ/stats`, `/api/econ/batch`. **Provenance:** 🟢 Live (incrementally cached).
+
+- **`EDA` — EDA / Lead-Lag Lab** — `/economics/eda` · `market_data_pipeline` gold `eda` view
+  - Exploratory lead-lag analytics over the committed pipeline view (`src/data/market/eda.json`):
+    **cross-correlation (CCF)** with best-lag detection, **Granger causality**, **lagged OLS**, and
+    **CUSUM/PELT change-point** detection. **Provenance:** 🔵 Pipeline snapshot (refreshable via the pipeline analytics stage).
+
+### Rates, curve & funding
+
+- **`CURV` — Treasury Curve Lab** — `/economics/curve` · `src/data/econCurve.ts` + `ratesRV.ts`
+  - Assembles **real point-in-time curves** from each tenor's full daily FRED history
+    (`DGS1MO…DGS30`): overlays Today vs 1M/3M/6M/1Y/2Y ago (each with its real `AS OF` date) plus
+    deep reference curves (Pre-Hiking 2021, GFC 2009). Computes **level/slope/curvature**
+    (`getCurveMetrics`), a **user-selectable spread** (10Y-2Y default + 10Y-3M, 30Y-5Y, 10Y-1Y,
+    5Y-2Y, 2Y-3M, 30Y-10Y via `SPREAD_DEFS`), **live-detected inversions** for every spread from
+    daily history + `USREC` (`detectInversions`, inversion → recession lead-time), butterflies
+    and spread z-scores (`ratesRV.ts`: `computeButterflies`, `computeSpreadZScores`,
+    `computeCarryRoll`, `classifyCurveMove` → Bull/Bear Steepener/Flattener), and term funding carry.
+  - **API:** `/api/econ/curve`, `/api/econ/curve-history` (cached 6h), `/api/econ/inversions`. **Provenance:** 🟢 Live curves & inversions; deep reference curves curated.
+
+- **`YCURV` — Yield Curve Analytics** — `/economics/yield-curve` · `src/data/yieldCurveAnalytics.ts`
+  - Daily curve construction over **9 tenors** (`buildCurveHistory`), **curve-shape metrics**
+    (`computeCurveShape` — slope/curvature/butterfly), **regime classification**
+    (`classifyCurveRegime` → e.g. Bull/Bear Steepen/Flatten, Twist), **inversion segments**
+    (`findInversions`), **curve diffs**, curve correlation, and **PDF export** — reusing the
+    benchmark-rate series map. **Provenance:** 🟢 Live/real fallback (FRED → master JSON → snapshot → SIM).
+
+- **`RVOL` — Rate Volatility** — `/economics/rate-vol` · `src/data/rateVolatility.ts`
+  - **Realized-vol surface** across windows (5/10/20/60/120d, `computeRealizedVol`), **vol regimes**
+    (`classifyVolRegime` → Low Vol / Normal / Elevated / Vol Storm), **vol cones**
+    (`computeVolCone`), **vol-of-vol** (`computeVolOfVol`), **cross-asset vol** and vol correlation,
+    plus PDF export over Treasury/rate histories. **Provenance:** 🟢 Live/real fallback.
+
+- **`BMRK` — Benchmark Rates** — `/economics/benchmark` · `src/data/benchmarkRates.ts`
+  - **43-rate status board** across 7 categories (`Overnight · Treasury · Credit · Swap · Mortgage ·
+    Commodity · International`). Computes **trend metrics** (`computeTrend`), **spread pairs**
+    (`SPREAD_PAIRS` / `computeAllSpreads`), a **status board** (`elevated/normal/depressed`),
+    **rolling correlations** (`computeCorrelation`), and **regime classification** (`classifyRegime`
+    → Tightening / Restrictive / Easing / Accommodative / Neutral), with PDF export.
+  - **API:** `/api/econ/benchmark`. **Provenance:** 🟢 Live/real fallback over FRED → master JSON → committed snapshot → deterministic SIM.
+
+- **`BRA` — Rate Analysis Hub** — `/economics/rate-analysis`
+  - Unified economics workflow aggregating **Benchmark Rates + Yield Curve Analytics + Rate
+    Volatility + Funding Cost + Utilization Analytics** into one dashboard over the shared
+    benchmark-rate data contract. **Provenance:** 🟡 Composite of the above.
+
+- **`FUND` — Funding & Liquidity** — `/economics/funding` · `src/data/funding.ts`
+  - The funding tape over a **22-series** set (`FUNDING_SERIES`, groups `Overnight · Balances ·
+    Bills · FX Basis`): overnight corridor (`IORB/EFFR/OBFR/SOFR/BGCR/TGCR`), liquidity balances
+    (`RRPONTSYD/WRESBAL/WALCL`, incl. WRESBAL $B→$T scaling), T-bills, funding **spreads**
+    (`computeSpreads` — SOFR−EFFR, SOFR−IORB, GC−OIS, bill−OIS, FRA−OIS), **per-desk signals**
+    (`computeDeskSignals` → Calm/Watch/Stress per Repo/Agency/Prime/Cash/Collateral/E-Trading),
+    and a **0–100 quarter-end funding-stress gauge** (`computeGauge`).
+  - **API:** `/api/econ/batch`. **Provenance:** 🟢 Live (12/16 FRED); FX-basis & FRA-OIS SIM pending a BIS feed; gauge derived.
+
+- **`FCOST` — Funding Cost Monitor** — `/economics/funding-cost` · `src/data/fundingCost.ts`
+  - Blended borrowing-cost monitor by **credit tier** (`Sovereign · Secured · AA · A · BBB · HY`,
+    `computeTierCosts`) with **per-desk attribution** (`computeDeskFunding` across SLAB/COLL/CASH/
+    REINV/PB/REPO), a **term-funding ladder** (`computeTermLadder`), **tier spreads**
+    (`computeTierSpreads`), and a **funding-regime classifier** (`classifyFundingRegime` →
+    Tight/Normal/Wide/Stress). **Provenance:** 🟡 Derived from live/sim benchmark rates with modeled internal-book overlays.
+
+- **`FOMC` — Rate Probabilities** — `/economics/rates` · `src/data/econRates.ts` + `macro_data_etl`
+  - **CME-FedWatch** meeting hike/cut odds from the `macro_data_etl` **FedProbabilityEngine**
+    (30-Day Fed Funds futures → day-weighted FOMC probabilities), with **Policy-Path Evolution**
+    overlay (`getPolicyPathHistory`), **implied path** (`getImpliedPath`), the **FOMC dot plot**
+    (`getDotPlot`), current target `{low, high, mid}`, and policy-path transmission into
+    REINV/CASH/COLL/OPT (`getPolicyTransmission`). **Provenance:** 🔵 ETL (FedWatch); live CME with network, else deterministic fallback curve.
+
+### Inflation
+
+- **`INFL` — Inflation Explorer** — `/economics/inflation` · `src/data/inflation.ts`
+  - **CPI / Core CPI / PCE / Core PCE** to item level (`InflationGroup`): index reading, **MoM %**,
+    **YoY %**, and **ΔMoM/ΔYoY acceleration** (`liveInflationItem`), a **contribution waterfall**,
+    a CPI/PCE **basket toggle** (`getInflationComponents`), and a summary (`getInflationSummary`);
+    every item drills to 24 months. **Provenance:** 🟢 Live (index → derived MoM/YoY/accel), per-item fallback to sim.
+
+- **`GCPI` — Global Inflation** — `/economics/global-cpi` · `src/data/globalMacro.ts`
+  - **CPI YoY/MoM by country** (`getGlobalCPI`) with trend-vs-prior (`RISING/FALLING/FLAT`),
+    consecutive-print **streaks**, **vs-target**, and a heat map, across `AMER/EMEA/APAC` regions.
+    Live via **OECD-on-FRED** CPI (`liveCountryCPI`) or the `macro_data_etl` World Bank feed
+    (`etlCountryCPI`). **Provenance:** 🟢 Live (most countries), per-country fallback to sim.
+
+### Global policy & credit
+
+- **`GPOL` — Global Policy Rates** — `/economics/policy-rates` · `src/data/globalMacro.ts`
+  - Central-bank policy rates by country (`getGlobalPolicyRates`): current rate, **cycle**
+    (hiking/cutting/hold), **real rates**, hike/cut **streaks**, and **next meeting** dates. Live via
+    FRED OECD/ECB series (`livePolicyRate`) or the ETL BIS `WS_CBPOL` feed (`etlPolicyRate`).
+    **Provenance:** 🟡 Partial live.
+
+- **`CRDT` — Credit Spreads** — `/economics/credit` · `src/data/creditSpreads.ts` + `econEnhancements.ts`
+  - IG/HY **OAS** deep dive: **credit curve by rating** (`getCreditCurve`, drillable), **18y IG-vs-HY
+    history** with stress episodes (`getSpreadHistory`, `getStressEpisodes`), **sector spreads**
+    (`getSectorSpreads`), **spread decomposition** (`getSpreadDecomposition`), **credit betas**
+    (`getCreditBetas`), **ETF divergences** (`getEtfDivergences`), valuation percentiles, and a
+    **credit → sec-finance linkage** — **collateral haircut impact** (`getCreditHaircutImpacts`),
+    **counterparty stress overlay** (`getCounterpartyCreditOverlays`), and **credit substitutions**
+    (`getCreditSubstitutions`). ICE BofA OAS FRED ids are real. **Provenance:** 🟢 Live (rating curve + IG/HY); linkage analytics computed.
+
+### Regime & models
+
+- **`REGIME` — Macro Regime Playbook** — `/economics/regime` · `src/data/macroRegime.ts`
+  - Regime scoring across **growth, inflation, liquidity, credit, and policy** factors
+    (`getRegimeFactors`, merged with live FRED via `mergeLiveRegimeFactors` over
+    `DGS10/DGS2/DGS3MO/BAMLH0A0HYM2/SOFR/EFFR/CPILFESL`), a **named-regime** classifier
+    (`getNamedRegime` → Goldilocks / Reflation / Stagflation / Growth Scare / Liquidity Squeeze /
+    Policy Easing), **regime transitions** and **exposures**, **impulse scores**, and **desk
+    playbooks** (`getDeskPlaybooks`, `getCrossDeskPlaybooks`) mapping the state to actions for
+    collateral, reinvestment, lending, optimization, and funding. **Provenance:** 🟡 Partial live/sim.
+
+- **`EML` — ML Applications** — `/economics/ml` · `src/data/econModels.ts`
+  - Model outputs (not a feed): **recession probit** (AUC 0.89), **inflation nowcast**,
+    **rate-path BVAR+LSTM**, **regime HMM**, feature importances, and a **model registry**
+    (`getMLModels`). **Provenance:** 🔴 Sim / model.
+
+### Securities-finance economics
+
+- **`SFE` — Sec-Finance Economics** — `/economics/sec-finance` · `src/data/econModels.ts` + `econEnhancements.ts`
+  - The differentiator that ties macro to the book: **repo complex** (`getRepoRates`,
+    `liveRepoRow` off live SOFR), **rate sensitivities** ("greeks for the book",
+    `getRateSensitivities`) with a **Fed-cut scenario stepper**, a **cash-collateral reinvestment
+    ladder** (`getReinvestmentLadder`), **macro factor links** (`getMacroLinkages`,
+    `getSfeFactorLinks`), a **P&L bridge** (`getSfePnlBridge`), and a **shared scenario library**
+    (`getSfeScenarioLibrary`). **Provenance:** 🟡 Partial live (SOFR/EFFR/IORB/RRP + Fed backdrop live; sensitivities/P&L/scenarios curated).
+
+- **`UTIL` — Utilization Analytics** — `/economics/utilization` · `src/data/utilizationAnalytics.ts`
+  - Aggregate securities-lending **utilization** analytics grouped by
+    `sector/assetClass/classification(GC·WARM·SPECIAL·HTB)/source` (`computeUtilizationSnapshot`),
+    a **utilization time series**, **custom rate blends** (`PRESET_BLENDS` + user blends via
+    `computeBlend`/`validateBlend`), **benchmark-rate overlays** (`normalizeForOverlay`),
+    **rate↔utilization correlation** and **sensitivity** (`computeRateUtilCorrelation`,
+    `computeRateSensitivity`), and PDF export. **Provenance:** 🟡 Internal-book model + rate overlays.
+
+### Charting & motion
+
+- **`MGC` — Macro Chart Studio** — `/macro-chart` · unified chart resolver
+  - Freeform charting studio over the **166-series FRED catalog** — build/compare/transform any
+    series via `/api/chart/series?source=econ`. **Provenance:** 🟢 Live per series.
+
+- **`MOTN` — Macro Motion Studio** — `/economics/motion`
+  - Animated macro-series **racing/motion** visualizations over the FRED catalog. **Provenance:** 🟢 Live per series.
+
+### Macro-adjacent Markets surfaces (FRED / pipeline-fed)
+
+- **`SNAP` — Market Snapshot** — `/market-snapshot` · `market_data_pipeline`
+  - Cross-asset "state of the market": returns/drawdown table (1D…5Y CAGR, 52w distance), Treasury
+    curve + 2s10s/3m10y, **regime scores** (risk-on/off · growth · inflation · liquidity), and
+    best/worst YTD. **Provenance:** 🔵 pipeline (FRED · Yahoo · pluggable vendors).
+- **`QUILT` — Asset Quilt** — `/asset-quilt` — annual cross-asset return "quilt" (Bilello-style), leaders/laggards, dispersion. 🔵 pipeline.
+- **`IRET` — Index Return Analytics** — `/index-returns` — monthly index return matrix, calendar-year totals, intra-year drawdowns. 🔵 pipeline.
+
+---
+
 ## Live economic data (FRED)
 
 The **Economics & Macro** modules are wired to **FRED** (Federal Reserve Economic Data).
@@ -83,7 +282,7 @@ The connection is real but **optional and resilient**:
 
 - **With a key** — set `FRED_API_KEY` in the environment. Server-side route handlers
   (`/api/econ/series`, `/api/econ/batch`, `/api/econ/indicators`, `/api/econ/curve`,
-  `/api/econ/calendar`) fetch live observations from a **104-series FRED catalog** — all
+  `/api/econ/calendar`) fetch live observations from a **166-series FRED catalog** — all
   dashboard indicators (units-corrected), yield-curve tenors (`DGS1MO…DGS30`), the **funding
   complex** (`IORB/EFFR/OBFR/SOFR/BGCR/TGCR/RRPONTSYD/WRESBAL/WALCL/DTB3…`), and release dates
   from `api.stlouisfed.org` (cached 10 min). Panels show a green **LIVE · FRED** badge.
@@ -259,7 +458,7 @@ can later scale to licensed feeds, internal books, optimizer outputs, and the
 (`SQZ`)**, the **News (`NEWS`)** + **Investor Sentiment (`SENT`)** intelligence
 layer, the benchmark-rate analysis suite (`BMRK`/`BRA`/`YCURV`/`RVOL`/`FCOST`/`UTIL`),
 the **EDA / Lead-Lag Lab (`EDA`)**, and **Prediction Markets (`POLY`)** — backed by an
-expanded **104-series FRED catalog**, a news provider chain
+expanded **166-series FRED catalog**, a news provider chain
 (Alpha Vantage / Marketaux / Finnhub / NewsAPI), Reddit/StockTwits social, the
 **`news_nlp`** FinBERT NLP stage, and the Polymarket Gamma API. See
 `docs/PLATFORM_DATA_CONNECTIVITY.md` for the full live-vs-simulated map.
@@ -461,7 +660,7 @@ data-connectivity map across all 45 modules.
 generators**, so all 45 modules run with **zero configuration** — no database, no required
 keys. The `/api/*` endpoints are standard Web `Request → Response` handlers in `src/app/api/**`,
 served from **one shared route registry** (`src/server/registry.ts`) in every environment (see
-"How `/api/*` is served"). Optional live integrations include FRED for economics (104-series
+"How `/api/*` is served"). Optional live integrations include FRED for economics (166-series
 catalog), the committed/exported `macro_data_etl` FedWatch snapshot, the pluggable
 FRED/Yahoo-backed `market_data_pipeline`, a news provider chain (Alpha Vantage / Marketaux /
 Finnhub / NewsAPI) + Reddit/StockTwits social, and the `news_nlp` FinBERT stage — each degrading
@@ -691,7 +890,7 @@ src/
 │                            #   Sankey, NetworkGraph, Waterfall, Matrix, Radial, YieldCurve, ScatterPlot)
 ├── data/                    # deterministic domain generators + committed snapshots
 │                            #   (markets, securitiesLending, primeFinance, collateral, cash, …,
-│                            #   econSeries [104-series FRED catalog], benchmarkRates, yieldCurveAnalytics, rateVolatility, fundingCost, utilizationAnalytics, masterJson, econSnapshot.json, etl/, market/)
+│                            #   econSeries [166-series FRED catalog], benchmarkRates, yieldCurveAnalytics, rateVolatility, fundingCost, utilizationAnalytics, masterJson, econSnapshot.json, etl/, market/)
 ├── lib/                     # rng, format, hooks, nav, moduleConfig, provenance (badge +
 │                            #   freshness + worstSource), useEcon, useMarket, useNews,
 │                            #   useSocial, usePolymarket, charting/, server/fred.ts,
