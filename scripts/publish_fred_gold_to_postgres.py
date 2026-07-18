@@ -186,6 +186,29 @@ def create_indexes(pg_conn, schema: str, table: str, col_names: list[str]) -> No
                 cur.execute(f"CREATE INDEX IF NOT EXISTS {idx} ON {target} ({col_sql})")
 
 
+def drop_existing_target(cur, schema: str, table: str) -> None:
+    target = f"{qident(schema)}.{qident(table)}"
+    cur.execute(
+        """
+        SELECT c.relkind
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = %s AND c.relname = %s
+        """,
+        (schema, table),
+    )
+    row = cur.fetchone()
+    if not row:
+        return
+    relkind = row[0]
+    if relkind in {"r", "p", "f"}:
+        cur.execute(f"DROP TABLE {target} CASCADE")
+    elif relkind in {"v", "m"}:
+        cur.execute(f"DROP VIEW {target} CASCADE")
+    else:
+        raise RuntimeError(f"Cannot replace {schema}.{table}; unsupported Postgres relkind {relkind!r}")
+
+
 def copy_object(sqlite_conn: sqlite3.Connection, pg_conn, plan: PublishObject, batch_size: int) -> int:
     source_name = plan.name
     parsed = split_object(source_name)
@@ -208,8 +231,7 @@ def copy_object(sqlite_conn: sqlite3.Connection, pg_conn, plan: PublishObject, b
 
     with pg_conn.cursor() as cur:
         cur.execute(f"CREATE SCHEMA IF NOT EXISTS {qident(schema)}")
-        cur.execute(f"DROP VIEW IF EXISTS {target} CASCADE")
-        cur.execute(f"DROP TABLE IF EXISTS {target} CASCADE")
+        drop_existing_target(cur, schema, table)
         cur.execute(f"CREATE TABLE {target} ({pg_cols})")
 
         total = 0
