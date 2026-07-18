@@ -210,11 +210,13 @@ export function createGoldStore(): GoldStore {
 
       const phys = physicalTable(table, backend);
       const { clause, params } = buildWhere(key, backend);
-      const limitClause = limit ? `LIMIT ${Number(limit)}` : "";
-      const sql = `SELECT * FROM ${phys} ${clause} ORDER BY date ASC ${limitClause}`.trim();
+      const sql = limit
+        ? `SELECT * FROM ${phys} ${clause} ORDER BY date DESC LIMIT ${Number(limit)}`.trim()
+        : `SELECT * FROM ${phys} ${clause} ORDER BY date ASC`.trim();
       const rows = await query<T>(sql, params, backend);
-      toCache(cKey, rows);
-      return rows;
+      const ordered = limit ? rows.reverse() : rows;
+      toCache(cKey, ordered);
+      return ordered;
     },
 
     async asOf<T>(table: string, asOf: string, where?: Record<string, unknown>): Promise<T[]> {

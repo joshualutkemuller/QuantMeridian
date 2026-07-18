@@ -19,11 +19,11 @@ export interface BenchmarkBatchSeries {
 }
 
 interface GoldBenchmarkRow {
-  rate_id: string;
-  date: string;
-  value: number;
+  series_id: string;
+  latest_date: string;
+  latest_value: number;
   trend: string | null;
-  spread_to_benchmark: number | null;
+  spread_to_benchmark_bps: number | null;
   regime: string | null;
   zscore: number | null;
   percentile: number | null;
@@ -61,13 +61,13 @@ export async function GET(req: Request) {
       const [boardRows, obsRows] = await Promise.all([
         store.latest<GoldBenchmarkRow>("benchmark_rate_board"),
         store.raw<GoldObsRow>(
-          `SELECT series_id, date, value FROM ${process.env.MACRO_DB_URL?.startsWith("sqlite") ? "gold_fred_latest_observation" : "gold.fred_latest_observation"} WHERE series_id IN (${ids.map((_, i) => /^postgres/.test(process.env.MACRO_DB_URL ?? "") ? `$${i + 1}` : "?").join(",")}) ORDER BY series_id, date ASC`,
+          `SELECT series_id, observation_date AS date, value FROM ${process.env.MACRO_DB_URL?.startsWith("sqlite") ? "gold_fred_latest_observation" : "gold.fred_latest_observation"} WHERE series_id IN (${ids.map((_, i) => /^postgres/.test(process.env.MACRO_DB_URL ?? "") ? `$${i + 1}` : "?").join(",")}) ORDER BY series_id, observation_date ASC`,
           ids
         ),
       ]);
 
       if (boardRows.length || obsRows.length) {
-        const boardById = new Map(boardRows.map((r) => [r.rate_id, r]));
+        const boardById = new Map(boardRows.map((r) => [r.series_id, r]));
         const obsByIdMap = new Map<string, { date: string; value: number }[]>();
         for (const row of obsRows) {
           const arr = obsByIdMap.get(row.series_id) ?? [];
@@ -89,7 +89,7 @@ export async function GET(req: Request) {
             observations: obs,
             source: "DB" as const,
             trend: board?.trend ?? null,
-            spread_to_benchmark: board?.spread_to_benchmark ?? null,
+            spread_to_benchmark: board?.spread_to_benchmark_bps ?? null,
             regime: board?.regime ?? null,
             zscore: board?.zscore ?? null,
             percentile: board?.percentile ?? null,

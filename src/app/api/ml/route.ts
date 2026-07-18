@@ -21,7 +21,7 @@ export async function GET(req: Request) {
     loadings: "macro_factor_loadings",
     anomaly: "macro_anomaly_scores",
     attribution: "equity_factor_attribution",
-    implied_return: "equity_implied_return",
+    implied_return: "equity_factor_implied_return",
   };
 
   const table = TABLE_MAP[view];

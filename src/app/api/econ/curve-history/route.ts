@@ -6,18 +6,21 @@ import { goldEnabled, goldStore } from "@/lib/server/goldStore";
 
 interface GoldCurveRow {
   as_of_date: string;
-  tenor: string;
+  tenor?: string;
+  tenor_label?: string;
   tenor_months: number;
   yield_pct: number;
 }
 
 interface GoldCurveMetricsRow {
   as_of_date: string;
-  slope: number | null;
-  curvature: number | null;
-  butterfly: number | null;
-  move_class: string | null;
-  recession_overlay: boolean | null;
+  level: number | null;
+  slope_10y2y: number | null;
+  slope_10y3m: number | null;
+  curvature_2_5_10: number | null;
+  butterfly_2_10_30: number | null;
+  curve_move: string | null;
+  is_recession: boolean | null;
 }
 
 const TENOR_TO_FRED: Record<string, string> = {
@@ -53,13 +56,15 @@ export async function GET(req: Request) {
   if (goldEnabled()) {
     try {
       const store = goldStore();
+      const isPg = /^postgres/.test(process.env.MACRO_DB_URL ?? "");
+      const startParam = isPg ? "$1" : "?";
       const [curveRows, metricsRows] = await Promise.all([
         store.raw<GoldCurveRow>(
-          `SELECT as_of_date, tenor, tenor_months, yield_pct FROM ${process.env.MACRO_DB_URL?.startsWith("sqlite") ? "gold_treasury_curve" : "gold.treasury_curve"} WHERE as_of_date >= ? ORDER BY as_of_date, tenor_months`,
+          `SELECT as_of_date, tenor_label, tenor_months, yield_pct FROM ${process.env.MACRO_DB_URL?.startsWith("sqlite") ? "gold_treasury_curve" : "gold.treasury_curve"} WHERE as_of_date >= ${startParam} ORDER BY as_of_date, tenor_months`,
           [start]
         ),
         store.raw<GoldCurveMetricsRow>(
-          `SELECT as_of_date, slope, curvature, butterfly, move_class, recession_overlay FROM ${process.env.MACRO_DB_URL?.startsWith("sqlite") ? "gold_treasury_curve_metrics" : "gold.treasury_curve_metrics"} WHERE as_of_date >= ? ORDER BY as_of_date`,
+          `SELECT as_of_date, level, slope_10y2y, slope_10y3m, curvature_2_5_10, butterfly_2_10_30, curve_move, is_recession FROM ${process.env.MACRO_DB_URL?.startsWith("sqlite") ? "gold_treasury_curve_metrics" : "gold.treasury_curve_metrics"} WHERE as_of_date >= ${startParam} ORDER BY as_of_date`,
           [start]
         ),
       ]);
@@ -68,7 +73,7 @@ export async function GET(req: Request) {
         // Build CurveHistory (fredId → [{date, value}]) from Gold rows
         const history: CurveHistory = {};
         for (const row of curveRows) {
-          const fredId = TENOR_TO_FRED[row.tenor];
+          const fredId = TENOR_TO_FRED[row.tenor ?? row.tenor_label ?? ""];
           if (!fredId) continue;
           if (!history[fredId]) history[fredId] = [];
           history[fredId].push({ date: row.as_of_date, value: row.yield_pct });

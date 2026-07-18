@@ -10,7 +10,14 @@ interface GoldObsRow {
   date: string;
   value: number;
   realtime_start?: string;
-  transform?: string;
+}
+
+function transformColumn(units: string | undefined): string {
+  if (units === "pc1" || units === "yoy") return "yoy";
+  if (units === "pch" || units === "mom") return "mom";
+  if (units === "chg" || units === "diff") return "diff";
+  if (units === "zscore") return "zscore";
+  return "value";
 }
 
 /**
@@ -37,14 +44,20 @@ export async function GET(req: Request) {
   if (goldEnabled()) {
     try {
       const store = goldStore();
-      // For transformed units use fred_feature_transforms; for levels use fred_latest_observation
-      const wantsTransformed = units !== "lin";
-      let rows: GoldObsRow[];
-      if (wantsTransformed) {
-        rows = await store.history<GoldObsRow>("fred_feature_transforms", { series_id: id }, n);
-      } else {
-        rows = await store.history<GoldObsRow>("fred_latest_observation", { series_id: id }, n);
-      }
+      const isPg = /^postgres/.test(process.env.MACRO_DB_URL ?? "");
+      const table = units === "lin"
+        ? process.env.MACRO_DB_URL?.startsWith("sqlite") ? "gold_fred_latest_observation" : "gold.fred_latest_observation"
+        : process.env.MACRO_DB_URL?.startsWith("sqlite") ? "gold_fred_feature_transforms" : "gold.fred_feature_transforms";
+      const valueCol = transformColumn(units);
+      const realtimeExpr = units === "lin" ? "realtime_start" : "NULL AS realtime_start";
+      const rows = (await store.raw<GoldObsRow>(
+        `SELECT series_id, observation_date AS date, ${valueCol} AS value, ${realtimeExpr}
+         FROM ${table}
+         WHERE series_id = ${isPg ? "$1" : "?"} AND ${valueCol} IS NOT NULL
+         ORDER BY observation_date DESC
+         LIMIT ${Number(n)}`,
+        [id]
+      )).reverse();
       if (rows.length) {
         const obs = rows.map((r) => ({ date: r.date, value: r.value }));
         return json({ source: "DB", id, label, units, observations: obs, realtime_start: rows[rows.length - 1]?.realtime_start ?? null });

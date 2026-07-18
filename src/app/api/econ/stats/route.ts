@@ -48,7 +48,7 @@ export async function GET(req: Request) {
       const phys = isSqlite ? "gold_fred_feature_transforms" : "gold.fred_feature_transforms";
       const placeholders = ids.map((_, i) => isPg ? `$${i + 3}` : "?").join(",");
       const rows = await store.raw<GoldObsRow>(
-        `SELECT series_id, date, value FROM ${phys} WHERE date >= ${isPg ? "$1" : "?"} AND date <= ${isPg ? "$2" : "?"} AND series_id IN (${placeholders}) ORDER BY series_id, date`,
+        `SELECT series_id, observation_date AS date, value FROM ${phys} WHERE observation_date >= ${isPg ? "$1" : "?"} AND observation_date <= ${isPg ? "$2" : "?"} AND series_id IN (${placeholders}) ORDER BY series_id, observation_date`,
         [start, end, ...ids]
       );
 

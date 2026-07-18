@@ -563,7 +563,7 @@ export async function GET(req: Request, { params }: { params: { view: string } }
           display_name: r.name ?? r.ticker ?? r.series_id,
           asset_class: r.asset_class ?? "equity",
           source: "DB",
-          date: r.date,
+          date: r.date ?? r.observation_date,
           value: basis === "price" ? (r.price_return_index ?? r.total_return_index) : r.total_return_index,
         })).filter((r: MarketObservation) => Number.isFinite(r.value));
 

@@ -56,7 +56,7 @@ export async function GET() {
   if (providers.MACRO_DB?.live) {
     try {
       const rows = await goldStore().raw<{ source: string; series_count: number; avg_staleness_days: number }>(
-        `SELECT source, COUNT(*) AS series_count, AVG(staleness_days) AS avg_staleness_days FROM ${process.env.MACRO_DB_URL?.startsWith("sqlite") ? "gold_v_source_coverage" : "gold.v_source_coverage"} GROUP BY source`,
+        `SELECT source, COUNT(*) AS series_count, AVG(days_since_last) AS avg_staleness_days FROM ${process.env.MACRO_DB_URL?.startsWith("sqlite") ? "gold_v_source_coverage" : "gold.v_source_coverage"} GROUP BY source`,
         []
       );
       providers.MACRO_DB_COVERAGE = {

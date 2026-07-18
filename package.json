@@ -19,7 +19,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "publish:fred-gold": "python3 scripts/publish_fred_gold_to_postgres.py"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.69.0",

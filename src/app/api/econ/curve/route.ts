@@ -6,13 +6,19 @@ import { goldEnabled, goldStore } from "@/lib/server/goldStore";
 
 interface GoldCurveRow {
   as_of_date: string;
-  tenor: string;
+  tenor?: string;
+  tenor_label?: string;
   tenor_months: number;
   yield_pct: number;
-  slope: number | null;
-  curvature: number | null;
-  butterfly: number | null;
-  move_class: string | null;
+}
+
+interface GoldCurveMetricsRow {
+  as_of_date: string;
+  level: number | null;
+  slope_10y2y: number | null;
+  curvature_2_5_10: number | null;
+  butterfly_2_10_30: number | null;
+  curve_move: string | null;
 }
 
 function snapshotCurve() {
@@ -46,7 +52,10 @@ export async function GET() {
   if (goldEnabled()) {
     try {
       const store = goldStore();
-      const rows = await store.latest<GoldCurveRow>("treasury_curve");
+      const [rows, metricsRows] = await Promise.all([
+        store.latest<GoldCurveRow>("treasury_curve"),
+        store.latest<GoldCurveMetricsRow>("treasury_curve_metrics"),
+      ]);
       if (rows.length) {
         // Take the most recent as_of_date
         const maxDate = rows.reduce((m, r) => r.as_of_date > m ? r.as_of_date : m, "");
@@ -59,15 +68,18 @@ export async function GET() {
         };
 
         const points = latest.map((r) => {
-          const base = sim.points.find((p) => p.fredId === tenorToFredId[r.tenor]) ?? sim.points[0];
+          const tenor = r.tenor ?? r.tenor_label ?? "";
+          const base = sim.points.find((p) => p.fredId === tenorToFredId[tenor]) ?? sim.points[0];
           return { ...base, yield: Number(r.yield_pct.toFixed(2)) };
         }).filter(Boolean);
 
-        const metrics = latest[0] ? {
-          slope: latest[0].slope,
-          curvature: latest[0].curvature,
-          butterfly: latest[0].butterfly,
-          move_class: latest[0].move_class,
+        const metricRow = metricsRows.find((r) => r.as_of_date === maxDate);
+        const metrics = metricRow ? {
+          level: metricRow.level,
+          slope: metricRow.slope_10y2y,
+          curvature: metricRow.curvature_2_5_10,
+          butterfly: metricRow.butterfly_2_10_30,
+          move_class: metricRow.curve_move,
         } : {};
 
         return json({

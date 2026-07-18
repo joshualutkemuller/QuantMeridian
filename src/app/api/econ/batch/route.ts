@@ -15,7 +15,14 @@ interface GoldFeatureRow {
   series_id: string;
   date: string;
   value: number;
-  transform: string;
+}
+
+function transformColumn(units: string | undefined): string {
+  if (units === "pc1" || units === "yoy") return "yoy";
+  if (units === "pch" || units === "mom") return "mom";
+  if (units === "chg" || units === "diff") return "diff";
+  if (units === "zscore") return "zscore";
+  return "value";
 }
 
 /**
@@ -39,11 +46,16 @@ export async function GET(req: Request) {
   if (goldEnabled()) {
     try {
       const store = goldStore();
-      // Use fred_feature_transforms which holds per-transform daily observations
+      // Gold stores transforms in wide columns (value/yoy/mom/diff/zscore).
       const placeholders = ids.map((_, i) => (process.env.MACRO_DB_BACKEND === "databricks" || /^postgres/.test(process.env.MACRO_DB_URL ?? "") ? `$${i + 1}` : "?")).join(",");
       const table = process.env.MACRO_DB_URL?.startsWith("sqlite") ? "gold_fred_feature_transforms" : "gold.fred_feature_transforms";
+      const valueCol = transformColumn(unitsOverride);
       const rows = await store.raw<GoldFeatureRow>(
-        `SELECT series_id, date, value, transform FROM ${table} WHERE series_id IN (${placeholders}) ORDER BY series_id, date DESC LIMIT ${n * ids.length}`,
+        `SELECT series_id, observation_date AS date, ${valueCol} AS value
+         FROM ${table}
+         WHERE series_id IN (${placeholders}) AND ${valueCol} IS NOT NULL
+         ORDER BY series_id, observation_date DESC
+         LIMIT ${n * ids.length}`,
         ids
       );
 
