@@ -97,7 +97,7 @@ export default function EconRateVol() {
   }, [live, fallback]);
 
   const anyReal = BENCHMARK_FRED_IDS.some((id) => isRealEconSource(live[id]?.source));
-  const badgeSource: DataSource = anyReal ? (source === "FRED" ? "FRED" : "SNAPSHOT") : "SIM";
+  const badgeSource: DataSource = anyReal && isRealEconSource(source) ? source : "SIM";
 
   const vols = useMemo(() => computeAllVols(map), [map]);
   const crossAsset = useMemo(() => computeCrossAssetVol(map), [map]);

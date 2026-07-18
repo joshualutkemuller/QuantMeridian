@@ -76,7 +76,7 @@ export default function YieldCurvePage() {
   }, [live, fallback]);
 
   const anyReal = BENCHMARK_FRED_IDS.some((id) => isRealEconSource(live[id]?.source));
-  const badgeSource: DataSource = anyReal ? (source === "FRED" ? "FRED" : "SNAPSHOT") : "SIM";
+  const badgeSource: DataSource = anyReal && isRealEconSource(source) ? source : "SIM";
 
   const [tab, setTab] = useState<"shape" | "slopes" | "rv">("shape");
   const [timeRange, setTimeRange] = useState("1Y");

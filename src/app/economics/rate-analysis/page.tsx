@@ -96,7 +96,7 @@ export default function RateAnalysisDashboard() {
   }, [live, fallback]);
 
   const anyReal = BENCHMARK_FRED_IDS.some((id) => isRealEconSource(live[id]?.source));
-  const badgeSource: DataSource = anyReal ? (source === "FRED" ? "FRED" : "SNAPSHOT") : "SIM";
+  const badgeSource: DataSource = anyReal && isRealEconSource(source) ? source : "SIM";
 
   // ── BMRK ──────────────────────────────────────────────────────────
   const bmrkSummary = useMemo(() => computeSummary(map), [map]);

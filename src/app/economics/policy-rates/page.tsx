@@ -140,7 +140,7 @@ export default function GlobalPolicyRates() {
       header: "Src",
       align: "center",
       sortVal: (r) => r.source,
-      render: (r) => <Tag tone={r.source === "FRED" ? "up" : r.source === "SNAPSHOT" ? "blue" : r.source === "ETL" ? "amber" : "neutral"}>{r.source}</Tag>,
+      render: (r) => <Tag tone={r.source === "DB" || r.source === "FRED" ? "up" : r.source === "SNAPSHOT" ? "blue" : r.source === "ETL" ? "amber" : "neutral"}>{r.source}</Tag>,
     },
     {
       key: "history",

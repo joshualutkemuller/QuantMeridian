@@ -97,7 +97,7 @@ export default function BenchmarkRatesPage() {
   }, [live, fallback]);
 
   const anyReal = BENCHMARK_FRED_IDS.some((id) => isRealEconSource(live[id]?.source));
-  const badgeSource: DataSource = anyReal ? (source === "FRED" ? "FRED" : "SNAPSHOT") : "SIM";
+  const badgeSource: DataSource = anyReal && isRealEconSource(source) ? source : "SIM";
 
   // State
   const [catFilter, setCatFilter] = useState<string>("ALL");

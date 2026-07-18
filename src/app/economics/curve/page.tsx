@@ -9,7 +9,7 @@ import { LineChart } from "@/components/charts/LineChart";
 import { BarChart } from "@/components/charts/BarChart";
 import { SourceBadge } from "@/components/econ/SourceBadge";
 import { TermSelect } from "@/components/ui/TermSelect";
-import { useCurveSnapshots, useInversions } from "@/lib/useEcon";
+import { isRealEconSource, useCurveSnapshots, useInversions } from "@/lib/useEcon";
 import {
   getCurveMetrics,
   currentSpreadBps,
@@ -457,7 +457,7 @@ export default function TreasuryCurveLab() {
 
         {/* ── Rates Relative Value ─────────────────────────────────────── */}
         {(() => {
-          const histSnaps = source === "FRED" || source === "SNAPSHOT" ? snapshots.filter((s) => s.id !== "now") : [];
+          const histSnaps = isRealEconSource(source) ? snapshots.filter((s) => s.id !== "now") : [];
           const butterflies = histSnaps.length >= 20 ? computeButterfliesFromHistory(today, histSnaps) : computeButterflies(today);
           const spreadZs = histSnaps.length >= 20 ? computeSpreadZFromHistory(today, histSnaps) : computeSpreadZScores(today);
           const carryRoll = computeCarryRoll(today);

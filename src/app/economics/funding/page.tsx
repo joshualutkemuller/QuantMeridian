@@ -86,7 +86,7 @@ export default function FundingPulse() {
         code="FUND"
         title="Funding & Liquidity Pulse"
         desc="Repo, the corridor, balances & funding stress"
-        right={<ProvenanceBadge source={anyReal ? (source === "FRED" ? "FRED" : "SNAPSHOT") : "SIM"} />}
+        right={<ProvenanceBadge source={anyReal && isRealEconSource(source) ? source : "SIM"} />}
       />
 
       <KpiStrip>

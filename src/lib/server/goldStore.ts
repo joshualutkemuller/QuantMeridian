@@ -54,6 +54,47 @@ function detectBackend(): Backend {
   return "sqlite";
 }
 
+function describeConfiguredTarget(backend: Backend): string {
+  if (backend === "databricks") {
+    return `backend=databricks, host=${process.env.DATABRICKS_HOST ?? "?"}`;
+  }
+  const rawUrl = process.env.MACRO_DB_URL ?? "";
+  if (backend === "postgres") {
+    try {
+      const url = new URL(rawUrl);
+      return `backend=postgres, host=${url.hostname}, database=${url.pathname.replace(/^\//, "") || "?"}`;
+    } catch {
+      return "backend=postgres";
+    }
+  }
+  return `backend=sqlite, path=${rawUrl.replace(/^sqlite:/, "") || "?"}`;
+}
+
+let loggedConfigState: "configured" | "missing" | null = null;
+const readLogAt = new Map<string, number>();
+const READ_LOG_TTL_MS = 60_000;
+
+function logGoldConfigured(backend: Backend): void {
+  if (loggedConfigState === "configured") return;
+  loggedConfigState = "configured";
+  console.info(`[goldStore] MACRO_DB_URL configured properly (${describeConfiguredTarget(backend)})`);
+}
+
+function logGoldMissing(): void {
+  if (loggedConfigState === "missing") return;
+  loggedConfigState = "missing";
+  console.warn("[goldStore] MACRO_DB_URL not configured — Gold DB routes will use fallback data");
+}
+
+function logGoldReadSuccess(operation: string, backend: Backend, rowCount: number): void {
+  const now = Date.now();
+  const key = `${backend}:${operation}`;
+  const last = readLogAt.get(key) ?? 0;
+  if (now - last < READ_LOG_TTL_MS) return;
+  readLogAt.set(key, now);
+  console.info(`[goldStore] Gold DB read succeeded (operation=${operation}, backend=${backend}, rows=${rowCount})`);
+}
+
 function physicalTable(table: string, backend: Backend): string {
   const catalog = process.env.MACRO_CATALOG ?? "macro_prod";
   if (backend === "sqlite") return `gold_${table}`;
@@ -188,6 +229,7 @@ async function query<T>(sql: string, params: unknown[], backend: Backend): Promi
 
 export function createGoldStore(): GoldStore {
   const backend = detectBackend();
+  logGoldConfigured(backend);
 
   return {
     async latest<T>(table: string, where?: Record<string, unknown>): Promise<T[]> {
@@ -199,6 +241,7 @@ export function createGoldStore(): GoldStore {
       const { clause, params } = buildWhere(where ?? {}, backend);
       const sql = `SELECT * FROM ${phys} ${clause}`.trim();
       const rows = await query<T>(sql, params, backend);
+      logGoldReadSuccess(`latest:${table}`, backend, rows.length);
       toCache(key, rows);
       return rows;
     },
@@ -215,6 +258,7 @@ export function createGoldStore(): GoldStore {
         : `SELECT * FROM ${phys} ${clause} ORDER BY date ASC`.trim();
       const rows = await query<T>(sql, params, backend);
       const ordered = limit ? rows.reverse() : rows;
+      logGoldReadSuccess(`history:${table}`, backend, ordered.length);
       toCache(cKey, ordered);
       return ordered;
     },
@@ -229,12 +273,15 @@ export function createGoldStore(): GoldStore {
       const { clause, params } = buildWhere(combined, backend);
       const sql = `SELECT * FROM ${phys} ${clause}`.trim();
       const rows = await query<T>(sql, params, backend);
+      logGoldReadSuccess(`asOf:${table}`, backend, rows.length);
       toCache(cKey, rows);
       return rows;
     },
 
     async raw<T>(sql: string, params?: unknown[]): Promise<T[]> {
-      return query<T>(sql, params ?? [], backend);
+      const rows = await query<T>(sql, params ?? [], backend);
+      logGoldReadSuccess("raw", backend, rows.length);
+      return rows;
     },
 
     async health(): Promise<{ ok: boolean; backend: string; latencyMs: number; detail: string }> {
@@ -247,6 +294,7 @@ export function createGoldStore(): GoldStore {
         if (cnt === 0) {
           return { ok: false, backend, latencyMs, detail: `gold.dim_series exists but has 0 rows — run the pipeline` };
         }
+        logGoldReadSuccess("health:dim_series", backend, rows.length);
         return { ok: true, backend, latencyMs, detail: `gold.dim_series has ${cnt} rows` };
       } catch (err) {
         return { ok: false, backend, latencyMs: Date.now() - t0, detail: (err as Error).message };
@@ -265,7 +313,13 @@ export function goldStore(): GoldStore {
 /** True when MACRO_DB_URL (or Databricks vars) are configured. */
 export function goldEnabled(): boolean {
   if (process.env.MACRO_DB_BACKEND === "databricks") {
-    return Boolean(process.env.DATABRICKS_HOST && process.env.DATABRICKS_HTTP_PATH && process.env.DATABRICKS_TOKEN);
+    const enabled = Boolean(process.env.DATABRICKS_HOST && process.env.DATABRICKS_HTTP_PATH && process.env.DATABRICKS_TOKEN);
+    if (enabled) logGoldConfigured("databricks");
+    else logGoldMissing();
+    return enabled;
   }
-  return Boolean(process.env.MACRO_DB_URL);
+  const enabled = Boolean(process.env.MACRO_DB_URL);
+  if (enabled) logGoldConfigured(detectBackend());
+  else logGoldMissing();
+  return enabled;
 }

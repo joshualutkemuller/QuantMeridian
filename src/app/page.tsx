@@ -19,7 +19,7 @@ import { getOptimizationRuns } from "@/data/optimization";
 import { getIndices, getHeatmap, getMovers, INDEX_FRED_IDS, mergeLiveIndices, mergeSnapshotIndices, latestFredAsOf, heatmapFromCards, moversFromCards, HEAT_HORIZONS, horizonDateRange, isAnnualized, type PipelineCard, type HeatHorizon } from "@/data/markets";
 import { TermToggleGroup } from "@/components/ui/TermToggleGroup";
 import { getActiveAlerts, SEVERITY_TONE, CATEGORY_LABEL, type Alert } from "@/data/alerts";
-import { useLiveSeriesSet } from "@/lib/useEcon";
+import { isRealEconSource, useLiveSeriesSet } from "@/lib/useEcon";
 import { useMarketView } from "@/lib/useMarket";
 import { fmtUsdAbbr, fmtSignedPct, fmtNum, pnlClass, fmtAbbr } from "@/lib/format";
 import { NAV } from "@/lib/nav";
@@ -57,7 +57,7 @@ export default function CommandCenter() {
   const [heatHorizon, setHeatHorizon] = useState<HeatHorizon>("1D");
 
   const { data: indexFred } = useLiveSeriesSet(INDEX_FRED_IDS, "lin", 30);
-  const anyIndexLive = INDEX_FRED_IDS.some((id) => indexFred[id]?.source === "FRED");
+  const anyIndexLive = INDEX_FRED_IDS.some((id) => isRealEconSource(indexFred[id]?.source));
   const fredAsOf = useMemo(() => latestFredAsOf(indexFred), [indexFred]);
 
   const { data: marketData, source: mktSource } = useMarketView<{ cards: PipelineCard[] }>("market");
@@ -86,8 +86,8 @@ export default function CommandCenter() {
   }, [hasCards, marketData, simMovers]);
 
   const marketAsOf = fredAsOf ?? pipelineAsOf;
-  const sourceTiers: ("FRED" | "SNAPSHOT" | "SIM")[] = [];
-  if (anyIndexLive) sourceTiers.push("FRED");
+  const sourceTiers: string[] = [];
+  if (anyIndexLive) sourceTiers.push(...INDEX_FRED_IDS.map((id) => indexFred[id]?.source).filter(isRealEconSource));
   if (hasCards) sourceTiers.push(pipelineLive ? "LIVE" as any : "SNAPSHOT");
   if (!sourceTiers.length) sourceTiers.push("SIM");
   const badgeSource = worstSource(sourceTiers);

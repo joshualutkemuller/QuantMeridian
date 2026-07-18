@@ -16,6 +16,7 @@ import { getStatStudyPacks, type StatStudyPack } from "@/data/econEnhancements";
 import { STAT_LABELS, STAT_DEFAULT_LABELS } from "@/data/statsConfig";
 import { useStatsData } from "@/lib/useStats";
 import { buildStatsPayload, ols, histogram, moments, rollingCorr, acf, alignPair, type Obs } from "@/lib/stats";
+import { isRealEconSource } from "@/lib/useEcon";
 import { fmtNum, fmtPct, pnlClass } from "@/lib/format";
 
 type Transform = "level" | "chg" | "yoy";
@@ -59,7 +60,7 @@ export default function StatisticalAnalysis() {
   const tSeries = series.map((s) => ({ label: s.label, obs: transformObs(s.points, transform) }));
   const active = tSeries.filter((s) => !excluded.has(s.label));
   const labels = active.map((s) => s.label);
-  const p = buildStatsPayload(active, source === "SNAPSHOT" ? "SNAPSHOT" : source === "FRED" ? "FRED" : "SIM", lag);
+  const p = buildStatsPayload(active, isRealEconSource(source) ? source : "SIM", lag);
 
   const byLabel = (l: string) => active.find((s) => s.label === l) ?? active[0] ?? { label: "", obs: [] };
   const rx = (l: string) => (labels.includes(l) ? l : labels[0] ?? "");

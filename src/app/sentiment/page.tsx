@@ -6,7 +6,7 @@ import { Panel, Stat, Tag } from "@/components/ui/Panel";
 import { ProvenanceBadge } from "@/components/ui/ProvenanceBadge";
 import { Sparkline } from "@/components/charts/Sparkline";
 import { LineChart } from "@/components/charts/LineChart";
-import { useLiveSeriesSet } from "@/lib/useEcon";
+import { isRealEconSource, useLiveSeriesSet } from "@/lib/useEcon";
 import { useSocial } from "@/lib/useSocial";
 import { fmtSigned, pnlClass } from "@/lib/format";
 import { aaiiSnapshotGeneratedAt, hasAaiiSnapshot } from "@/data/sentimentAaiiSnapshot";
@@ -102,7 +102,7 @@ export default function SentimentModule() {
   const live = useMemo<SentLiveInputs>(() => {
     const next: SentLiveInputs = { social: { intel: social, source: socialSource } };
     const v = sentFred["VIXCLS"];
-    if (v && v.source === "FRED" && v.observations.length > 20) {
+    if (v && isRealEconSource(v.source) && v.observations.length > 20) {
       const vals = v.observations.map((o) => o.value);
       const latest = vals[vals.length - 1];
       const pctile = vals.filter((x) => x <= latest).length / vals.length;
@@ -110,7 +110,7 @@ export default function SentimentModule() {
       next.vix = { score, detail: `VIX ${latest.toFixed(1)} · ${Math.round(pctile * 100)}th pctile` };
     }
     const hy = sentFred["BAMLH0A0HYM2"];
-    if (hy && hy.source === "FRED" && hy.observations.length > 20) {
+    if (hy && isRealEconSource(hy.source) && hy.observations.length > 20) {
       const vals = hy.observations.map((o) => o.value);
       const latest = vals[vals.length - 1];
       const pctile = vals.filter((x) => x <= latest).length / vals.length;
@@ -119,7 +119,7 @@ export default function SentimentModule() {
     }
     const t10 = sentFred["DGS10"];
     const t2 = sentFred["DGS2"];
-    if (t10?.source === "FRED" && t2?.source === "FRED" && t10.observations.length > 20 && t2.observations.length > 20) {
+    if (isRealEconSource(t10?.source) && isRealEconSource(t2?.source) && t10.observations.length > 20 && t2.observations.length > 20) {
       const spread10 = t10.observations[t10.observations.length - 1].value;
       const spread2 = t2.observations[t2.observations.length - 1].value;
       const curve = spread10 - spread2;

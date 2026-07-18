@@ -304,7 +304,7 @@ export default function MacroDashboard() {
                               {e.monthlyPrint == null ? "—" : `${fmtSigned(e.monthlyPrint, 2)}%`}
                             </span>
                             <span className="flex items-center justify-center" title={`Source: ${e.source}`}>
-                              <span className={clsx("h-1.5 w-1.5 rounded-full", e.source === "FRED" ? "bg-term-up" : e.source === "SNAPSHOT" ? "bg-term-violet" : "bg-term-amber")} />
+                              <span className={clsx("h-1.5 w-1.5 rounded-full", e.source === "DB" || e.source === "FRED" ? "bg-term-up" : e.source === "SNAPSHOT" ? "bg-term-violet" : "bg-term-amber")} />
                             </span>
                             <span className="inline-flex justify-end">
                               <Sparkline data={e.spark} width={56} height={18} />

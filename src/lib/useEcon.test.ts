@@ -5,6 +5,7 @@ import { getSnapshotObservations } from "@/data/econSnapshot";
 describe("mapSource contract", () => {
   const mapSource = (s: unknown): string => {
     if (typeof s !== "string") return "SIM";
+    if (s === "DB") return "DB";
     if (s === "FRED" || s.includes("FRED") || s.includes("Finnhub")) return "FRED";
     if (s === "SNAPSHOT") return "SNAPSHOT";
     if (s === "ETL") return "ETL";
@@ -13,6 +14,10 @@ describe("mapSource contract", () => {
 
   test("maps FRED correctly", () => {
     expect(mapSource("FRED")).toBe("FRED");
+  });
+
+  test("maps DB correctly", () => {
+    expect(mapSource("DB")).toBe("DB");
   });
 
   test("maps SNAPSHOT correctly", () => {
@@ -54,6 +59,10 @@ describe("mapSource contract", () => {
 describe("isRealEconSource", () => {
   test("FRED is a real source", () => {
     expect(isRealEconSource("FRED")).toBe(true);
+  });
+
+  test("DB is a real source", () => {
+    expect(isRealEconSource("DB")).toBe(true);
   });
 
   test("SNAPSHOT is a real source", () => {

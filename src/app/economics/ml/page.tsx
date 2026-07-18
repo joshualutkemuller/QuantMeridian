@@ -9,7 +9,7 @@ import { BarChart } from "@/components/charts/BarChart";
 import { LineChart } from "@/components/charts/LineChart";
 import { Gauge, ProgressBar } from "@/components/charts/Radial";
 import { getMLModels, REGIME_STATES, type MLModel } from "@/data/econModels";
-import { isRealEconSource, useLiveSeriesSet, type DataSource } from "@/lib/useEcon";
+import { isRealEconSource, useLiveSeriesSet, type DataSource, type SeriesObs } from "@/lib/useEcon";
 import { fmtNum, fmtPct } from "@/lib/format";
 
 const STATUS_TONE: Record<MLModel["status"], "up" | "amber" | "blue"> = {
@@ -41,7 +41,7 @@ function latestMomPct(obs: { date: string; value: number }[]): number | null {
   return prev ? Number(((cur / prev - 1) * 100).toFixed(2)) : null;
 }
 
-function overlayModel(model: MLModel, liveMap: Record<string, { observations: { date: string; value: number }[]; source: "FRED" | "SNAPSHOT" | "SIM" }>): MLModel {
+function overlayModel(model: MLModel, liveMap: Record<string, SeriesObs>): MLModel {
   if (model.id === "rec-prob") {
     const L = liveMap["T10Y2Y"];
     if (L && isRealEconSource(L.source) && L.observations.length) {
@@ -83,7 +83,7 @@ function overlayModel(model: MLModel, liveMap: Record<string, { observations: { 
 export default function MLApplications() {
   const { data: liveMap, source } = useLiveSeriesSet(["T10Y2Y", "PCEPILFE", "FEDFUNDS", "NFCI", "ICSA"], "lin", 48);
   const models = getMLModels().map((m) => overlayModel(m, liveMap));
-  const modelSource: DataSource = source === "FRED" ? "FRED" : source === "SNAPSHOT" ? "SNAPSHOT" : "SIM";
+  const modelSource: DataSource = isRealEconSource(source) ? source : "SIM";
   const rec = statusOf(models, "rec-prob");
   const infl = statusOf(models, "infl-now");
   const rate = statusOf(models, "rate-path");

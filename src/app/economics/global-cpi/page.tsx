@@ -60,7 +60,7 @@ export default function GlobalInflation() {
   const rows = region === "ALL" ? all : all.filter((c) => c.region === region);
 
   const drill = (row: CountryInflation) => {
-    const hasRawLevels = row.source === "FRED" || row.source === "SNAPSHOT";
+    const hasRawLevels = isRealEconSource(row.source);
     open({
       id: row.fredId,
       label: `${row.country} CPI`,
@@ -151,7 +151,7 @@ export default function GlobalInflation() {
       key: "source",
       header: "Src",
       align: "center",
-      render: (c) => <Tag tone={c.source === "FRED" ? "up" : c.source === "SNAPSHOT" ? "blue" : c.source === "ETL" ? "amber" : "neutral"}>{c.source}</Tag>,
+      render: (c) => <Tag tone={c.source === "DB" || c.source === "FRED" ? "up" : c.source === "SNAPSHOT" ? "blue" : c.source === "ETL" ? "amber" : "neutral"}>{c.source}</Tag>,
       sortVal: (c) => c.source,
     },
   ];

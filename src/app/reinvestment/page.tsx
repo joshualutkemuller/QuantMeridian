@@ -19,7 +19,7 @@ import {
   type ReinvestmentPosition,
   type ReinvestmentRecommendation,
 } from "@/data/reinvestment";
-import { useLiveSeriesSet } from "@/lib/useEcon";
+import { isRealEconSource, useLiveSeriesSet } from "@/lib/useEcon";
 import { fmtAbbr, fmtBps, fmtNum, fmtPct, fmtUsdAbbr, pnlClass } from "@/lib/format";
 
 const REINV_FRED_IDS = ["SOFR", "DGS3MO", "DCPF3M", "DGS6MO", "DGS1"] as const;
@@ -67,7 +67,7 @@ export default function ReinvestmentPage() {
   const recommendations = getReinvestmentRecommendations();
 
   const { data: reinvFred } = useLiveSeriesSet([...REINV_FRED_IDS], "lin", 5);
-  const anyLive = REINV_FRED_IDS.some((id) => reinvFred[id]?.source === "FRED");
+  const anyLive = REINV_FRED_IDS.some((id) => isRealEconSource(reinvFred[id]?.source));
   const positions = useMemo(() => mergeLiveYields(simPositions, reinvFred), [simPositions, reinvFred]);
   const liveKpis = useMemo(() => computeReinvestmentKpis(positions), [positions]);
   const [shockBps, setShockBps] = useState(-25);

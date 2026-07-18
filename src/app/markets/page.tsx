@@ -31,7 +31,7 @@ import {
   type PipelineCard,
   type HeatHorizon,
 } from "@/data/markets";
-import { useLiveSeriesSet } from "@/lib/useEcon";
+import { isRealEconSource, useLiveSeriesSet } from "@/lib/useEcon";
 import { TermToggleGroup } from "@/components/ui/TermToggleGroup";
 import { bySymbol, type AssetClass } from "@/data/universe";
 import { useMarketView, type MarketSource } from "@/lib/useMarket";
@@ -108,7 +108,7 @@ export default function LiveMarkets() {
   const hasCards = !!marketData?.cards?.length;
 
   const { data: indexFred } = useLiveSeriesSet([...INDEX_FRED_IDS], "lin", 30);
-  const anyFredLive = INDEX_FRED_IDS.some((id) => indexFred[id]?.source === "FRED");
+  const anyFredLive = INDEX_FRED_IDS.some((id) => isRealEconSource(indexFred[id]?.source));
 
   const indices = useMemo(() => {
     let idx = mergeIndexQuotes(getIndices(), marketData?.cards ?? []);

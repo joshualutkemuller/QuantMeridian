@@ -15,17 +15,19 @@ import {
 import { type EconEvent } from "@/data/econRates";
 import { useSimMode } from "@/lib/simMode";
 
-export type DataSource = "FRED" | "SNAPSHOT" | "SIM" | "LOADING" | "ETL";
-export type RealEconSource = "FRED" | "SNAPSHOT";
+export type DataSource = "DB" | "FRED" | "SNAPSHOT" | "SIM" | "LOADING" | "ETL";
+export type RealEconSource = "DB" | "FRED" | "SNAPSHOT";
+export type EconSeriesSource = RealEconSource | "SIM";
 
 /** True when a row came from an external/committed source rather than generated SIM. */
 export function isRealEconSource(source: unknown): source is RealEconSource {
-  return source === "FRED" || source === "SNAPSHOT";
+  return source === "DB" || source === "FRED" || source === "SNAPSHOT";
 }
 
 /** Map a route's `source` string to the badge vocabulary. */
 function mapSource(s: unknown): DataSource {
   if (typeof s !== "string") return "SIM";
+  if (s === "DB") return "DB";
   if (s === "FRED" || s.includes("FRED") || s.includes("Finnhub")) return "FRED";
   if (s === "SNAPSHOT") return "SNAPSHOT";
   if (s === "ETL") return "ETL";
@@ -35,7 +37,7 @@ function mapSource(s: unknown): DataSource {
 /**
  * Resilient econ data hooks. Each returns a fallback value immediately (SSR-safe,
  * no empty states), then transparently swaps in whatever the API route reports
- * (`FRED` live, `SNAPSHOT` real-frozen, else `SIM`). `fallbackSource` is what the
+ * (`DB` Gold, `FRED` live, `SNAPSHOT` real-frozen, else `SIM`). `fallbackSource` is what the
  * fallback value itself represents — `SNAPSHOT` when seeded from the committed
  * real snapshot, otherwise `SIM` — so a static-only deploy (no `/api`) still
  * labels real frozen data correctly instead of calling it SIM.
@@ -162,7 +164,7 @@ export interface LiveIndicator {
   monthlyPrint: number | null;
   asOf: string;
   history: number[];
-  source: "FRED" | "SNAPSHOT" | "SIM";
+  source: EconSeriesSource;
 }
 
 /** All indicators with live current value + 24m history, keyed by series id. */
@@ -178,21 +180,21 @@ export function useLiveIndicators(): { data: Record<string, LiveIndicator>; sour
 }
 
 export interface SeriesObs {
-  observations: { date: number; value: number }[] | { date: string; value: number }[];
-  source: "FRED" | "SNAPSHOT" | "SIM";
+  observations: { date: string; value: number }[];
+  source: EconSeriesSource;
 }
 
 /**
  * Batch-fetch many series (one request). Returns a map keyed by id of the raw
  * observations + per-series source. Pass `units: "lin"` to get raw index levels
  * so the page can derive MoM/YoY/acceleration itself. Empty map until loaded;
- * callers keep their simulation values unless a series reports source "FRED".
+ * callers keep their simulation values unless a series reports a real source.
  */
 export function useLiveSeriesSet(
   ids: string[],
   units?: string,
   n = 15
-): { data: Record<string, { observations: { date: string; value: number }[]; source: "FRED" | "SNAPSHOT" | "SIM" }>; source: DataSource } {
+): { data: Record<string, SeriesObs>; source: DataSource } {
   const key = ids.join(",");
   const url = `/api/econ/batch?ids=${encodeURIComponent(key)}${units ? `&units=${units}` : ""}&n=${n}`;
   // Seed from the committed snapshot so a static-only deploy still shows real
@@ -207,8 +209,11 @@ export function useLiveSeriesSet(
   );
   return useEconResource(
     url,
-    seeded as Record<string, { observations: { date: string; value: number }[]; source: "FRED" | "SNAPSHOT" | "SIM" }>,
-    (j) => Object.fromEntries((j.series ?? []).map((s: { id: string; observations: { date: string; value: number }[]; source: "FRED" | "SNAPSHOT" | "SIM" }) => [s.id, { observations: s.observations, source: s.source }])),
+    seeded as Record<string, SeriesObs>,
+    (j) => Object.fromEntries((j.series ?? []).map((s: { id: string; observations: { date: string; value: number }[]; source: unknown }) => {
+      const mapped = mapSource(s.source);
+      return [s.id, { observations: s.observations, source: isRealEconSource(mapped) ? mapped : "SIM" }];
+    })),
     Object.keys(seeded).length ? "SNAPSHOT" : "SIM",
     {},
   );

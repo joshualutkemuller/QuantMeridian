@@ -126,7 +126,7 @@ export default function RegimePage() {
 
   return (
     <div className="flex min-h-full flex-col">
-      <PageHeader code="REGIME" title="Macro Regime Playbook" desc="Impulse scores · named regimes · cross-desk actions" right={<span className="flex items-center gap-2"><ChartLink refs={[{ source: "econ", id: "UNRATE" }, { source: "econ", id: "T10Y2Y" }, { source: "econ", id: "VIXCLS" }]} range="5Y" /><ProvenanceBadge source={anyReal ? (source === "FRED" ? "FRED" : "SNAPSHOT") : "SIM"} /></span>} />
+      <PageHeader code="REGIME" title="Macro Regime Playbook" desc="Impulse scores · named regimes · cross-desk actions" right={<span className="flex items-center gap-2"><ChartLink refs={[{ source: "econ", id: "UNRATE" }, { source: "econ", id: "T10Y2Y" }, { source: "econ", id: "VIXCLS" }]} range="5Y" /><ProvenanceBadge source={anyReal && isRealEconSource(source) ? source : "SIM"} /></span>} />
 
       <KpiStrip>
         <Stat label="Named Regime" value={namedRegime.regime} sub={`${fmtPct(namedRegime.probability, 0)} prob`} tone="amber" />

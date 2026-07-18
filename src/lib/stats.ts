@@ -238,7 +238,7 @@ export function alignPair(a: Obs[], b: Obs[]): { x: number[]; y: number[]; n: nu
 /* ───────────────────────── full payload builder ───────────────────────── */
 
 export interface StatsPayload {
-  source: "FRED" | "SNAPSHOT" | "SIM";
+  source: "DB" | "FRED" | "SNAPSHOT" | "SIM";
   labels: string[];
   corr: number[][];
   grangerF: number[][];
@@ -256,7 +256,7 @@ export interface StatsPayload {
  * descriptive moments. Each pair uses its own overlapping window (pairwise-
  * complete) so the analysis exploits each series' full available history.
  */
-export function buildStatsPayload(series: { label: string; obs: Obs[] }[], source: "FRED" | "SNAPSHOT" | "SIM", lag = 2): StatsPayload {
+export function buildStatsPayload(series: { label: string; obs: Obs[] }[], source: "DB" | "FRED" | "SNAPSHOT" | "SIM", lag = 2): StatsPayload {
   const labels = series.map((s) => s.label);
   const k = labels.length;
   const corr: number[][] = [];

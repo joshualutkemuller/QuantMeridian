@@ -66,7 +66,7 @@ export default function FundingCostPage() {
   }, [live, fallback]);
 
   const anyReal = BENCHMARK_FRED_IDS.some((id) => isRealEconSource(live[id]?.source));
-  const badgeSource: DataSource = anyReal ? (source === "FRED" ? "FRED" : "SNAPSHOT") : "SIM";
+  const badgeSource: DataSource = anyReal && isRealEconSource(source) ? source : "SIM";
 
   const [tab, setTab] = useState<Tab>("dashboard");
 
@@ -84,13 +84,13 @@ export default function FundingCostPage() {
   const handlePdf = useCallback(async () => {
     await generateFundingCostPdf({
       costs, desks, ladder, spreads, regime, regimeScore,
-      source: anyReal ? "FRED" : "SIM",
+      source: badgeSource,
       tab,
       tierChartRef: tierChartRef.current,
       deskChartRef: deskChartRef.current,
       spreadChartRef: spreadChartRef.current,
     });
-  }, [costs, desks, ladder, spreads, regime, regimeScore, anyReal, tab]);
+  }, [costs, desks, ladder, spreads, regime, regimeScore, badgeSource, tab]);
 
   return (
     <>

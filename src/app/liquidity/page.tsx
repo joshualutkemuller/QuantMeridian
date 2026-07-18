@@ -20,7 +20,7 @@ import {
   type LiquidityBucket,
   type LiquidityStressScenario,
 } from "@/data/liquidity";
-import { useLiveSeriesSet } from "@/lib/useEcon";
+import { isRealEconSource, useLiveSeriesSet } from "@/lib/useEcon";
 import { fmtAbbr, fmtBps, fmtNum, fmtPct, fmtUsdAbbr, pnlClass } from "@/lib/format";
 
 const EWS_FRED_IDS = ["SOFR", "EFFR", "BAMLH0A0HYM2"] as const;
@@ -62,7 +62,7 @@ export default function LiquidityPage() {
   const summary = getLiquiditySummary();
 
   const { data: ewsFred } = useLiveSeriesSet([...EWS_FRED_IDS], "lin", 10);
-  const anyEwsLive = EWS_FRED_IDS.some((id) => ewsFred[id]?.source === "FRED");
+  const anyEwsLive = EWS_FRED_IDS.some((id) => isRealEconSource(ewsFred[id]?.source));
   const signals = useMemo(() => mergeLiveEWS(simSignals, ewsFred), [simSignals, ewsFred]);
 
   const [sevFilter, setSevFilter] = useState("ALL");

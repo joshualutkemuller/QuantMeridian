@@ -89,7 +89,7 @@ export default function UtilizationPage() {
   }, [live, fallback]);
 
   const anyReal = BENCHMARK_FRED_IDS.some((id) => isRealEconSource(live[id]?.source));
-  const badgeSource: DataSource = anyReal ? (source === "FRED" ? "FRED" : "SNAPSHOT") : "SIM";
+  const badgeSource: DataSource = anyReal && isRealEconSource(source) ? source : "SIM";
 
   // ── Securities lending data ──────────────────────────────────────
   const inventory = useMemo(() => getInventory(), []);

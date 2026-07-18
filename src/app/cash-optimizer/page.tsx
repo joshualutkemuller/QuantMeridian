@@ -18,7 +18,7 @@ import {
   type FundingUse,
   type FundingPath,
 } from "@/data/cash";
-import { useLiveSeriesSet } from "@/lib/useEcon";
+import { isRealEconSource, useLiveSeriesSet } from "@/lib/useEcon";
 import { fmtUsdAbbr, fmtAbbr, fmtNum, pnlClass } from "@/lib/format";
 
 const CASH_FRED_IDS = ["SOFR", "DFF", "DCPF3M"] as const;
@@ -49,7 +49,7 @@ export default function CashOptimizer() {
   const path = getFundingPath();
 
   const { data: cashFred } = useLiveSeriesSet([...CASH_FRED_IDS], "lin", 5);
-  const anyLive = CASH_FRED_IDS.some((id) => cashFred[id]?.source === "FRED");
+  const anyLive = CASH_FRED_IDS.some((id) => isRealEconSource(cashFred[id]?.source));
   const sources = useMemo(() => mergeLiveFundingRates(simSources, cashFred), [simSources, cashFred]);
   const liveKpis = useMemo(() => computeCashKpis(sources, uses), [sources, uses]);
 
