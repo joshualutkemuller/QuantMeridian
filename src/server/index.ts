@@ -118,7 +118,7 @@ server.listen(PORT, HOST, () => {
     if (!goldEnabled()) return;
     const health = await goldStore().health();
     if (health.ok) {
-      console.info(`[server] Gold DB startup check OK (backend=${health.backend}, latencyMs=${health.latencyMs}, ${health.detail})`);
+      console.log(`[server:OK] Gold DB startup check OK (backend=${health.backend}, latencyMs=${health.latencyMs}, ${health.detail})`);
     } else {
       console.warn(`[server] Gold DB startup check failed (backend=${health.backend}, latencyMs=${health.latencyMs}, ${health.detail})`);
     }

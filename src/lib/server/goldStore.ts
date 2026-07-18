@@ -77,7 +77,7 @@ const READ_LOG_TTL_MS = 60_000;
 function logGoldConfigured(backend: Backend): void {
   if (loggedConfigState === "configured") return;
   loggedConfigState = "configured";
-  console.info(`[goldStore] MACRO_DB_URL configured properly (${describeConfiguredTarget(backend)})`);
+  console.log(`[goldStore:OK] MACRO_DB_URL configured properly (${describeConfiguredTarget(backend)})`);
 }
 
 function logGoldMissing(): void {
@@ -92,7 +92,7 @@ function logGoldReadSuccess(operation: string, backend: Backend, rowCount: numbe
   const last = readLogAt.get(key) ?? 0;
   if (now - last < READ_LOG_TTL_MS) return;
   readLogAt.set(key, now);
-  console.info(`[goldStore] Gold DB read succeeded (operation=${operation}, backend=${backend}, rows=${rowCount})`);
+  console.log(`[goldStore:OK] Gold DB read successfully (operation=${operation}, backend=${backend}, rows=${rowCount})`);
 }
 
 function physicalTable(table: string, backend: Backend): string {
