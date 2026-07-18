@@ -10,12 +10,12 @@ import { LineChart } from "@/components/charts/LineChart";
 import { BarChart } from "@/components/charts/BarChart";
 import { TermToggleGroup } from "@/components/ui/TermToggleGroup";
 import { DataLegend } from "@/components/ui/DataLegend";
-import { isRealEconSource, useLiveSeriesSet, type DataSource } from "@/lib/useEcon";
+import { isRealEconSource, useLiveSeriesSet, type DataSource , useMacroInputs } from "@/lib/useEcon";
 import { fmtSigned, pnlClass } from "@/lib/format";
 import { generateFundingCostPdf } from "@/lib/fundingCostPdf";
 import {
   BENCHMARK_FRED_IDS,
-  buildFallback,
+  buildFallback, buildFallbackWithAnchors,
   type SeriesMap,
 } from "@/data/benchmarkRates";
 import {
@@ -52,7 +52,8 @@ const TABS: { value: Tab; label: string }[] = [
 ];
 
 export default function FundingCostPage() {
-  const fallback = useMemo<SeriesMap>(() => buildFallback(520), []);
+  const { data: macroInputs } = useMacroInputs();
+  const fallback = useMemo<SeriesMap>(() => buildFallbackWithAnchors(macroInputs.benchmarks, 520), [macroInputs.benchmarks]);
   const { data: live, source } = useLiveSeriesSet(BENCHMARK_FRED_IDS, "lin", 520);
 
   const map = useMemo<SeriesMap>(() => {

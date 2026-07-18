@@ -213,3 +213,41 @@ export function useLiveSeriesSet(
     {},
   );
 }
+
+export interface MacroInputsData {
+  source: "DB" | "SIM";
+  curve: Record<string, number>;
+  benchmarks: Record<string, number>;
+  funding: { stress_gauge: number | null; sofr_effr_spread_bps: number | null; ioer_effr_spread_bps: number | null };
+  credit: { hy_oas_bps: number | null; ig_oas_bps: number | null };
+  regime: { named_regime: string | null; confidence: number | null; growth_score: number | null; inflation_score: number | null; financial_conditions_score: number | null };
+  indicators: Record<string, number>;
+  asOf: string | null;
+}
+
+const MACRO_INPUTS_FALLBACK: MacroInputsData = {
+  source: "SIM",
+  curve: { "1M": 4.3, "3M": 4.25, "6M": 4.15, "1Y": 3.95, "2Y": 3.74, "5Y": 3.8, "10Y": 4.11, "30Y": 4.35 },
+  benchmarks: { FEDFUNDS: 4.08, SOFR: 4.31, DGS2: 3.74, DGS10: 4.11 },
+  funding: { stress_gauge: null, sofr_effr_spread_bps: null, ioer_effr_spread_bps: null },
+  credit: { hy_oas_bps: 312, ig_oas_bps: 105 },
+  regime: { named_regime: null, confidence: null, growth_score: null, inflation_score: null, financial_conditions_score: null },
+  indicators: {},
+  asOf: null,
+};
+
+/**
+ * Hook for Tier C synthetic-book modules. Returns Gold DB macro context
+ * (benchmark rates, curve, credit spreads, funding stress, regime) for use
+ * as anchors in SIM time-series generation. Falls back to SIM defaults when
+ * Gold DB is not configured (source: "SIM").
+ */
+export function useMacroInputs(): { data: MacroInputsData; source: "DB" | "SIM" } {
+  const raw = useEconResource<MacroInputsData>(
+    "/api/econ/macro-inputs",
+    MACRO_INPUTS_FALLBACK,
+    (j) => j as MacroInputsData,
+    "SIM",
+  );
+  return { data: raw.data, source: raw.data.source };
+}

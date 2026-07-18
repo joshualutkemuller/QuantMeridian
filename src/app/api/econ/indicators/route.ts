@@ -1,10 +1,11 @@
 import { json } from "@/lib/server/http";
-import { fredEnabled, fredSeries } from "@/lib/server/fred";
-import { FRED_CATALOG, getSeriesHistory, getSeriesHistoryRaw, resolveFred, type FredSeries } from "@/data/econSeries";
-import { getSnapshotObservations, getSnapshotRawObservations } from "@/data/econSnapshot";
+import { fredEnabled, fredSeries } from "@/lib/server/fred"; // MIGRATION FALLBACK — remove in Phase 6
+import { FRED_CATALOG, getSeriesHistory, getSeriesHistoryRaw, resolveFred, type FredSeries } from "@/data/econSeries"; // MIGRATION FALLBACK — remove in Phase 6
+import { getSnapshotObservations, getSnapshotRawObservations } from "@/data/econSnapshot"; // MIGRATION FALLBACK — remove in Phase 6
 import { worstSource } from "@/lib/provenance";
+import { goldEnabled, goldStore } from "@/lib/server/goldStore";
 
-type EconSource = "FRED" | "SNAPSHOT" | "SIM";
+type EconSource = "FRED" | "SNAPSHOT" | "SIM" | "DB";
 
 export interface LiveIndicator {
   id: string;
@@ -22,6 +23,34 @@ export interface LiveIndicator {
   asOf: string;
   history: number[];
   source: EconSource;
+  staleness_days?: number | null;
+  realtime_start?: string | null;
+  zscore?: number | null;
+  percentile?: number | null;
+  surprise?: number | null;
+  direction_is_good?: boolean | null;
+}
+
+// Gold layer row shape from gold.macro_indicator_dashboard
+interface GoldIndicatorRow {
+  series_id: string;
+  latest_value: number;
+  prior_value: number | null;
+  change: number | null;
+  yoy_pct: number | null;
+  zscore: number | null;
+  percentile: number | null;
+  surprise: number | null;
+  staleness_days: number | null;
+  realtime_start: string | null;
+  direction_is_good: boolean | null;
+  as_of_date: string | null;
+}
+
+interface GoldSparklineRow {
+  series_id: string;
+  date: string;
+  value: number;
 }
 
 const pct = (now: number | undefined, then: number | undefined, decimals = 1): number | null => {
@@ -53,8 +82,6 @@ function buildPoint(
   const priorMom = canDerivePeriodRates && (s.freq === "M" || s.freq === "Q") ? pct(priorRaw, rawValues[rawValues.length - 3], 2) : null;
   const qoq = canDerivePeriodRates ? s.freq === "M" ? pct(rawValue, qoqRaw, 2) : s.freq === "Q" ? pct(rawValue, qoqRaw, 2) : null : null;
   const priorQoq = canDerivePeriodRates ? s.freq === "M" ? pct(priorRaw, priorQoqRaw, 2) : s.freq === "Q" ? pct(priorRaw, priorQoqRaw, 2) : null : null;
-  // For YoY-transformed indicators the displayed value is the YoY reading; for
-  // level indicators we derive YoY from raw levels when enough history exists.
   const yoy = s.unit.includes("y/y") && !rawHist
     ? Number(value.toFixed(s.decimals))
     : s.freq === "M" && rawValues.length >= 13
@@ -88,21 +115,86 @@ function buildPoint(
 
 /**
  * GET /api/econ/indicators
- * Live current value + 24-month history for every catalog indicator, with the
- * correct FRED units transform per series. Per-series fallback to simulation.
+ *
+ * Resolution order:
+ *   1. Gold DB (MACRO_DB_URL) — gold.macro_indicator_dashboard + macro_indicator_sparkline
+ *   2. Live FRED API (FRED_API_KEY)
+ *   3. Committed snapshot
+ *   4. Deterministic SIM
  */
 export async function GET() {
+  // 1. Gold DB
+  if (goldEnabled()) {
+    try {
+      const store = goldStore();
+      const [dashRows, sparkRows] = await Promise.all([
+        store.latest<GoldIndicatorRow>("macro_indicator_dashboard"),
+        store.latest<GoldSparklineRow>("macro_indicator_sparkline"),
+      ]);
+
+      if (dashRows.length) {
+        const byId = new Map(dashRows.map((r) => [r.series_id, r]));
+        const sparkById = new Map<string, number[]>();
+        for (const row of sparkRows) {
+          const arr = sparkById.get(row.series_id) ?? [];
+          arr.push(row.value);
+          sparkById.set(row.series_id, arr);
+        }
+
+        const indicators: LiveIndicator[] = FRED_CATALOG.map((s) => {
+          const r = byId.get(s.id);
+          if (!r) {
+            // series not yet in Gold — fall through to SIM for this one
+            const simHist = getSeriesHistory(s.id, 24); // MIGRATION FALLBACK — remove in Phase 6
+            return buildPoint(s, simHist, "SIM");
+          }
+          const latest = r.latest_value ?? s.level;
+          const prior = r.prior_value ?? latest;
+          const history = sparkById.get(s.id) ?? [prior, latest];
+          return {
+            id: s.id,
+            value: Number(latest.toFixed(s.decimals)),
+            prior: Number(prior.toFixed(s.decimals)),
+            change: Number((r.change ?? latest - prior).toFixed(s.decimals)),
+            changePct: pct(latest, prior, 2),
+            mom: null,
+            momDelta: null,
+            qoq: null,
+            qoqDelta: null,
+            yoy: r.yoy_pct != null ? Number(r.yoy_pct.toFixed(1)) : null,
+            yoyDelta: null,
+            monthlyPrint: null,
+            asOf: r.as_of_date ?? "",
+            history: history.map((v) => Number(v.toFixed(s.decimals))),
+            source: "DB",
+            staleness_days: r.staleness_days,
+            realtime_start: r.realtime_start,
+            zscore: r.zscore,
+            percentile: r.percentile,
+            surprise: r.surprise,
+            direction_is_good: r.direction_is_good,
+          };
+        });
+
+        return json({ source: "DB", indicators });
+      }
+    } catch (err) {
+      console.warn("[indicators] Gold DB read failed:", (err as Error).message);
+    }
+  }
+
+  // 2. FRED → 3. SNAPSHOT → 4. SIM
   const live = fredEnabled();
   const out = await Promise.all(
     FRED_CATALOG.map(async (s) => {
       const r = resolveFred(s.id);
       if (live && !r.simOnly) {
         try {
-          const hist = await fredSeries(s.id, { limit: 24, units: r.units, scale: r.scale });
+          const hist = await fredSeries(s.id, { limit: 24, units: r.units, scale: r.scale }); // MIGRATION FALLBACK — remove in Phase 6
           if (hist.length) {
             const needsRaw = s.freq === "M" || s.freq === "Q";
             const rawHist = needsRaw && r.units !== "lin"
-              ? await fredSeries(s.id, { limit: 24, units: "lin", scale: r.scale })
+              ? await fredSeries(s.id, { limit: 24, units: "lin", scale: r.scale }) // MIGRATION FALLBACK — remove in Phase 6
               : hist;
             return buildPoint(s, hist as { date: string; value: number }[], "FRED", rawHist as { date: string; value: number }[]);
           }
@@ -110,8 +202,7 @@ export async function GET() {
           /* fall back */
         }
       }
-      // Real snapshot before synthetic SIM (matches the live display units).
-      const snap = getSnapshotObservations(s.id, 24);
+      const snap = getSnapshotObservations(s.id, 24); // MIGRATION FALLBACK — remove in Phase 6
       if (snap) {
         const rawSnap = getSnapshotRawObservations(s.id, 24);
         return buildPoint(
@@ -121,9 +212,9 @@ export async function GET() {
           rawSnap ? rawSnap as { date: string; value: number }[] : undefined
         );
       }
-      const simHist = getSeriesHistory(s.id, 24);
+      const simHist = getSeriesHistory(s.id, 24); // MIGRATION FALLBACK — remove in Phase 6
       const resolved = resolveFred(s.id);
-      const simRaw = resolved.units !== "lin" ? getSeriesHistoryRaw(s.id, 24) ?? undefined : undefined;
+      const simRaw = resolved.units !== "lin" ? getSeriesHistoryRaw(s.id, 24) ?? undefined : undefined; // MIGRATION FALLBACK — remove in Phase 6
       return buildPoint(s, simHist, "SIM", simRaw);
     })
   );

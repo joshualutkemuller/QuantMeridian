@@ -141,6 +141,73 @@ const LIVE_THRESHOLDS: LiveThreshold[] = [
   },
 ];
 
+/**
+ * Evaluate macro alerts directly from Gold DB MacroInputs (Tier C wiring).
+ * Replaces the FRED live-feed path for threshold signals that Gold already carries:
+ *   - HY OAS → credit.hy_oas_bps
+ *   - 10Y-2Y spread → indicators["T10Y2Y"]
+ *   - 10Y yield → benchmarks["DGS10"]
+ *   - Funding stress → funding.stress_gauge
+ *   - Regime signal → regime.named_regime / financial_conditions_score
+ *
+ * Returns [] when macroInputs.source === "SIM" (fall through to evaluateLiveAlerts).
+ */
+export function evaluateMacroAlerts(macroInputs: {
+  source: "DB" | "SIM";
+  credit: { hy_oas_bps: number | null; ig_oas_bps: number | null };
+  benchmarks: Record<string, number>;
+  funding: { stress_gauge: number | null; sofr_effr_spread_bps: number | null; ioer_effr_spread_bps: number | null };
+  regime: { named_regime: string | null; financial_conditions_score: number | null };
+  indicators: Record<string, number>;
+}): Alert[] {
+  if (macroInputs.source !== "DB") return [];
+  const alerts: Alert[] = [];
+  let seq = 6000;
+
+  const push = (severity: AlertSeverity, category: AlertCategory, title: string, detail: string, metric?: string) => {
+    alerts.push({ id: `ALR-GOLD-${seq++}`, ts: new Date().toISOString().slice(11, 19), minsAgo: 0, severity, category, title, detail, metric, acked: false });
+  };
+
+  // HY spreads
+  const hy = macroInputs.credit.hy_oas_bps;
+  if (hy != null) {
+    if (hy >= 600) push("CRITICAL", "MARKET", "HY spreads — stress level", `ICE BofA HY OAS at ${hy.toFixed(0)}bps — credit stress (Gold DB)`, `${hy.toFixed(0)}bps`);
+    else if (hy >= 450) push("HIGH", "MARKET", "HY spreads widening", `ICE BofA HY OAS at ${hy.toFixed(0)}bps — risk premium elevated (Gold DB)`, `${hy.toFixed(0)}bps`);
+    else if (hy >= 350) push("MEDIUM", "MARKET", "HY spreads above average", `ICE BofA HY OAS at ${hy.toFixed(0)}bps — above long-run median (Gold DB)`, `${hy.toFixed(0)}bps`);
+  }
+
+  // 10Y-2Y spread
+  const spread = macroInputs.indicators["T10Y2Y"];
+  if (spread != null) {
+    if (spread <= -80) push("HIGH", "TREASURY", "Deep yield curve inversion", `10Y-2Y spread at ${spread.toFixed(0)}bps — deep inversion, recession signal (Gold DB)`, `${spread.toFixed(0)}bps`);
+    else if (spread <= -40) push("MEDIUM", "TREASURY", "Yield curve inverted", `10Y-2Y spread at ${spread.toFixed(0)}bps — inverted (Gold DB)`, `${spread.toFixed(0)}bps`);
+    else if (spread >= 150) push("MEDIUM", "TREASURY", "Yield curve steep", `10Y-2Y spread at ${spread.toFixed(0)}bps — unusually steep (Gold DB)`, `${spread.toFixed(0)}bps`);
+  }
+
+  // 10Y yield
+  const dgs10 = macroInputs.benchmarks["DGS10"];
+  if (dgs10 != null) {
+    if (dgs10 >= 5.0) push("HIGH", "TREASURY", "10Y yield breach — 5% handle", `US 10Y at ${dgs10.toFixed(2)}% — funding cost pressure (Gold DB)`, `${dgs10.toFixed(2)}%`);
+    else if (dgs10 >= 4.75) push("MEDIUM", "TREASURY", "10Y yield elevated", `US 10Y at ${dgs10.toFixed(2)}% — above recent range (Gold DB)`, `${dgs10.toFixed(2)}%`);
+  }
+
+  // Funding stress gauge
+  const stress = macroInputs.funding.stress_gauge;
+  if (stress != null) {
+    if (stress >= 75) push("CRITICAL", "TREASURY", "Funding stress — critical", `Funding stress gauge at ${stress.toFixed(0)}/100 — systemic pressure (Gold DB)`, `${stress.toFixed(0)}/100`);
+    else if (stress >= 55) push("HIGH", "TREASURY", "Funding stress elevated", `Funding stress gauge at ${stress.toFixed(0)}/100 (Gold DB)`, `${stress.toFixed(0)}/100`);
+    else if (stress >= 40) push("MEDIUM", "TREASURY", "Funding stress watch", `Funding stress gauge at ${stress.toFixed(0)}/100 — entering watch zone (Gold DB)`, `${stress.toFixed(0)}/100`);
+  }
+
+  // Regime signal
+  const fcs = macroInputs.regime.financial_conditions_score;
+  const regime = macroInputs.regime.named_regime;
+  if (fcs != null && fcs <= -1.5) push("HIGH", "MARKET", "Tight financial conditions", `Financial conditions score ${fcs.toFixed(2)} — significantly restrictive (Gold DB: ${regime ?? "—"})`, `FCS ${fcs.toFixed(2)}`);
+  else if (fcs != null && fcs >= 1.5) push("MEDIUM", "MARKET", "Loose financial conditions", `Financial conditions score ${fcs.toFixed(2)} — unusually accommodative (Gold DB: ${regime ?? "—"})`, `FCS ${fcs.toFixed(2)}`);
+
+  return alerts;
+}
+
 export function evaluateLiveAlerts(liveData: LiveAlertData): Alert[] {
   const alerts: Alert[] = [];
   const simTitles = new Set(TEMPLATES.map((t) => t.title));

@@ -1,13 +1,43 @@
 # Module Data Audit & Test Plan
 
 **Generated**: 2026-06-25
+**Updated**: 2026-07-18 — Gold DB migration (see `docs/GOLD_DB_MIGRATION_HANDOFF.md`)
 **Scope**: All 38 modules — data sourcing, SIM vs live accuracy, bugs, provenance transparency
 
 ---
 
-## Executive Summary
+## Gold DB Migration Status (as of 2026-07-18)
 
-The terminal has a 3-tier data fallback: **FRED (live)** > **SNAPSHOT (committed real data)** > **SIM (deterministic Rng)**. Most economics modules are well-wired, but several systemic issues cause real data to be silently replaced by SIM even when live or snapshot data is available.
+The terminal has migrated from a 3-tier FRED→SNAPSHOT→SIM fallback chain to a single **Gold DB** source of truth for Tier A (series/econ) modules. The previous fallback chain is preserved with `// MIGRATION FALLBACK — remove in Phase 6` annotations during phased rollout.
+
+| Tier | Scope | Status |
+|------|-------|--------|
+| **A** | Econ/market series — `econ/*`, `chart/*`, `market/*` | **Migrated** — Gold DB is tier-0; FRED/SNAPSHOT fallbacks annotated for Phase 6 removal |
+| **B** | Live feeds — `news`, `social`, `polymarket`, `copilot`, `calendar` | **Exempt** — deliberate exceptions (non-series real-time feeds), documented per §7 D1 |
+| **C** | Synthetic book — `economics/*` pages, Tier C data modules | **Wired** — `getMacroInputs()` / `useMacroInputs()` + `buildFallbackWithAnchors()` provide Gold-backed rate anchors; book stays synthetic |
+
+### New routes added by migration
+- `GET /api/econ/credit` — `gold.credit_spread_daily` + `gold.credit_spread_rolling`
+- `GET /api/econ/funding` — `gold.funding_tape_daily` + `gold.funding_stress_daily`
+- `GET /api/econ/inflation` — `gold.inflation_explorer` + `gold.inflation_contribution`
+- `GET /api/econ/regime` — `gold.macro_regime_daily`
+- `GET /api/econ/global` — `gold.global_inflation` + `gold.global_policy_rates`
+- `GET /api/econ/macro-inputs` — Tier C macro context (benchmarks, curve, credit, funding, regime)
+- `GET /api/ml` — ML outputs (recession probability, inflation forecast, factor scores, anomaly, attribution)
+
+### Open items / Phase 6 prerequisites
+- [ ] Delete `src/data/econSnapshot.json`, `src/data/econSnapshot.ts`, `src/data/sentimentAaiiSnapshot.json`
+- [ ] Delete SIM generators from `src/data/econSeries.ts` (`getSeriesHistory*`, `getIndicators`, `Rng` usage)
+- [ ] Remove `src/lib/server/fred.ts` from prod path (demote to ingestion helper)
+- [ ] Prune `simMode.tsx` — collapse provenance to DB + staleness (§8)
+- [ ] Add `gold.release_calendar` to pipeline → wire `econ/calendar` (§12 decision)
+- [ ] `gold.powerbi_catalog` join test: every Tier A module has ≥1 mapped Gold object
+
+---
+
+## Executive Summary (pre-migration baseline)
+
+The terminal had a 3-tier data fallback: **FRED (live)** > **SNAPSHOT (committed real data)** > **SIM (deterministic Rng)**. Most economics modules are well-wired, but several systemic issues cause real data to be silently replaced by SIM even when live or snapshot data is available.
 
 ### Critical Bugs Found
 

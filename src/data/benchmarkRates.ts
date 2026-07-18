@@ -127,6 +127,36 @@ export function buildFallback(n = 520): SeriesMap {
   return map;
 }
 
+/**
+ * Same as buildFallback but anchors each series to a Gold DB value where available.
+ * Tier C pages call this with benchmarks/curve from getMacroInputs() so their SIM
+ * time-series are centered on real current rates rather than hardcoded defaults.
+ *
+ * `overrides` keys are BENCHMARK_SERIES ids or curve tenors mapped to series ids
+ * (e.g. { SOFR: 5.31, DGS10: 4.28 }). Unknown keys are silently ignored.
+ */
+export function buildFallbackWithAnchors(overrides: Record<string, number>, n = 520): SeriesMap {
+  const map: SeriesMap = {};
+  for (const s of BENCHMARK_SERIES) {
+    const anchor = overrides[s.id];
+    if (anchor != null) {
+      const def = { ...s, anchor };
+      const rng = new Rng(`bmrk-${s.id}`);
+      const dates = businessDates(n);
+      const vals: number[] = new Array(n);
+      vals[n - 1] = def.anchor;
+      for (let i = n - 2; i >= 0; i--) {
+        const meanRevert = (def.anchor - vals[i + 1]) * 0.04;
+        vals[i] = vals[i + 1] - def.drift + meanRevert + rng.normal(0, def.vol);
+      }
+      map[s.id] = dates.map((date, i) => ({ date, value: Number(vals[i].toFixed(def.decimals + 2)) }));
+    } else {
+      map[s.id] = simSeries(s.id, n);
+    }
+  }
+  return map;
+}
+
 export function defOf(id: string): BenchmarkDef | undefined {
   return BY_ID.get(id);
 }

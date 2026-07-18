@@ -2,13 +2,14 @@ import { json } from "@/lib/server/http";
 import { fredProbe } from "@/lib/server/fred";
 import { configuredNewsProviders } from "@/lib/server/newsProviders";
 import { configuredSocialProviders } from "@/lib/server/socialProviders";
-
+import { goldEnabled, goldStore } from "@/lib/server/goldStore";
 
 type Status = "LIVE" | "CACHED" | "SIM" | "STALE" | "ERROR" | "FALLBACK_AVAILABLE";
 interface ProviderProbe {
   status: Status;
   detail: string;
   live: boolean;
+  latencyMs?: number;
 }
 
 /** Reachability probe for URL-based upstreams (news_nlp, market pipeline). */
@@ -29,42 +30,73 @@ async function probe(base: string, path = "/health", ms = 3000): Promise<{ ok: b
 /**
  * GET /api/dataops/health
  * Probes each backend's real status from the server (env config + reachability
- * checks for URL-based services) so the DATAOPS provider panel reflects what's
- * actually wired, not just fixtures. Always 200.
+ * checks for URL-based services). Always 200.
+ *
+ * After the Gold DB migration, MACRO_DB (GoldStore) is the primary source for
+ * all Tier A/C series data. FRED, MARKET_*, MACRO_ETL are legacy/fallback paths.
  */
 export async function GET() {
   const providers: Record<string, ProviderProbe> = {};
 
-  // FRED — make one tiny real request so this reflects actual reachability,
-  // not just key presence. Distinguishes "no key in this runtime" (e.g. the
-  // Vercel env var isn't bound to the function / needs a redeploy) from "key
-  // present but rejected/unreachable".
+  // Gold DB — primary series data source post-migration (Tier A + C).
+  if (goldEnabled()) {
+    try {
+      const h = await goldStore().health();
+      providers.MACRO_DB = h.ok
+        ? { status: "LIVE", detail: `Gold DB healthy — backend=${h.backend}, ${h.detail}`, live: true, latencyMs: h.latencyMs }
+        : { status: "ERROR", detail: `Gold DB reachable but unhealthy: ${h.detail}`, live: false, latencyMs: h.latencyMs };
+    } catch (err) {
+      providers.MACRO_DB = { status: "ERROR", detail: `Gold DB connection failed: ${(err as Error).message}`, live: false };
+    }
+  } else {
+    providers.MACRO_DB = { status: "SIM", detail: "MACRO_DB_URL not configured — Tier A/C routes will fall back to FRED/SNAPSHOT/SIM", live: false };
+  }
+
+  // Gold source coverage (if DB is live)
+  if (providers.MACRO_DB?.live) {
+    try {
+      const rows = await goldStore().raw<{ source: string; series_count: number; avg_staleness_days: number }>(
+        `SELECT source, COUNT(*) AS series_count, AVG(staleness_days) AS avg_staleness_days FROM ${process.env.MACRO_DB_URL?.startsWith("sqlite") ? "gold_v_source_coverage" : "gold.v_source_coverage"} GROUP BY source`,
+        []
+      );
+      providers.MACRO_DB_COVERAGE = {
+        status: "LIVE",
+        detail: rows.map((r) => `${r.source}: ${r.series_count} series, avg staleness ${r.avg_staleness_days?.toFixed(1) ?? "?"}d`).join(" · "),
+        live: true,
+      };
+    } catch {
+      // coverage view not yet populated — non-fatal
+    }
+  }
+
+  // FRED — legacy fallback for Tier A routes when Gold DB is not configured.
   const fred = await fredProbe();
   providers.FRED = !fred.keyPresent
-    ? { status: "SIM", detail: fred.detail + " — deterministic econ model", live: false }
+    ? { status: "SIM", detail: fred.detail + " — Tier A routes fall back to SNAPSHOT/SIM when Gold DB is also absent", live: false }
     : fred.ok
-    ? { status: "LIVE", detail: fred.detail, live: true }
+    ? { status: "LIVE", detail: fred.detail + " (legacy fallback — Gold DB preferred)", live: true }
     : { status: "ERROR", detail: fred.detail, live: false };
 
-  // Market pipeline (YAHOO) — resolver order DB → FILE → PIPELINE → snapshot.
+  // Market pipeline (YAHOO) — legacy fallback; Gold equity tables are now preferred.
   const { MARKET_DB_URL, MARKET_DATA_DIR, MARKET_PIPELINE_URL } = process.env;
   if (MARKET_PIPELINE_URL) {
     const p = await probe(MARKET_PIPELINE_URL);
     providers.YAHOO = p.ok
-      ? { status: "LIVE", detail: `pipeline service reachable (${MARKET_PIPELINE_URL})`, live: true }
+      ? { status: "LIVE", detail: `pipeline service reachable (${MARKET_PIPELINE_URL}) — Gold equity tables preferred`, live: true }
       : { status: "STALE", detail: "MARKET_PIPELINE_URL set but unreachable", live: false };
   } else if (MARKET_DB_URL) {
-    providers.YAHOO = { status: "LIVE", detail: "MARKET_DB_URL (DuckDB/Postgres)", live: true };
+    providers.YAHOO = { status: "LIVE", detail: "MARKET_DB_URL (DuckDB/Postgres analytics_api_views) — Gold equity tables preferred", live: true };
   } else if (MARKET_DATA_DIR) {
-    providers.YAHOO = { status: "LIVE", detail: "MARKET_DATA_DIR (exported views)", live: true };
+    providers.YAHOO = { status: "LIVE", detail: "MARKET_DATA_DIR (exported views) — Gold equity tables preferred", live: true };
   } else {
-    providers.YAHOO = { status: "CACHED", detail: "committed market snapshot", live: false };
+    providers.YAHOO = { status: "CACHED", detail: "committed market snapshot (Gold equity tables preferred)", live: false };
   }
 
   // macro_data_etl — committed gold snapshot at build time.
   providers.MACRO_ETL = { status: "CACHED", detail: "committed macro_data_etl gold snapshot", live: false };
 
-  // news_nlp + the news/social provider chains.
+  // News/social provider chains — Tier B (kept live, deliberate exception to DB-only policy).
+  // Exception to DB-only policy: non-series real-time feed, see GOLD_DB_MIGRATION_HANDOFF §7 D1.
   const newsP = configuredNewsProviders();
   const socialP = configuredSocialProviders();
   const feeds = [...newsP, ...socialP];
@@ -81,8 +113,14 @@ export async function GET() {
     providers.NEWS_NLP = { status: "SIM", detail: "no news/social keys, no NEWS_NLP_URL — heuristic/SIM", live: false };
   }
 
-  // Internal books — not connected in this build.
-  providers.LOCAL_BOOK = { status: "SIM", detail: "internal books not connected", live: false };
+  // Internal books — Tier C: book stays synthetic; macro inputs wired to Gold DB.
+  providers.LOCAL_BOOK = {
+    status: providers.MACRO_DB?.live ? "LIVE" : "SIM",
+    detail: providers.MACRO_DB?.live
+      ? "Tier C book: macro/rate inputs from Gold DB; position/P&L synthetic"
+      : "Tier C book: macro inputs not connected (Gold DB absent), falling back to SIM",
+    live: providers.MACRO_DB?.live ?? false,
+  };
 
   // Deterministic fallback — always available.
   providers.SYNTHETIC = { status: "FALLBACK_AVAILABLE", detail: "deterministic fallback available; not a live upstream", live: false };

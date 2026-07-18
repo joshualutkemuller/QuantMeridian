@@ -1,6 +1,7 @@
 import { json } from "@/lib/server/http";
 import { readFile } from "fs/promises";
 import path from "path";
+import { goldEnabled, goldStore } from "@/lib/server/goldStore";
 import {
   PRICE_SNAPSHOTS,
   SNAPSHOTS,
@@ -545,6 +546,39 @@ export async function GET(req: Request, { params }: { params: { view: string } }
   const basis = returnBasis(req);
   const asof = asOfDate(req);
   const viewKey = dbView(view, basis);
+
+  // 0. Gold DB (MACRO_DB_URL) — equity tables
+  if (goldEnabled() && ["market", "cross-asset", "index-returns"].includes(view)) {
+    try {
+      const store = goldStore();
+      const [indexRows, returnRows] = await Promise.all([
+        store.latest("equity_total_return_index"),
+        store.latest("equity_return_daily"),
+      ]);
+      if (indexRows.length || returnRows.length) {
+        // Pass Gold rows through the existing computedView machinery by converting
+        // them to the MarketObservation shape the existing builder expects.
+        const obs: MarketObservation[] = (indexRows as any[]).map((r) => ({
+          series_id: r.ticker ?? r.series_id,
+          display_name: r.name ?? r.ticker ?? r.series_id,
+          asset_class: r.asset_class ?? "equity",
+          source: "DB",
+          date: r.date,
+          value: basis === "price" ? (r.price_return_index ?? r.total_return_index) : r.total_return_index,
+        })).filter((r: MarketObservation) => Number.isFinite(r.value));
+
+        if (obs.length) {
+          const data = computedView(view, obs, basis);
+          if (data) {
+            const earliestAsOf = extractEarliestAsOf(data, view);
+            return json({ source: "DB", view, basis, ...(asof ? { asof } : {}), earliestAsOf, data });
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(`[market] Gold DB read failed for view '${view}': ${(err as Error).message}`);
+    }
+  }
 
   // 1. local database (DuckDB file or Postgres)
   const dbUrl = process.env.MARKET_DB_URL;

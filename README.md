@@ -277,27 +277,37 @@ order per series is always **live FRED → committed SNAPSHOT → SIM**.
 
 ## Live economic data (FRED)
 
-The **Economics & Macro** modules are wired to **FRED** (Federal Reserve Economic Data).
-The connection is real but **optional and resilient**:
+The **Economics & Macro** modules resolve data through a prioritized chain, with the **Gold DB**
+as the primary production source. See `docs/GOLD_DB_MIGRATION_HANDOFF.md` for the full migration plan.
 
-- **With a key** — set `FRED_API_KEY` in the environment. Server-side route handlers
-  (`/api/econ/series`, `/api/econ/batch`, `/api/econ/indicators`, `/api/econ/curve`,
-  `/api/econ/calendar`) fetch live observations from a **166-series FRED catalog** — all
-  dashboard indicators (units-corrected), yield-curve tenors (`DGS1MO…DGS30`), the **funding
-  complex** (`IORB/EFFR/OBFR/SOFR/BGCR/TGCR/RRPONTSYD/WRESBAL/WALCL/DTB3…`), and release dates
-  from `api.stlouisfed.org` (cached 10 min). Panels show a green **LIVE · FRED** badge.
-- **Committed snapshot (optional middle tier)** — run `npm run export:econ-snapshot` once
-  (with a key + egress) to capture real FRED observations for the redistributable catalog
-  series into `src/data/econSnapshot.json`. The econ routes/hooks then fall back to **real,
-  frozen data** labelled **SNAPSHOT** (not synthetic) whenever live FRED is unreachable — same
-  pattern the market pipeline uses. Licensing-restricted series (e.g. ISM PMIs) stay `SIM`.
-- **Without a key or snapshot** — every module renders a **deterministic, seeded simulation**
-  anchored to a plausible mid-2026 macro regime. Panels show an amber **SIM** badge. No setup,
-  no hydration drift, fully functional offline.
+**Resolution order (Tier A — series/economic data):**
 
-Client hooks render the fallback instantly, then transparently upgrade — the resolution order
-per series is **live FRED → committed SNAPSHOT → SIM** — so the UI never blocks or breaks, and
-the badge always reflects what's actually shown.
+1. **Gold DB** (`MACRO_DB_URL`) — the `fred-bronze-to-gold-pipeline` Gold layer. Set
+   `MACRO_DB_URL=sqlite:./data/fred_local.db` (local) or `MACRO_DB_URL=postgres://…` (deploy).
+   All macro indicator analytics (z-scores, percentiles, surprises, staleness), curve metrics,
+   credit/funding/inflation/regime are **precomputed in Gold**. Routes become thin `SELECT`s.
+   Panels show a green **LIVE · DB** badge. This is the only data path in the production target.
+2. **Live FRED API** (`FRED_API_KEY`) — fallback when Gold DB is not configured. Fetches live
+   observations from `api.stlouisfed.org` (cached 10 min). Panels show **LIVE · FRED**.
+3. **Committed snapshot** — run `npm run export:econ-snapshot` to capture frozen FRED observations
+   into `src/data/econSnapshot.json`. Panels show **SNAPSHOT**.
+4. **Deterministic SIM** — seeded simulation anchored to a plausible mid-2026 macro regime.
+   Panels show **SIM**. No setup required; always available offline.
+
+**Tier B (kept live — deliberate exceptions):** NEWS, SENT social/survey, Polymarket, AI copilot.
+These are non-series real-time feeds not in the pipeline. Each route carries a documented exception comment.
+
+```bash
+# Gold DB (local SQLite — from fred-bronze-to-gold-pipeline --local output):
+MACRO_DB_URL=sqlite:./data/fred_local.db npm run dev
+
+# Gold DB (Postgres deploy):
+MACRO_DB_URL=postgres://user:pass@host/db npm run dev
+
+# Legacy: live FRED (fallback path when Gold DB is not configured):
+FRED_API_KEY=your_key_here npm run dev
+# Get a free key: https://fred.stlouisfed.org/docs/api/api_key.html
+```
 
 **Data as-of dates.** Rates/macro modules show a **`DATA AS OF <date>`** pill in the header
 so freshness is never ambiguous. The **Treasury Curve Lab** assembles **real point-in-time

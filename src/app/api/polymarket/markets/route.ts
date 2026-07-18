@@ -1,3 +1,4 @@
+// Exception to DB-only policy — non-series real-time feed, see GOLD_DB_MIGRATION_HANDOFF §7 D1.
 import { json } from "@/lib/server/http";
 import { fetchLiveMarkets } from "@/lib/server/polymarket";
 import { getPolymarkets } from "@/data/polymarket";

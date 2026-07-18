@@ -6,14 +6,14 @@ import { Panel, Stat, Tag } from "@/components/ui/Panel";
 import { ProvenanceBadge } from "@/components/ui/ProvenanceBadge";
 import { Sparkline } from "@/components/charts/Sparkline";
 import { ChartLink } from "@/components/charting/ChartLink";
-import { isRealEconSource, useLiveSeriesSet, type DataSource } from "@/lib/useEcon";
+import { isRealEconSource, useLiveSeriesSet, type DataSource , useMacroInputs } from "@/lib/useEcon";
 import { fmtSigned, pnlClass } from "@/lib/format";
 import { DataLegend } from "@/components/ui/DataLegend";
 import { TermToggleGroup } from "@/components/ui/TermToggleGroup";
 import {
   FUNDING_SERIES,
   FUNDING_FRED_IDS,
-  buildFallback,
+  buildFallback, buildFallbackWithAnchors,
   fraOisSeries,
   computeSpreads,
   computeGauge,
@@ -50,11 +50,12 @@ const REGIME_TONE = { Calm: "up", Watch: "amber", Stressed: "down" } as const;
 const DESK_TONE: Record<DeskSignalTone, "up" | "amber" | "down"> = { Calm: "up", Watch: "amber", Stress: "down" };
 
 export default function FundingPulse() {
+  const { data: macroInputs } = useMacroInputs();
   const fallback = useMemo<SeriesMap>(() => {
-    const m = buildFallback(260);
+    const m = buildFallbackWithAnchors(macroInputs.benchmarks, 260);
     m["FRA_OIS"] = fraOisSeries(260);
     return m;
-  }, []);
+  }, [macroInputs.benchmarks]);
 
   const { data: live, source } = useLiveSeriesSet(FUNDING_FRED_IDS, "lin", 260);
 

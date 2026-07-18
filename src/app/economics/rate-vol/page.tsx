@@ -11,13 +11,13 @@ import { BarChart } from "@/components/charts/BarChart";
 import { CorrelationMatrix } from "@/components/charts/Matrix";
 import { TermToggleGroup } from "@/components/ui/TermToggleGroup";
 import { DataLegend } from "@/components/ui/DataLegend";
-import { isRealEconSource, useLiveSeriesSet, type DataSource } from "@/lib/useEcon";
+import { isRealEconSource, useLiveSeriesSet, type DataSource , useMacroInputs } from "@/lib/useEcon";
 import { fmtSigned, pnlClass } from "@/lib/format";
 import { generateRateVolPdf } from "@/lib/rateVolPdf";
 import {
   BENCHMARK_SERIES,
   BENCHMARK_FRED_IDS,
-  buildFallback,
+  buildFallback, buildFallbackWithAnchors,
   type SeriesMap,
 } from "@/data/benchmarkRates";
 import {
@@ -83,7 +83,8 @@ export default function EconRateVol() {
   const surfaceChartRef = useRef<HTMLDivElement>(null);
   const coneChartRef = useRef<HTMLDivElement>(null);
 
-  const fallback = useMemo<SeriesMap>(() => buildFallback(520), []);
+  const { data: macroInputs } = useMacroInputs();
+  const fallback = useMemo<SeriesMap>(() => buildFallbackWithAnchors(macroInputs.benchmarks, 520), [macroInputs.benchmarks]);
   const { data: live, source } = useLiveSeriesSet(BENCHMARK_FRED_IDS, "lin", 520);
 
   const map = useMemo<SeriesMap>(() => {
