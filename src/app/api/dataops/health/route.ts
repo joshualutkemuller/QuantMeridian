@@ -2,7 +2,7 @@ import { json } from "@/lib/server/http";
 import { fredProbe } from "@/lib/server/fred";
 import { configuredNewsProviders } from "@/lib/server/newsProviders";
 import { configuredSocialProviders } from "@/lib/server/socialProviders";
-import { goldEnabled, goldStore } from "@/lib/server/goldStore";
+import { goldConfigStatus, goldEnabled, goldStore } from "@/lib/server/goldStore";
 
 type Status = "LIVE" | "CACHED" | "SIM" | "STALE" | "ERROR" | "FALLBACK_AVAILABLE";
 interface ProviderProbe {
@@ -10,6 +10,11 @@ interface ProviderProbe {
   detail: string;
   live: boolean;
   latencyMs?: number;
+  configured?: boolean;
+  readSuccessfully?: boolean;
+  backend?: string;
+  target?: string;
+  explicitStatus?: string;
 }
 
 /** Reachability probe for URL-based upstreams (news_nlp, market pipeline). */
@@ -37,19 +42,61 @@ async function probe(base: string, path = "/health", ms = 3000): Promise<{ ok: b
  */
 export async function GET() {
   const providers: Record<string, ProviderProbe> = {};
+  const goldConfig = goldConfigStatus();
 
   // Gold DB — primary series data source post-migration (Tier A + C).
   if (goldEnabled()) {
     try {
       const h = await goldStore().health();
       providers.MACRO_DB = h.ok
-        ? { status: "LIVE", detail: `Gold DB healthy — backend=${h.backend}, ${h.detail}`, live: true, latencyMs: h.latencyMs }
-        : { status: "ERROR", detail: `Gold DB reachable but unhealthy: ${h.detail}`, live: false, latencyMs: h.latencyMs };
+        ? {
+            status: "LIVE",
+            detail: `MACRO_DB_URL configured properly; Gold DB read successfully — backend=${h.backend}, ${h.detail}`,
+            live: true,
+            latencyMs: h.latencyMs,
+            configured: true,
+            readSuccessfully: true,
+            backend: h.backend,
+            target: goldConfig.target,
+            explicitStatus: "MACRO_DB_URL configured properly; Gold DB read successfully",
+          }
+        : {
+            status: "ERROR",
+            detail: `MACRO_DB_URL configured properly; Gold DB read failed — ${h.detail}`,
+            live: false,
+            latencyMs: h.latencyMs,
+            configured: true,
+            readSuccessfully: false,
+            backend: h.backend,
+            target: goldConfig.target,
+            explicitStatus: "MACRO_DB_URL configured properly; Gold DB read failed",
+          };
+      console.log(`[dataops:MACRO_DB] ${providers.MACRO_DB.explicitStatus} (${goldConfig.target}, latencyMs=${providers.MACRO_DB.latencyMs ?? "?"})`);
     } catch (err) {
-      providers.MACRO_DB = { status: "ERROR", detail: `Gold DB connection failed: ${(err as Error).message}`, live: false };
+      providers.MACRO_DB = {
+        status: "ERROR",
+        detail: `MACRO_DB_URL configured properly; Gold DB read failed — ${(err as Error).message}`,
+        live: false,
+        configured: true,
+        readSuccessfully: false,
+        backend: goldConfig.backend,
+        target: goldConfig.target,
+        explicitStatus: "MACRO_DB_URL configured properly; Gold DB read failed",
+      };
+      console.warn(`[dataops:MACRO_DB] ${providers.MACRO_DB.explicitStatus} (${goldConfig.target}): ${(err as Error).message}`);
     }
   } else {
-    providers.MACRO_DB = { status: "SIM", detail: "MACRO_DB_URL not configured — Tier A/C routes will fall back to FRED/SNAPSHOT/SIM", live: false };
+    providers.MACRO_DB = {
+      status: "SIM",
+      detail: "MACRO_DB_URL not configured — Tier A/C routes will fall back to FRED/SNAPSHOT/SIM",
+      live: false,
+      configured: false,
+      readSuccessfully: false,
+      backend: goldConfig.backend,
+      target: goldConfig.target,
+      explicitStatus: "MACRO_DB_URL not configured",
+    };
+    console.warn(`[dataops:MACRO_DB] ${providers.MACRO_DB.explicitStatus}`);
   }
 
   // Gold source coverage (if DB is live)

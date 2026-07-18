@@ -31,6 +31,12 @@ export interface GoldStore {
   health(): Promise<{ ok: boolean; backend: string; latencyMs: number; detail: string }>;
 }
 
+export interface GoldConfigStatus {
+  configured: boolean;
+  backend: Backend;
+  target: string;
+}
+
 /** Require an optional module at runtime without the bundler resolving it. */
 function optionalRequire(name: string): any {
   try {
@@ -68,6 +74,22 @@ function describeConfiguredTarget(backend: Backend): string {
     }
   }
   return `backend=sqlite, path=${rawUrl.replace(/^sqlite:/, "") || "?"}`;
+}
+
+export function goldConfigStatus(): GoldConfigStatus {
+  const backend = detectBackend();
+  if (process.env.MACRO_DB_BACKEND === "databricks") {
+    return {
+      configured: Boolean(process.env.DATABRICKS_HOST && process.env.DATABRICKS_HTTP_PATH && process.env.DATABRICKS_TOKEN),
+      backend,
+      target: describeConfiguredTarget(backend),
+    };
+  }
+  return {
+    configured: Boolean(process.env.MACRO_DB_URL),
+    backend,
+    target: describeConfiguredTarget(backend),
+  };
 }
 
 let loggedConfigState: "configured" | "missing" | null = null;
