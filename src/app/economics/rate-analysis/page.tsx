@@ -9,12 +9,12 @@ import { ProvenanceBadge } from "@/components/ui/ProvenanceBadge";
 import { Sparkline } from "@/components/charts/Sparkline";
 import { BarChart } from "@/components/charts/BarChart";
 import { DataLegend } from "@/components/ui/DataLegend";
-import { isRealEconSource, useLiveSeriesSet, type DataSource } from "@/lib/useEcon";
+import { isRealEconSource, useLiveSeriesSet, type DataSource , useMacroInputs } from "@/lib/useEcon";
 import { fmtSigned, pnlClass } from "@/lib/format";
 import {
   BENCHMARK_SERIES,
   BENCHMARK_FRED_IDS,
-  buildFallback,
+  buildFallback, buildFallbackWithAnchors,
   computeSummary,
   classifyRegime,
   type SeriesMap,
@@ -82,7 +82,8 @@ const MODULES: ModuleCard[] = [
 ];
 
 export default function RateAnalysisDashboard() {
-  const fallback = useMemo<SeriesMap>(() => buildFallback(520), []);
+  const { data: macroInputs } = useMacroInputs();
+  const fallback = useMemo<SeriesMap>(() => buildFallbackWithAnchors(macroInputs.benchmarks, 520), [macroInputs.benchmarks]);
   const { data: live, source } = useLiveSeriesSet(BENCHMARK_FRED_IDS, "lin", 520);
 
   const map = useMemo<SeriesMap>(() => {

@@ -15,7 +15,7 @@ import { TermToggleGroup } from "@/components/ui/TermToggleGroup";
 import { TermSelect } from "@/components/ui/TermSelect";
 import { ChartLink } from "@/components/charting/ChartLink";
 import { DataLegend } from "@/components/ui/DataLegend";
-import { isRealEconSource, useLiveSeriesSet, type DataSource } from "@/lib/useEcon";
+import { isRealEconSource, useLiveSeriesSet, type DataSource , useMacroInputs } from "@/lib/useEcon";
 import { fmtNum, fmtSigned, fmtBps, pnlClass } from "@/lib/format";
 import { generateBenchmarkPdf } from "@/lib/benchmarkPdf";
 import {
@@ -23,7 +23,7 @@ import {
   BENCHMARK_FRED_IDS,
   CATEGORIES,
   SPREAD_PAIRS,
-  buildFallback,
+  buildFallback, buildFallbackWithAnchors,
   computeSummary,
   computeStatusBoard,
   computeAllSpreads,
@@ -83,7 +83,8 @@ function chgBps(def: BenchmarkDef, cur: number | null, prev: number | null): { t
 }
 
 export default function BenchmarkRatesPage() {
-  const fallback = useMemo<SeriesMap>(() => buildFallback(520), []);
+  const { data: macroInputs } = useMacroInputs();
+  const fallback = useMemo<SeriesMap>(() => buildFallbackWithAnchors(macroInputs.benchmarks, 520), [macroInputs.benchmarks]);
   const { data: live, source } = useLiveSeriesSet(BENCHMARK_FRED_IDS, "lin", 520);
 
   const map = useMemo<SeriesMap>(() => {

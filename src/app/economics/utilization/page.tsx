@@ -14,13 +14,13 @@ import { ProgressBar } from "@/components/charts/Radial";
 import { TermToggleGroup } from "@/components/ui/TermToggleGroup";
 import { TermSelect } from "@/components/ui/TermSelect";
 import { DataLegend } from "@/components/ui/DataLegend";
-import { isRealEconSource, useLiveSeriesSet, type DataSource } from "@/lib/useEcon";
+import { isRealEconSource, useLiveSeriesSet, type DataSource , useMacroInputs } from "@/lib/useEcon";
 import { fmtNum, fmtSigned, pnlClass } from "@/lib/format";
 import { generateUtilizationPdf } from "@/lib/utilizationPdf";
 import {
   BENCHMARK_SERIES,
   BENCHMARK_FRED_IDS,
-  buildFallback,
+  buildFallback, buildFallbackWithAnchors,
   defOf,
   type SeriesMap,
 } from "@/data/benchmarkRates";
@@ -75,7 +75,8 @@ const RATE_OPTIONS = BENCHMARK_SERIES
 
 export default function UtilizationPage() {
   // ── Benchmark rate data ──────────────────────────────────────────
-  const fallback = useMemo<SeriesMap>(() => buildFallback(520), []);
+  const { data: macroInputs } = useMacroInputs();
+  const fallback = useMemo<SeriesMap>(() => buildFallbackWithAnchors(macroInputs.benchmarks, 520), [macroInputs.benchmarks]);
   const { data: live, source } = useLiveSeriesSet(BENCHMARK_FRED_IDS, "lin", 520);
 
   const map = useMemo<SeriesMap>(() => {

@@ -1,5 +1,8 @@
+// Exception to DB-only policy — economic release *dates* are not a Gold series.
+// Decision (§12): pipeline adds gold.release_calendar (FRED /releases/dates ingested);
+// until that table exists this route remains on the live FRED + Finnhub path.
 import { json } from "@/lib/server/http";
-import { fredEnabled, fredSeries, fredReleaseDates, type FredObservation } from "@/lib/server/fred"; // MIGRATION FALLBACK — remove in Phase 6
+import { fredEnabled, fredSeries, fredReleaseDates, type FredObservation } from "@/lib/server/fred"; // Exception to DB-only policy
 import { finnhubEnabled, finnhubEconCalendar, type FinnhubEconEvent } from "@/lib/server/finnhubCalendar";
 import { EVENT_SERIES, type EconEvent } from "@/data/econRates";
 
