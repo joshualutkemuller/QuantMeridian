@@ -148,6 +148,7 @@ interface MarketObservation {
   source: string;
   date: string;
   value: number;
+  price?: number;
 }
 
 async function readMarketObservations(dbUrl: string, basis: ReturnBasis, asof: string): Promise<MarketObservation[]> {
@@ -251,15 +252,17 @@ function cagr(dates: string[], values: number[], years: number): number | null {
 
 function marketSnapshotFromObservations(rows: MarketObservation[], basis: ReturnBasis): MarketSnapshotView {
   const cards: SnapshotCard[] = [...groupObs(rows).entries()].map(([seriesId, obs]) => {
-    const dates = obs.map((o) => o.date);
-    const values = obs.map((o) => o.value);
-    const last = obs[obs.length - 1];
+    const ordered = [...obs].sort((a, b) => a.date.localeCompare(b.date));
+    const dates = ordered.map((o) => o.date);
+    const values = ordered.map((o) => o.value);
+    const prices = ordered.map((o) => o.price ?? o.value);
+    const last = ordered[ordered.length - 1];
     return {
       series_id: seriesId,
       display_name: last.display_name,
       asset_class: last.asset_class,
       source: last.source,
-      price: round(values[values.length - 1], 4),
+      price: round(prices[prices.length - 1], 4),
       asof: dates[dates.length - 1],
       ret_1d: round(ret(values, 1)),
       ret_5d: round(ret(values, 5)),
@@ -423,6 +426,52 @@ function computedView(view: MarketView, rows: MarketObservation[], basis: Return
   return null;
 }
 
+interface GoldEquityRow {
+  ticker?: string;
+  series_id?: string;
+  name?: string;
+  display_name?: string;
+  asset_class?: string;
+  observation_date?: string;
+  date?: string;
+  close?: number | string | null;
+  price?: number | string | null;
+  price_return_index?: number | string | null;
+  total_return_index?: number | string | null;
+}
+
+function finiteNumber(v: unknown): number | null {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function goldEquityRowsToObservations(rows: GoldEquityRow[], basis: ReturnBasis, asof: string | null): MarketObservation[] {
+  return rows
+    .map((r) => {
+      const ticker = r.ticker ?? r.series_id;
+      const date = String(r.observation_date ?? r.date ?? "");
+      const close = finiteNumber(r.close ?? r.price);
+      const returnValue = finiteNumber(
+        basis === "total"
+          ? r.total_return_index ?? r.price_return_index ?? close
+          : r.price_return_index ?? close
+      );
+      if (!ticker || !date || close === null || returnValue === null) return null;
+      if (asof && date > asof) return null;
+      return {
+        series_id: ticker,
+        display_name: r.display_name ?? r.name ?? ticker,
+        asset_class: (r.asset_class ?? "EQUITY").toUpperCase(),
+        source: "DB",
+        date,
+        value: returnValue,
+        price: close,
+      } satisfies MarketObservation;
+    })
+    .filter((row): row is MarketObservation => row !== null)
+    .sort((a, b) => a.series_id.localeCompare(b.series_id) || a.date.localeCompare(b.date));
+}
+
 /** Read one view's JSON payload from a local directory of exported files. */
 async function readFromDir(dir: string, view: MarketView, basis: ReturnBasis): Promise<unknown | null> {
   const filename = basis === "price" ? PRICE_FILE_NAME[view] ?? FILE_NAME[view] : FILE_NAME[view];
@@ -551,21 +600,15 @@ export async function GET(req: Request, { params }: { params: { view: string } }
   if (goldEnabled() && ["market", "cross-asset", "index-returns"].includes(view)) {
     try {
       const store = goldStore();
-      const [indexRows, returnRows] = await Promise.all([
-        store.latest("equity_total_return_index"),
-        store.latest("equity_return_daily"),
+      const [priceRows, totalRows] = await Promise.all([
+        store.latest<GoldEquityRow>("equity_return_daily"),
+        store.latest<GoldEquityRow>("equity_total_return_index"),
       ]);
-      if (indexRows.length || returnRows.length) {
-        // Pass Gold rows through the existing computedView machinery by converting
-        // them to the MarketObservation shape the existing builder expects.
-        const obs: MarketObservation[] = (indexRows as any[]).map((r) => ({
-          series_id: r.ticker ?? r.series_id,
-          display_name: r.name ?? r.ticker ?? r.series_id,
-          asset_class: r.asset_class ?? "equity",
-          source: "DB",
-          date: r.date ?? r.observation_date,
-          value: basis === "price" ? (r.price_return_index ?? r.total_return_index) : r.total_return_index,
-        })).filter((r: MarketObservation) => Number.isFinite(r.value));
+      const rowsForBasis = basis === "total" && totalRows.length ? totalRows : priceRows.length ? priceRows : totalRows;
+      if (rowsForBasis.length) {
+        // Gold equity rows carry both return-index values and actual closes.
+        // Quote-board `price` must be the close, not the return index level.
+        const obs = goldEquityRowsToObservations(rowsForBasis as GoldEquityRow[], basis, asof);
 
         if (obs.length) {
           const data = computedView(view, obs, basis);

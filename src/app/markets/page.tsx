@@ -87,7 +87,7 @@ export default function LiveMarkets() {
   const marketHeadlines = useMemo(() => headlines.filter(h => h.assetClass === "EQUITY" || h.assetClass === "COMMODITY").sort((a, b) => b.importance - a.importance), [headlines]);
   const [tab, setTab] = useState<TabKey>("EQUITY");
   const [chartTicker, setChartTicker] = useState("AAPL");
-  const [basis, setBasis] = useState<ReturnBasis>("total");
+  const [basis, setBasis] = useState<ReturnBasis>("price");
   const [asof, setAsOf] = useState("");
   const [heatHorizon, setHeatHorizon] = useState<HeatHorizon>("1D");
 
