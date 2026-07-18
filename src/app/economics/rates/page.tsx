@@ -18,6 +18,7 @@ import {
 } from "@/data/econRates";
 import { getPolicyTransmission, type PolicyTransmission } from "@/data/econEnhancements";
 import { fomcFromEtl, impliedPathFromEtl, hasEtlFedData, etlFedSource, etlFedAsOf, etlFedSourceDetail, etlFedModelInputs } from "@/data/etlMacro";
+import { useFomc } from "@/lib/useEcon";
 import { SourceBadge } from "@/components/econ/SourceBadge";
 import { fmtNum, fmtSigned, fmtUsdAbbr, pnlClass } from "@/lib/format";
 
@@ -49,26 +50,31 @@ function probOf(m: FomcMeeting, move: number): number {
 }
 
 export default function RateProbabilitiesPage() {
-  // Prefer the macro_data_etl FedWatch gold table (CME Fed Funds futures →
-  // FOMC probabilities) when its snapshot is present; fall back to the
-  // built-in deterministic easing path otherwise.
+  // Prefer the Gold-anchored /api/econ/fomc route (which grounds the
+  // probability ladder in the live SOFR/EFFR from Gold DB); fall back to
+  // the static ETL snapshot; finally fall back to the deterministic SIM path.
+  const { data: fomcData } = useFomc();
   const useEtl = hasEtlFedData();
-  const meetings = useEtl ? fomcFromEtl() : getFomcMeetings();
-  const path = useEtl ? impliedPathFromEtl() : getImpliedPath();
+  const meetings = fomcData?.meetings?.length
+    ? (fomcData.meetings as import("@/data/econRates").FomcMeeting[])
+    : useEtl ? fomcFromEtl() : getFomcMeetings();
+  const path = fomcData?.path?.length
+    ? fomcData.path
+    : useEtl ? impliedPathFromEtl() : getImpliedPath();
   const fedSource: "ETL" | "SIM" = useEtl ? "ETL" : "SIM";
-  const fedPriceSource = etlFedSource();
+  const fedPriceSource = fomcData?.fedPriceSource ?? etlFedSource();
   const fedIsLiveCme = useEtl && fedPriceSource === "cme";
   const fedIsFredModel = useEtl && fedPriceSource === "fred_model";
-  const fedModelInputs = fedIsFredModel ? etlFedModelInputs() : null;
-  const fedSourceDetail = etlFedSourceDetail();
-  const currentTarget =
-    fedModelInputs?.target_low != null && fedModelInputs?.target_high != null
+  const fedModelInputs = fomcData?.modelInputs ?? (fedIsFredModel ? etlFedModelInputs() : null);
+  const fedSourceDetail = fomcData?.sourceDetail ?? etlFedSourceDetail();
+  const currentTarget = fomcData?.currentTarget ??
+    (fedModelInputs != null && "target_low" in fedModelInputs && fedModelInputs.target_low != null && "target_high" in fedModelInputs && fedModelInputs.target_high != null
       ? {
-          low: fedModelInputs.target_low,
-          high: fedModelInputs.target_high,
-          mid: (fedModelInputs.target_low + fedModelInputs.target_high) / 2,
+          low: fedModelInputs.target_low as number,
+          high: fedModelInputs.target_high as number,
+          mid: ((fedModelInputs.target_low as number) + (fedModelInputs.target_high as number)) / 2,
         }
-      : CURRENT_TARGET;
+      : CURRENT_TARGET);
   const displayPath =
     fedIsFredModel && path.length
       ? [{ ...path[0], rate: currentTarget.mid }, ...path.slice(1)]

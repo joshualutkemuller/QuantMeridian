@@ -52,10 +52,11 @@ const DESK_TONE: Record<DeskSignalTone, "up" | "amber" | "down"> = { Calm: "up",
 export default function FundingPulse() {
   const { data: macroInputs } = useMacroInputs();
   const fallback = useMemo<SeriesMap>(() => {
+    if (!macroInputs) return {};
     const m = buildFallbackWithAnchors(macroInputs.benchmarks, 260);
     m["FRA_OIS"] = fraOisSeries(260);
     return m;
-  }, [macroInputs.benchmarks]);
+  }, [macroInputs]);
 
   const { data: live, source } = useLiveSeriesSet(FUNDING_FRED_IDS, "lin", 260);
 

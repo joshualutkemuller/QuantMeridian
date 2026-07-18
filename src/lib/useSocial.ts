@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { fetchJson, peekFresh } from "@/lib/fetchCache";
 import { getSocialIntel, type SocialIntel } from "@/data/news";
+import { useSimMode } from "@/lib/simMode";
 
 type SocialResponse = SocialIntel & { source: string };
 
@@ -12,6 +13,7 @@ type SocialResponse = SocialIntel & { source: string };
  * or "SIM".
  */
 export function useSocial(): { intel: SocialIntel; source: string } {
+  const { simEnabled } = useSimMode();
   const url = "/api/social";
   const cached = peekFresh<SocialResponse>(url);
   const [intel, setIntel] = useState<SocialIntel>(cached ?? getSocialIntel());
@@ -39,5 +41,8 @@ export function useSocial(): { intel: SocialIntel; source: string } {
     };
   }, [url]);
 
+  if (!simEnabled && source === "SIM") {
+    return { intel: { tickers: [], sectors: [], themes: [], totalPosts: 0, platforms: [] }, source };
+  }
   return { intel, source };
 }

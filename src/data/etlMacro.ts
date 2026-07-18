@@ -88,10 +88,14 @@ function labelFor(meetingDate: string): string {
  * per-meeting reference rate (chained from the prior meeting's expected rate)
  * to recover discrete bp moves, and convert implied/expected rates back to the
  * terminal's target-midpoint scale by removing the IORB spread.
+ *
+ * @param spotEffectiveRate - Live SOFR/EFFR from Gold DB benchmarks. When
+ *   provided this replaces the static `CURRENT_TARGET.mid + IORB_SPREAD`
+ *   anchor so the probability ladder is grounded in the actual effective rate.
  */
-export function fomcFromEtl(): FomcMeeting[] {
+export function fomcFromEtl(spotEffectiveRate?: number): FomcMeeting[] {
   const rows = [...etlFedProbabilities].sort((a, b) => a.meeting_date.localeCompare(b.meeting_date));
-  let refRate = CURRENT_TARGET.mid + IORB_SPREAD; // pre-first-meeting effective rate
+  let refRate = spotEffectiveRate ?? (CURRENT_TARGET.mid + IORB_SPREAD); // pre-first-meeting effective rate
 
   return rows.map((r) => {
     let ladder: Record<string, number> = {};
@@ -137,8 +141,9 @@ export function fomcFromEtl(): FomcMeeting[] {
 }
 
 /** Implied policy path (target-mid scale) derived from the ETL meetings. */
-export function impliedPathFromEtl(): { label: string; rate: number }[] {
-  return [{ label: "Now", rate: CURRENT_TARGET.mid }, ...fomcFromEtl().map((m) => ({ label: m.label, rate: m.impliedRate }))];
+export function impliedPathFromEtl(spotEffectiveRate?: number): { label: string; rate: number }[] {
+  const nowRate = spotEffectiveRate != null ? spotEffectiveRate - IORB_SPREAD : CURRENT_TARGET.mid;
+  return [{ label: "Now", rate: nowRate }, ...fomcFromEtl(spotEffectiveRate).map((m) => ({ label: m.label, rate: m.impliedRate }))];
 }
 
 /** Price source of the ETL FedWatch snapshot ("cme" live, "fred_model", or "sim"). */
