@@ -1,7 +1,15 @@
 import { json } from "@/lib/server/http";
 import { runMarketLens } from "@/data/marketLens";
+import { goldEnabled, goldStore } from "@/lib/server/goldStore";
 
 const LENS_URL = process.env.MARKET_LENS_URL || "";
+
+interface GoldConstituentRow {
+  ticker: string;
+  name: string | null;
+  asset_class: string | null;
+  sector: string | null;
+}
 
 interface ViewDef {
   view_id: string;
@@ -136,6 +144,29 @@ export async function GET(req: Request) {
     return json({ source: "SNAPSHOT", fallback, data: PRESETS });
   }
   if (action === "catalog") {
+    // Gold DB: enrich / replace embedded CATALOG with real index_constituents
+    if (goldEnabled()) {
+      try {
+        const store = goldStore();
+        const goldRows = await store.latest<GoldConstituentRow>("index_constituents");
+        if (goldRows.length) {
+          const goldEntries = goldRows.map((r) => ({
+            series_id: r.ticker,
+            ticker: r.ticker,
+            display_name: r.name ?? r.ticker,
+            asset_class: r.asset_class ?? "EQUITY",
+            source: "gold",
+            sector: r.sector ?? null,
+          }));
+          const filtered = q
+            ? goldEntries.filter((c) => c.series_id.toUpperCase().includes(q.toUpperCase()) || c.display_name.toUpperCase().includes(q.toUpperCase()))
+            : goldEntries;
+          return json({ source: "DB", fallback, data: { total: filtered.length, entries: filtered } });
+        }
+      } catch (err) {
+        console.warn("[market-lens] Gold DB catalog read failed:", (err as Error).message);
+      }
+    }
     const filtered = q
       ? CATALOG.filter(c => c.series_id.toUpperCase().includes(q.toUpperCase()) || c.display_name.toUpperCase().includes(q.toUpperCase()))
       : CATALOG;

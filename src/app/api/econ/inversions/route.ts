@@ -1,6 +1,6 @@
 import { json } from "@/lib/server/http";
-import { fredEnabled, fredSeries } from "@/lib/server/fred";
-import { getSnapshotObservations, getSnapshotRawObservations } from "@/data/econSnapshot";
+import { fredEnabled, fredSeries } from "@/lib/server/fred"; // MIGRATION FALLBACK — remove in Phase 6
+import { getSnapshotObservations, getSnapshotRawObservations } from "@/data/econSnapshot"; // MIGRATION FALLBACK — remove in Phase 6
 import {
   computeInversionStats,
   detectInversions,
@@ -37,7 +37,7 @@ const HISTORY_START = "1976-01-01";
 const REVALIDATE = 12 * 60 * 60;
 
 function snapshotObs(id: string) {
-  return getSnapshotRawObservations(id) ?? getSnapshotObservations(id);
+  return getSnapshotRawObservations(id) ?? getSnapshotObservations(id); // MIGRATION FALLBACK — remove in Phase 6
 }
 
 /**
@@ -149,7 +149,7 @@ export async function GET(req: Request) {
   try {
     let series: { date: string; bps: number }[] = [];
     if (def.fredId) {
-      const obs = await fredSeries(def.fredId, { start: HISTORY_START, revalidateSec: REVALIDATE });
+      const obs = await fredSeries(def.fredId, { start: HISTORY_START, revalidateSec: REVALIDATE }); // MIGRATION FALLBACK — remove in Phase 6
       series = obs
         .filter((o) => o.value !== null)
         .map((o) => ({ date: o.date, bps: (o.value as number) * 100 }));
@@ -158,8 +158,8 @@ export async function GET(req: Request) {
       const shortId = tenorToFredId(def.shortT);
       if (!longId || !shortId) return json(sim());
       const [lo, sh] = await Promise.all([
-        fredSeries(longId, { start: HISTORY_START, revalidateSec: REVALIDATE }),
-        fredSeries(shortId, { start: HISTORY_START, revalidateSec: REVALIDATE }),
+        fredSeries(longId, { start: HISTORY_START, revalidateSec: REVALIDATE }), // MIGRATION FALLBACK — remove in Phase 6
+        fredSeries(shortId, { start: HISTORY_START, revalidateSec: REVALIDATE }), // MIGRATION FALLBACK — remove in Phase 6
       ]);
       const shMap = new Map(sh.filter((o) => o.value !== null).map((o) => [o.date, o.value as number]));
       series = lo
@@ -168,7 +168,7 @@ export async function GET(req: Request) {
     }
     if (series.length < 30) return json(sim());
 
-    const usrec = await fredSeries("USREC", { start: "1970-01-01", revalidateSec: REVALIDATE });
+    const usrec = await fredSeries("USREC", { start: "1970-01-01", revalidateSec: REVALIDATE }); // MIGRATION FALLBACK — remove in Phase 6
     const recessions = recessionRangesFromUsrec(
       usrec.filter((o) => o.value !== null).map((o) => ({ date: o.date, value: o.value as number }))
     );

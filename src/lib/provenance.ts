@@ -1,16 +1,16 @@
 /**
  * Canonical data-provenance vocabulary for the whole terminal.
  *
- * Every feed across the app (econ/FRED, the market pipeline tiers, the Market
- * Lens engine, and the charting studios) reports where its data came from. This
- * module is the single source of truth for the badge a source maps to — its
- * label, tone, dot color, "live" status, and tooltip — so the same tier looks
- * and reads identically everywhere instead of drifting per module.
+ * Post Gold-DB migration the primary source for Tier A/C series data is:
+ *   DB        Gold DB (fred-bronze-to-gold-pipeline) — see GOLD_DB_MIGRATION_HANDOFF
  *
- * Tiers, roughly best → fallback:
+ * Freshness of DB rows is derived from the row's `staleness_days` field against
+ * the series frequency in gold.dim_series: FRESH / AGING / STALE (§8).
+ * The "vintage as of" tooltip uses `realtime_start` from Gold rows.
+ *
+ * Legacy tiers (used when Gold DB is not configured):
  *   FRED      live Federal Reserve (api.stlouisfed.org)
  *   LIVE      live market_data_pipeline FastAPI service
- *   DB        local pipeline database (DuckDB/Postgres analytics_api_views)
  *   FILE      local exported-file cache (mdp export-views)
  *   ETL       macro_data_etl gold tables (World Bank · BIS · CME)
  *   SNAPSHOT  committed build-time gold snapshot (FRED · Yahoo)
@@ -18,6 +18,9 @@
  *   SIM       deterministic synthetic series (no real data available)
  *   LOADING   request in flight
  *   ERR       resolution failed
+ *
+ * Tier B sources (kept live — deliberate exceptions to DB-only policy):
+ *   POLY      Polymarket Gamma API (non-series prediction market)
  */
 
 export type ProvenanceSource =
@@ -100,6 +103,30 @@ export function classifyFreshness(
   if (ageDays <= freshDays) return { status: "FRESH", ageDays, label: "", title: `Data as of ${asOf} (${ageDays}d ago) — current.` };
   if (ageDays <= agingDays) return { status: "AGING", ageDays, label: `${ageDays}d`, title: `Data as of ${asOf} (${ageDays}d ago) — aging; check upstream refresh.` };
   return { status: "STALE", ageDays, label: `STALE · ${ageDays}d`, title: `Data as of ${asOf} (${ageDays}d ago) — stale; upstream has not refreshed.` };
+}
+
+/**
+ * Classify DB freshness from a Gold row's `staleness_days` field (§8).
+ * Replaces the asOf-date guess for Tier A/C payloads — Gold carries exact staleness.
+ *
+ * Thresholds vary by series frequency:
+ *   Daily  (D): fresh ≤ 3d, aging ≤ 7d
+ *   Weekly (W): fresh ≤ 7d, aging ≤ 14d
+ *   Monthly(M): fresh ≤ 35d, aging ≤ 60d
+ *   Quarterly(Q): fresh ≤ 100d, aging ≤ 120d
+ */
+export function classifyDbStaleness(
+  stalenessDays: number | null | undefined,
+  freq: "D" | "W" | "M" | "Q" = "D",
+  realtimeStart?: string | null
+): FreshnessInfo {
+  if (stalenessDays == null) return { status: "UNKNOWN", ageDays: null, label: "", title: "No staleness reported by Gold DB." };
+  const thresholds: Record<string, [number, number]> = { D: [3, 7], W: [7, 14], M: [35, 60], Q: [100, 120] };
+  const [freshDays, agingDays] = thresholds[freq] ?? thresholds.D;
+  const vintage = realtimeStart ? ` (vintage ${realtimeStart})` : "";
+  if (stalenessDays <= freshDays) return { status: "FRESH", ageDays: stalenessDays, label: "", title: `Gold DB: ${stalenessDays}d old — current${vintage}.` };
+  if (stalenessDays <= agingDays) return { status: "AGING", ageDays: stalenessDays, label: `${stalenessDays}d`, title: `Gold DB: ${stalenessDays}d old — aging${vintage}; check pipeline refresh.` };
+  return { status: "STALE", ageDays: stalenessDays, label: `STALE · ${stalenessDays}d`, title: `Gold DB: ${stalenessDays}d old — stale${vintage}; pipeline has not refreshed.` };
 }
 
 /**

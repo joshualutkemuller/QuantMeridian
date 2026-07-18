@@ -1,7 +1,7 @@
 import { json } from "@/lib/server/http";
-import { fredEnabled, fredSeries } from "@/lib/server/fred";
-import { FRED_CATALOG, getSeriesHistory, getSeriesHistoryRaw, resolveFred, type FredSeries } from "@/data/econSeries";
-import { getSnapshotObservations, getSnapshotRawObservations } from "@/data/econSnapshot";
+import { fredEnabled, fredSeries } from "@/lib/server/fred"; // MIGRATION FALLBACK — remove in Phase 6
+import { FRED_CATALOG, getSeriesHistory, getSeriesHistoryRaw, resolveFred, type FredSeries } from "@/data/econSeries"; // MIGRATION FALLBACK — remove in Phase 6
+import { getSnapshotObservations, getSnapshotRawObservations } from "@/data/econSnapshot"; // MIGRATION FALLBACK — remove in Phase 6
 import { worstSource } from "@/lib/provenance";
 import { goldEnabled, goldStore } from "@/lib/server/goldStore";
 
@@ -145,7 +145,7 @@ export async function GET() {
           const r = byId.get(s.id);
           if (!r) {
             // series not yet in Gold — fall through to SIM for this one
-            const simHist = getSeriesHistory(s.id, 24);
+            const simHist = getSeriesHistory(s.id, 24); // MIGRATION FALLBACK — remove in Phase 6
             return buildPoint(s, simHist, "SIM");
           }
           const latest = r.latest_value ?? s.level;
@@ -190,11 +190,11 @@ export async function GET() {
       const r = resolveFred(s.id);
       if (live && !r.simOnly) {
         try {
-          const hist = await fredSeries(s.id, { limit: 24, units: r.units, scale: r.scale });
+          const hist = await fredSeries(s.id, { limit: 24, units: r.units, scale: r.scale }); // MIGRATION FALLBACK — remove in Phase 6
           if (hist.length) {
             const needsRaw = s.freq === "M" || s.freq === "Q";
             const rawHist = needsRaw && r.units !== "lin"
-              ? await fredSeries(s.id, { limit: 24, units: "lin", scale: r.scale })
+              ? await fredSeries(s.id, { limit: 24, units: "lin", scale: r.scale }) // MIGRATION FALLBACK — remove in Phase 6
               : hist;
             return buildPoint(s, hist as { date: string; value: number }[], "FRED", rawHist as { date: string; value: number }[]);
           }
@@ -202,7 +202,7 @@ export async function GET() {
           /* fall back */
         }
       }
-      const snap = getSnapshotObservations(s.id, 24);
+      const snap = getSnapshotObservations(s.id, 24); // MIGRATION FALLBACK — remove in Phase 6
       if (snap) {
         const rawSnap = getSnapshotRawObservations(s.id, 24);
         return buildPoint(
@@ -212,9 +212,9 @@ export async function GET() {
           rawSnap ? rawSnap as { date: string; value: number }[] : undefined
         );
       }
-      const simHist = getSeriesHistory(s.id, 24);
+      const simHist = getSeriesHistory(s.id, 24); // MIGRATION FALLBACK — remove in Phase 6
       const resolved = resolveFred(s.id);
-      const simRaw = resolved.units !== "lin" ? getSeriesHistoryRaw(s.id, 24) ?? undefined : undefined;
+      const simRaw = resolved.units !== "lin" ? getSeriesHistoryRaw(s.id, 24) ?? undefined : undefined; // MIGRATION FALLBACK — remove in Phase 6
       return buildPoint(s, simHist, "SIM", simRaw);
     })
   );

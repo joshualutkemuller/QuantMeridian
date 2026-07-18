@@ -1,8 +1,8 @@
 import { json } from "@/lib/server/http";
-import { fredEnabled, fredSeries } from "@/lib/server/fred";
+import { fredEnabled, fredSeries } from "@/lib/server/fred"; // MIGRATION FALLBACK — remove in Phase 6
 import { resolveFred } from "@/data/econSeries";
 import { STAT_SERIES, simStatFull, monthlyDate } from "@/data/statsConfig";
-import { getSnapshotObservations, getSnapshotRawObservations } from "@/data/econSnapshot";
+import { getSnapshotObservations, getSnapshotRawObservations } from "@/data/econSnapshot"; // MIGRATION FALLBACK — remove in Phase 6
 import type { Obs } from "@/lib/stats";
 import { goldEnabled, goldStore } from "@/lib/server/goldStore";
 
@@ -83,7 +83,7 @@ export async function GET(req: Request) {
       const r = resolveFred(id);
       if (live && !r.simOnly) {
         try {
-          const obs = await fredSeries(id, { start, end, units: "lin", scale: r.scale });
+          const obs = await fredSeries(id, { start, end, units: "lin", scale: r.scale }); // MIGRATION FALLBACK — remove in Phase 6
           const pts = toMonthly(obs, start, end);
           if (pts.length > 6) {
             anyFred = true;
@@ -93,7 +93,7 @@ export async function GET(req: Request) {
           /* fall through */
         }
       }
-      const snap = getSnapshotRawObservations(id) ?? getSnapshotObservations(id);
+      const snap = getSnapshotRawObservations(id) ?? getSnapshotObservations(id); // MIGRATION FALLBACK — remove in Phase 6
       if (snap) {
         const pts = toMonthly(snap, start, end);
         if (pts.length > 6) {

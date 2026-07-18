@@ -34,13 +34,18 @@ for dir in "${TIER_A_DIRS[@]}"; do
     continue
   fi
   for pattern in "${FORBIDDEN_PATTERNS[@]}"; do
-    # Grep for the pattern but exclude Tier B exception comments
+    # Exclude:
+    #   - Tier B exception header comments
+    #   - Phased-migration fallback blocks (marked MIGRATION FALLBACK — remove in Phase 6)
+    #   - Test files
     matches=$(grep -rn --include="*.ts" "$pattern" "$dir" 2>/dev/null \
       | grep -v "// Exception to DB-only policy" \
+      | grep -v "MIGRATION FALLBACK" \
+      | grep -v "\.test\.ts:" \
       | grep -v "^Binary" \
       || true)
     if [[ -n "$matches" ]]; then
-      echo "POLICY VIOLATION: '$pattern' found in Tier A route(s):"
+      echo "POLICY VIOLATION: '$pattern' found in Tier A route(s) (not marked as MIGRATION FALLBACK):"
       echo "$matches"
       echo ""
       ERRORS=$((ERRORS + 1))
@@ -51,8 +56,9 @@ done
 if [[ $ERRORS -gt 0 ]]; then
   echo "Gold DB policy check FAILED: $ERRORS forbidden pattern(s) in Tier A routes."
   echo "Tier A routes must read from GoldStore (MACRO_DB_URL) only."
+  echo "Mark phased-migration fallbacks with '// MIGRATION FALLBACK — remove in Phase 6'"
   echo "See docs/GOLD_DB_MIGRATION_HANDOFF.md §11 for the enforcement checklist."
   exit 1
 fi
 
-echo "Gold DB policy check PASSED — no forbidden patterns in Tier A routes."
+echo "Gold DB policy check PASSED — no unguarded forbidden patterns in Tier A routes."

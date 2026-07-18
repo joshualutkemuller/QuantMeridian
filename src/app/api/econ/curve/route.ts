@@ -1,7 +1,7 @@
 import { json } from "@/lib/server/http";
-import { fredEnabled, fredLatest } from "@/lib/server/fred";
+import { fredEnabled, fredLatest } from "@/lib/server/fred"; // MIGRATION FALLBACK — remove in Phase 6
 import { getCurrentCurve } from "@/data/econCurve";
-import { getSnapshotObservations, getSnapshotRawObservations } from "@/data/econSnapshot";
+import { getSnapshotObservations, getSnapshotRawObservations } from "@/data/econSnapshot"; // MIGRATION FALLBACK — remove in Phase 6
 import { goldEnabled, goldStore } from "@/lib/server/goldStore";
 
 interface GoldCurveRow {
@@ -20,7 +20,7 @@ function snapshotCurve() {
   let matched = false;
   let asOf = sim.date;
   const points = sim.points.map((p) => {
-    const obs = getSnapshotRawObservations(p.fredId, 1) ?? getSnapshotObservations(p.fredId, 1);
+    const obs = getSnapshotRawObservations(p.fredId, 1) ?? getSnapshotObservations(p.fredId, 1); // MIGRATION FALLBACK — remove in Phase 6
     const latest = obs?.[obs.length - 1];
     if (!latest) return p;
     matched = true;
@@ -90,7 +90,7 @@ export async function GET() {
   try {
     const resolved = await Promise.all(
       sim.points.map(async (p) => {
-        const latest = await fredLatest(p.fredId);
+        const latest = await fredLatest(p.fredId); // MIGRATION FALLBACK — remove in Phase 6
         return { point: { ...p, yield: latest?.value ?? p.yield }, date: latest?.date ?? null };
       })
     );

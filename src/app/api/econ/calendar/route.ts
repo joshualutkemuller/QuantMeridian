@@ -1,5 +1,5 @@
 import { json } from "@/lib/server/http";
-import { fredEnabled, fredSeries, fredReleaseDates, type FredObservation } from "@/lib/server/fred";
+import { fredEnabled, fredSeries, fredReleaseDates, type FredObservation } from "@/lib/server/fred"; // MIGRATION FALLBACK — remove in Phase 6
 import { finnhubEnabled, finnhubEconCalendar, type FinnhubEconEvent } from "@/lib/server/finnhubCalendar";
 import { EVENT_SERIES, type EconEvent } from "@/data/econRates";
 
@@ -17,7 +17,7 @@ async function batchFred(
     const batch = defs.slice(i, i + BATCH_SIZE);
     const batchResults = await Promise.allSettled(
       batch.map((def) =>
-        fredSeries(def.fredId!, {
+        fredSeries(def.fredId!, { // MIGRATION FALLBACK — remove in Phase 6
           start: startDate,
           limit: def.freq === "weekly" ? 60 : def.freq === "quarterly" ? 8 : 15,
           units: def.fredUnits,

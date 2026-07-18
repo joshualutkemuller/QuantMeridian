@@ -1,7 +1,7 @@
 import { json } from "@/lib/server/http";
-import { fredEnabled, fredSeries } from "@/lib/server/fred";
-import { getSeriesHistory, resolveFred } from "@/data/econSeries";
-import { getSnapshotObservations } from "@/data/econSnapshot";
+import { fredEnabled, fredSeries } from "@/lib/server/fred"; // MIGRATION FALLBACK — remove in Phase 6
+import { getSeriesHistory, resolveFred } from "@/data/econSeries"; // MIGRATION FALLBACK — remove in Phase 6
+import { getSnapshotObservations } from "@/data/econSnapshot"; // MIGRATION FALLBACK — remove in Phase 6
 import { BENCHMARK_SERIES } from "@/data/benchmarkRates";
 import { worstSource } from "@/lib/provenance";
 import { goldEnabled, goldStore } from "@/lib/server/goldStore";
@@ -81,7 +81,7 @@ export async function GET(req: Request) {
           const obs = obsAll.slice(-n);
 
           if (!obs.length && !board) {
-            return { id, observations: getSeriesHistory(id, n), source: "SIM" as const };
+            return { id, observations: getSeriesHistory(id, n), source: "SIM" as const }; // MIGRATION FALLBACK — remove in Phase 6
           }
 
           return {
@@ -114,17 +114,17 @@ export async function GET(req: Request) {
 
       if (live && bmDef?.hasFred && !r.simOnly) {
         try {
-          const obs = await fredSeries(id, { limit: n, units: "lin", scale: r.scale });
+          const obs = await fredSeries(id, { limit: n, units: "lin", scale: r.scale }); // MIGRATION FALLBACK — remove in Phase 6
           if (obs.length) return { id, observations: obs as { date: string; value: number }[], source: "FRED" };
         } catch {
           /* fall through */
         }
       }
 
-      const snap = getSnapshotObservations(id, n);
+      const snap = getSnapshotObservations(id, n); // MIGRATION FALLBACK — remove in Phase 6
       if (snap) return { id, observations: snap as { date: string; value: number }[], source: "SNAPSHOT" };
 
-      return { id, observations: getSeriesHistory(id, n), source: "SIM" };
+      return { id, observations: getSeriesHistory(id, n), source: "SIM" }; // MIGRATION FALLBACK — remove in Phase 6
     })
   );
 

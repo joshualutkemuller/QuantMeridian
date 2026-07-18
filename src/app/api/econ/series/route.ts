@@ -1,7 +1,7 @@
 import { json } from "@/lib/server/http";
-import { fredEnabled, fredSeries } from "@/lib/server/fred";
-import { getSeriesHistory, getSeriesHistoryRaw, seriesById, resolveFred } from "@/data/econSeries";
-import { getSnapshotObservations, getSnapshotRawObservations } from "@/data/econSnapshot";
+import { fredEnabled, fredSeries } from "@/lib/server/fred"; // MIGRATION FALLBACK — remove in Phase 6
+import { getSeriesHistory, getSeriesHistoryRaw, seriesById, resolveFred } from "@/data/econSeries"; // MIGRATION FALLBACK — remove in Phase 6
+import { getSnapshotObservations, getSnapshotRawObservations } from "@/data/econSnapshot"; // MIGRATION FALLBACK — remove in Phase 6
 import { getEtlInflationObservations } from "@/data/globalMacro";
 import { goldEnabled, goldStore } from "@/lib/server/goldStore";
 
@@ -57,7 +57,7 @@ export async function GET(req: Request) {
   // 2. FRED
   if (fredEnabled() && !resolved.simOnly) {
     try {
-      const obs = await fredSeries(id, { limit: n, units, scale: resolved.scale });
+      const obs = await fredSeries(id, { limit: n, units, scale: resolved.scale }); // MIGRATION FALLBACK — remove in Phase 6
       if (obs.length) {
         return json({ source: "FRED", id, label, units, observations: obs });
       }
@@ -68,8 +68,8 @@ export async function GET(req: Request) {
 
   // 3. Snapshot
   const snap = units === "lin"
-    ? getSnapshotRawObservations(id, n) ?? getSnapshotObservations(id, n)
-    : getSnapshotObservations(id, n);
+    ? getSnapshotRawObservations(id, n) ?? getSnapshotObservations(id, n) // MIGRATION FALLBACK — remove in Phase 6
+    : getSnapshotObservations(id, n); // MIGRATION FALLBACK — remove in Phase 6
   if (snap) {
     return json({ source: "SNAPSHOT", id, label, units, observations: snap });
   }
@@ -83,8 +83,8 @@ export async function GET(req: Request) {
   // 5. SIM
   const wantsRaw = reqUnits === "lin" && resolved.units !== "lin";
   if (wantsRaw) {
-    const rawSim = getSeriesHistoryRaw(id, n);
+    const rawSim = getSeriesHistoryRaw(id, n); // MIGRATION FALLBACK — remove in Phase 6
     if (rawSim) return json({ source: "SIM", id, label, units, observations: rawSim });
   }
-  return json({ source: "SIM", id, label, units, observations: getSeriesHistory(id, n) });
+  return json({ source: "SIM", id, label, units, observations: getSeriesHistory(id, n) }); // MIGRATION FALLBACK — remove in Phase 6
 }

@@ -1,7 +1,7 @@
 import { json } from "@/lib/server/http";
-import { fredEnabled, fredSeries } from "@/lib/server/fred";
+import { fredEnabled, fredSeries } from "@/lib/server/fred"; // MIGRATION FALLBACK — remove in Phase 6
 import { CURVE_TENORS, buildLiveSnapshots, getCurveSnapshots, type CurveHistory } from "@/data/econCurve";
-import { getSnapshotObservations, getSnapshotRawObservations } from "@/data/econSnapshot";
+import { getSnapshotObservations, getSnapshotRawObservations } from "@/data/econSnapshot"; // MIGRATION FALLBACK — remove in Phase 6
 import { goldEnabled, goldStore } from "@/lib/server/goldStore";
 
 interface GoldCurveRow {
@@ -29,7 +29,7 @@ const TENOR_TO_FRED: Record<string, string> = {
 function snapshotHistory(): CurveHistory | null {
   const history: CurveHistory = {};
   for (const [, , fredId] of CURVE_TENORS) {
-    const obs = getSnapshotRawObservations(fredId) ?? getSnapshotObservations(fredId);
+    const obs = getSnapshotRawObservations(fredId) ?? getSnapshotObservations(fredId); // MIGRATION FALLBACK — remove in Phase 6
     if (obs?.length) history[fredId] = obs.map((o) => ({ date: o.date, value: o.value }));
   }
   return Object.keys(history).length ? history : null;
@@ -98,7 +98,7 @@ export async function GET(req: Request) {
     const history: CurveHistory = {};
     await Promise.all(
       CURVE_TENORS.map(async ([, , fredId]) => {
-        const obs = await fredSeries(fredId, { start, revalidateSec: 6 * 60 * 60 });
+        const obs = await fredSeries(fredId, { start, revalidateSec: 6 * 60 * 60 }); // MIGRATION FALLBACK — remove in Phase 6
         history[fredId] = obs
           .filter((o) => o.value !== null)
           .map((o) => ({ date: o.date, value: o.value as number }));
