@@ -18,6 +18,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { handleApiRequest } from "./registry";
 import { readBody, toWebRequest, sendWebResponse } from "./nodeAdapter";
+import { goldEnabled, goldStore } from "@/lib/server/goldStore";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 // `dist-server/index.js` sits alongside the client build in `dist/`.
@@ -113,4 +114,15 @@ const server = http.createServer((req, res) => {
 server.listen(PORT, HOST, () => {
   // eslint-disable-next-line no-console
   console.log(`market-terminal serving ${CLIENT_DIR} on http://${HOST}:${PORT}`);
+  void (async () => {
+    if (!goldEnabled()) return;
+    const health = await goldStore().health();
+    if (health.ok) {
+      console.info(`[server] Gold DB startup check OK (backend=${health.backend}, latencyMs=${health.latencyMs}, ${health.detail})`);
+    } else {
+      console.warn(`[server] Gold DB startup check failed (backend=${health.backend}, latencyMs=${health.latencyMs}, ${health.detail})`);
+    }
+  })().catch((err) => {
+    console.warn(`[server] Gold DB startup check failed: ${(err as Error).message}`);
+  });
 });
