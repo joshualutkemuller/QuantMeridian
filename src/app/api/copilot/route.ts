@@ -1,3 +1,4 @@
+// Exception to DB-only policy — LLM call is the live piece; context is sourced from Gold (see GOLD_DB_MIGRATION_HANDOFF §7 D1).
 import { json } from "@/lib/server/http";
 import Anthropic from "@anthropic-ai/sdk";
 import { buildCopilotContext } from "@/lib/server/copilotContext";

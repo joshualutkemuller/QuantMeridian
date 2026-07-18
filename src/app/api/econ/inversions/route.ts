@@ -12,10 +12,29 @@ import {
   spreadDef,
   tenorToFredId,
 } from "@/data/econCurve";
+import { goldEnabled, goldStore } from "@/lib/server/goldStore";
 
+interface GoldEpisodeRow {
+  spread_id: string;
+  start_date: string;
+  end_date: string | null;
+  trough_bps: number | null;
+  duration_days: number | null;
+  recession_overlap: boolean | null;
+  recession_lead_days: number | null;
+}
 
-const HISTORY_START = "1976-01-01"; // T10Y2Y begins 1976; DGS2 likewise
-const REVALIDATE = 12 * 60 * 60; // 12h — deep daily history changes only at the tail
+interface GoldSpreadRow {
+  spread_id: string;
+  date: string;
+  spread_bps: number;
+  zscore: number | null;
+  is_inverted: boolean | null;
+  recession_flag: boolean | null;
+}
+
+const HISTORY_START = "1976-01-01";
+const REVALIDATE = 12 * 60 * 60;
 
 function snapshotObs(id: string) {
   return getSnapshotRawObservations(id) ?? getSnapshotObservations(id);
@@ -24,12 +43,11 @@ function snapshotObs(id: string) {
 /**
  * GET /api/econ/inversions?spread=10Y2Y
  *
- * Fully-live inversion detection: pulls the spread's real daily history from FRED
- * (the direct T10Y2Y/T10Y3M series, or computed from the two constituent DGS
- * tenors), pulls USREC for NBER recession dating, then detects every unique
- * inversion period (negative-spread runs, brief blips bridged, sub-week noise
- * dropped) with recession lead-times. Returns the inversions, aggregate stats and
- * a monthly timeline. Falls back to the curated/simulated record without a key.
+ * Resolution order:
+ *   1. Gold DB — gold.spread_inversion_episode + curve_spread_daily
+ *   2. Live FRED API
+ *   3. Committed snapshot
+ *   4. Deterministic SIM
  */
 export async function GET(req: Request) {
   const spreadId = new URL(req.url).searchParams.get("spread") ?? "10Y2Y";
@@ -63,10 +81,9 @@ export async function GET(req: Request) {
     if (series.length < 30) return null;
     const usrec = snapshotObs("USREC") ?? [];
     const recessions = recessionRangesFromUsrec(usrec.map((o) => ({ date: o.date, value: o.value })));
-    const fallbackRec = recessions.length ? recessions : [];
-    const inversions = detectInversions(series, fallbackRec);
+    const inversions = detectInversions(series, recessions.length ? recessions : []);
     const stats = computeInversionStats(inversions);
-    const timeline = monthlySpreadTimeline(series, fallbackRec);
+    const timeline = monthlySpreadTimeline(series, recessions.length ? recessions : []);
     return {
       source: "SNAPSHOT" as const,
       spread: spreadId,
@@ -77,19 +94,66 @@ export async function GET(req: Request) {
     };
   };
 
+  // 1. Gold DB
+  if (goldEnabled()) {
+    try {
+      const store = goldStore();
+      const [episodeRows, spreadRows] = await Promise.all([
+        store.latest<GoldEpisodeRow>("spread_inversion_episode", { spread_id: spreadId }),
+        store.history<GoldSpreadRow>("curve_spread_daily", { spread_id: spreadId }),
+      ]);
+
+      if (spreadRows.length) {
+        const series = spreadRows.map((r) => ({ date: r.date, bps: r.spread_bps }));
+        const recessionRows = spreadRows.filter((r) => r.recession_flag);
+        // Reconstruct recession ranges from flagged dates
+        const recessions = recessionRangesFromUsrec(
+          spreadRows.map((r) => ({ date: r.date, value: r.recession_flag ? 1 : 0 }))
+        );
+
+        const inversions = episodeRows.map((ep) => ({
+          start: ep.start_date,
+          end: ep.end_date ?? "ongoing",
+          trough_bps: ep.trough_bps ?? 0,
+          duration_days: ep.duration_days ?? 0,
+          recession_overlap: ep.recession_overlap ?? false,
+          recession_lead_days: ep.recession_lead_days ?? null,
+        }));
+        const stats = computeInversionStats(inversions.map((i) => ({
+          start: i.start,
+          end: i.end,
+          troughBps: i.trough_bps,
+          durationDays: i.duration_days,
+          hadRecession: i.recession_overlap,
+          leadDays: i.recession_lead_days,
+        })));
+        const timeline = monthlySpreadTimeline(series, recessions);
+
+        return json({
+          source: "DB",
+          spread: spreadId,
+          asOf: series[series.length - 1]?.date ?? null,
+          inversions,
+          stats,
+          timeline,
+        });
+      }
+    } catch (err) {
+      console.warn("[inversions] Gold DB read failed:", (err as Error).message);
+    }
+  }
+
+  // 2. FRED
   if (!fredEnabled()) return json(snap() ?? sim());
 
   try {
-    // 1. Build the daily spread series (bps).
     let series: { date: string; bps: number }[] = [];
     if (def.fredId) {
-      // Direct FRED spread series (percentage points -> bps).
       const obs = await fredSeries(def.fredId, { start: HISTORY_START, revalidateSec: REVALIDATE });
       series = obs
         .filter((o) => o.value !== null)
         .map((o) => ({ date: o.date, bps: (o.value as number) * 100 }));
     } else {
-      // Compute from the two constituent constant-maturity tenors.
       const longId = tenorToFredId(def.longT);
       const shortId = tenorToFredId(def.shortT);
       if (!longId || !shortId) return json(sim());
@@ -104,13 +168,11 @@ export async function GET(req: Request) {
     }
     if (series.length < 30) return json(sim());
 
-    // 2. NBER recession ranges from USREC.
     const usrec = await fredSeries("USREC", { start: "1970-01-01", revalidateSec: REVALIDATE });
     const recessions = recessionRangesFromUsrec(
       usrec.filter((o) => o.value !== null).map((o) => ({ date: o.date, value: o.value as number }))
     );
 
-    // 3. Detect every unique inversion + aggregate + timeline.
     const inversions = detectInversions(series, recessions);
     const stats = computeInversionStats(inversions);
     const timeline = monthlySpreadTimeline(series, recessions);
