@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import type { DataSource } from "@/lib/useEcon";
 import { STAT_SERIES, monthlyDate, simStatFull, type StatSeries } from "@/data/statsConfig";
+import { useSimMode } from "@/lib/simMode";
 
 /**
  * Statistical Analysis data loader with an incremental session cache.
@@ -48,6 +49,7 @@ export function useStatsData(defaultMonths = 240): {
   startDate: string;
   endDate: string;
 } {
+  const { simEnabled } = useSimMode();
   const [lookbackMonths, setLookbackMonths] = useState(defaultMonths);
   const startDate = monthlyDate(lookbackMonths);
   const endDate = monthlyDate(0);
@@ -81,5 +83,6 @@ export function useStatsData(defaultMonths = 240): {
     return () => { alive = false; };
   }, [startDate, endDate]);
 
-  return { series, source, loading, lookbackMonths, setLookbackMonths, startDate, endDate };
+  const effectiveSeries = !simEnabled && source === "SIM" ? [] : series;
+  return { series: effectiveSeries, source, loading, lookbackMonths, setLookbackMonths, startDate, endDate };
 }
