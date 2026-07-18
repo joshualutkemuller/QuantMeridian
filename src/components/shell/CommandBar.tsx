@@ -55,7 +55,7 @@ export function CommandBar({ onOpenPalette, onToggleSidebar }: { onOpenPalette: 
             ? "border-term-amber/40 bg-term-amber/10 text-term-amber hover:bg-term-amber/20"
             : "border-term-border bg-term-panel-2 text-term-text-mute hover:border-term-text-mute"
         }`}
-        title={simEnabled ? "SIM fallback enabled — click to show only real data" : "SIM fallback disabled — click to allow simulated data when live feeds unavailable"}
+        title={simEnabled ? "SIM ON — simulated data fills gaps where live/DB data is unavailable. Click to turn off and see which modules go empty (audit mode)." : "SIM OFF — modules without real data show empty. Click to enable SIM fallback."}
       >
         <span className={`h-1.5 w-1.5 rounded-full ${simEnabled ? "bg-term-amber animate-blink" : "bg-term-text-mute"}`} />
         SIM {simEnabled ? "ON" : "OFF"}

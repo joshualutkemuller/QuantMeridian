@@ -115,7 +115,7 @@ export function useCurveSnapshots(years = 7): { data: CurveSnapshot[]; source: D
 }
 
 export function useEconCalendar(): { data: EconEvent[]; source: DataSource } {
-  return useEconResource<EconEvent[]>(`/api/econ/calendar`, [], (j) => j.events ?? [], "LOADING");
+  return useEconResource<EconEvent[]>(`/api/econ/calendar`, [], (j) => j.events ?? [], "LOADING", []);
 }
 
 export interface InversionData {
@@ -242,12 +242,13 @@ const MACRO_INPUTS_FALLBACK: MacroInputsData = {
  * as anchors in SIM time-series generation. Falls back to SIM defaults when
  * Gold DB is not configured (source: "SIM").
  */
-export function useMacroInputs(): { data: MacroInputsData; source: "DB" | "SIM" } {
-  const raw = useEconResource<MacroInputsData>(
+export function useMacroInputs(): { data: MacroInputsData | null; source: "DB" | "SIM" } {
+  const raw = useEconResource<MacroInputsData | null>(
     "/api/econ/macro-inputs",
     MACRO_INPUTS_FALLBACK,
     (j) => j as MacroInputsData,
     "SIM",
+    null, // suppress SIM when toggle is off — Tier C pages show empty state
   );
-  return { data: raw.data, source: raw.data.source };
+  return { data: raw.data, source: (raw.data?.source ?? "SIM") };
 }
