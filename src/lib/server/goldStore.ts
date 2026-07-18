@@ -16,6 +16,8 @@
  * No fallback on zero rows or connection failure — callers receive an explicit
  * error/empty result. This is the core behavioral contract of the migration.
  */
+import { createRequire } from "node:module";
+
 export const runtime = "nodejs";
 
 export interface GoldStore {
@@ -37,11 +39,12 @@ export interface GoldConfigStatus {
   target: string;
 }
 
+const requireFromRuntime = createRequire(import.meta.url);
+
 /** Require an optional module at runtime without the bundler resolving it. */
 function optionalRequire(name: string): any {
   try {
-    // eslint-disable-next-line no-eval
-    return (eval("require") as NodeRequire)(name);
+    return requireFromRuntime(name);
   } catch {
     return null;
   }
