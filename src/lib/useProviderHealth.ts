@@ -7,6 +7,11 @@ export interface ProviderProbe {
   status: ProviderStatus;
   detail: string;
   live: boolean;
+  configured?: boolean;
+  readSuccessfully?: boolean;
+  backend?: string;
+  target?: string;
+  explicitStatus?: string;
 }
 interface HealthResponse {
   probedAt: string;

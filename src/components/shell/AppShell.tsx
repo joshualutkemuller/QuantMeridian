@@ -6,6 +6,7 @@ import { Sidebar } from "./Sidebar";
 import { StatusBar } from "./StatusBar";
 import { Ticker } from "./Ticker";
 import { CommandPalette } from "./CommandPalette";
+import { GoldDbTestRibbon } from "./GoldDbTestRibbon";
 import { NAV } from "@/lib/nav";
 
 /** Top-level chrome: ticker, command bar, sidebar, content, status bar + global hotkeys. */
@@ -57,6 +58,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     <div className="flex h-screen flex-col overflow-hidden bg-term-bg">
       <Ticker />
       <CommandBar onOpenPalette={() => setPaletteOpen(true)} onToggleSidebar={toggleSidebar} />
+      <GoldDbTestRibbon />
       <div className="flex min-h-0 flex-1">
         <Sidebar collapsed={collapsed} mobileOpen={mobileNavOpen} onClose={() => setMobileNavOpen(false)} />
         <main className="min-w-0 flex-1 overflow-auto bg-term-bg">{children}</main>
