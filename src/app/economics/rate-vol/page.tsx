@@ -84,7 +84,7 @@ export default function EconRateVol() {
   const coneChartRef = useRef<HTMLDivElement>(null);
 
   const { data: macroInputs } = useMacroInputs();
-  const fallback = useMemo<SeriesMap>(() => buildFallbackWithAnchors(macroInputs.benchmarks, 520), [macroInputs.benchmarks]);
+  const fallback = useMemo<SeriesMap>(() => macroInputs ? buildFallbackWithAnchors(macroInputs.benchmarks, 520) : {}, [macroInputs]);
   const { data: live, source } = useLiveSeriesSet(BENCHMARK_FRED_IDS, "lin", 520);
 
   const map = useMemo<SeriesMap>(() => {

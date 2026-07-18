@@ -63,7 +63,7 @@ const PALETTE = ["#3B9DFF", "#2ECC71", "#A78BFA", "#22D3EE", "#FF8C00", "#EC4899
 
 export default function YieldCurvePage() {
   const { data: macroInputs } = useMacroInputs();
-  const fallback = useMemo<SeriesMap>(() => buildFallbackWithAnchors(macroInputs.benchmarks, 520), [macroInputs.benchmarks]);
+  const fallback = useMemo<SeriesMap>(() => macroInputs ? buildFallbackWithAnchors(macroInputs.benchmarks, 520) : {}, [macroInputs]);
   const { data: live, source } = useLiveSeriesSet(BENCHMARK_FRED_IDS, "lin", 520);
 
   const map = useMemo<SeriesMap>(() => {

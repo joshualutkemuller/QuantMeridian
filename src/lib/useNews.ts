@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { fetchJson, peekFresh } from "@/lib/fetchCache";
 import { getHeadlines, type Headline, type EventCluster } from "@/data/news";
+import { useSimMode } from "@/lib/simMode";
 
 interface NewsResponse {
   source: string;
@@ -18,6 +19,7 @@ interface NewsResponse {
  * the page falls back to keyword clustering).
  */
 export function useNews(n = 60): { headlines: Headline[]; source: string; clusters: EventCluster[] } {
+  const { simEnabled } = useSimMode();
   const url = `/api/news?n=${n}`;
   const cached = peekFresh<NewsResponse>(url);
   const [headlines, setHeadlines] = useState<Headline[]>(cached?.headlines ?? getHeadlines(n));
@@ -47,5 +49,8 @@ export function useNews(n = 60): { headlines: Headline[]; source: string; cluste
     };
   }, [url]);
 
+  if (!simEnabled && source === "SIM") {
+    return { headlines: [], source, clusters: [] };
+  }
   return { headlines, source, clusters };
 }

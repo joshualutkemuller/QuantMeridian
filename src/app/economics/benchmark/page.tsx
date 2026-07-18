@@ -84,7 +84,7 @@ function chgBps(def: BenchmarkDef, cur: number | null, prev: number | null): { t
 
 export default function BenchmarkRatesPage() {
   const { data: macroInputs } = useMacroInputs();
-  const fallback = useMemo<SeriesMap>(() => buildFallbackWithAnchors(macroInputs.benchmarks, 520), [macroInputs.benchmarks]);
+  const fallback = useMemo<SeriesMap>(() => macroInputs ? buildFallbackWithAnchors(macroInputs.benchmarks, 520) : {}, [macroInputs]);
   const { data: live, source } = useLiveSeriesSet(BENCHMARK_FRED_IDS, "lin", 520);
 
   const map = useMemo<SeriesMap>(() => {

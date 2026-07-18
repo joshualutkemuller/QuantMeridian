@@ -115,7 +115,7 @@ export function useCurveSnapshots(years = 7): { data: CurveSnapshot[]; source: D
 }
 
 export function useEconCalendar(): { data: EconEvent[]; source: DataSource } {
-  return useEconResource<EconEvent[]>(`/api/econ/calendar`, [], (j) => j.events ?? [], "LOADING");
+  return useEconResource<EconEvent[]>(`/api/econ/calendar`, [], (j) => j.events ?? [], "LOADING", []);
 }
 
 export interface InversionData {
@@ -242,12 +242,46 @@ const MACRO_INPUTS_FALLBACK: MacroInputsData = {
  * as anchors in SIM time-series generation. Falls back to SIM defaults when
  * Gold DB is not configured (source: "SIM").
  */
-export function useMacroInputs(): { data: MacroInputsData; source: "DB" | "SIM" } {
-  const raw = useEconResource<MacroInputsData>(
+export function useMacroInputs(): { data: MacroInputsData | null; source: "DB" | "SIM" } {
+  const raw = useEconResource<MacroInputsData | null>(
     "/api/econ/macro-inputs",
     MACRO_INPUTS_FALLBACK,
     (j) => j as MacroInputsData,
     "SIM",
+    null, // suppress SIM when toggle is off — Tier C pages show empty state
   );
-  return { data: raw.data, source: raw.data.source };
+  return { data: raw.data, source: (raw.data?.source ?? "SIM") };
+}
+
+export interface FomcResponse {
+  source: string;
+  fedPriceSource: "cme" | "fred_model" | "sim" | null;
+  asOf: string | null;
+  sourceDetail: string | null;
+  spotEffectiveRate: number | null;
+  goldAnchored: boolean;
+  currentTarget: { low: number; high: number; mid: number };
+  modelInputs: Record<string, unknown> | null;
+  meetings: { date: string; label: string; daysOut: number; outcomes: { move: number; prob: number }[]; impliedRate: number; mostLikely: string }[];
+  path: { label: string; rate: number }[];
+}
+
+/**
+ * Gold-anchored FOMC FedProbabilityEngine hook. Fetches from /api/econ/fomc
+ * which grounds the probability ladder in the live Gold DB SOFR/EFFR value.
+ * Falls back to null (caller should use static ETL data) when loading or
+ * when Gold DB is not configured.
+ */
+export function useFomc(): { data: FomcResponse | null; loading: boolean } {
+  const [data, setData] = useState<FomcResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    fetchJson<FomcResponse>("/api/econ/fomc")
+      .then((j) => { if (alive && j?.meetings) setData(j); })
+      .catch(() => {})
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, []);
+  return { data, loading };
 }
