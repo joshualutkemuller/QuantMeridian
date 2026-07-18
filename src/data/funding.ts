@@ -75,8 +75,7 @@ function businessDates(n: number): string[] {
 }
 
 /** Deterministic daily history for a funding series, ending at the anchor level. */
-export function simSeries(id: string, n = 260): Obs[] {
-  const def = BY_ID.get(id);
+function simSeriesFromDef(def: FundingDef | undefined, id: string, n: number): Obs[] {
   const dates = businessDates(n);
   if (!def) return dates.map((date) => ({ date, value: 0 }));
   const rng = new Rng(`fund-${id}`);
@@ -90,10 +89,28 @@ export function simSeries(id: string, n = 260): Obs[] {
   return dates.map((date, i) => ({ date, value: Number(vals[i].toFixed(def.decimals + 2)) }));
 }
 
+/** Deterministic daily history for a funding series, ending at the anchor level. */
+export function simSeries(id: string, n = 260): Obs[] {
+  return simSeriesFromDef(BY_ID.get(id), id, n);
+}
+
 /** All series as deterministic SIM histories (the fallback tier). */
 export function buildFallback(n = 260): SeriesMap {
   const map: SeriesMap = {};
   for (const s of FUNDING_SERIES) map[s.id] = simSeries(s.id, n);
+  return map;
+}
+
+/**
+ * Same as buildFallback but uses Gold DB benchmark values where keys match a
+ * funding series id (for example SOFR). Unknown keys are ignored.
+ */
+export function buildFallbackWithAnchors(overrides: Record<string, number>, n = 260): SeriesMap {
+  const map: SeriesMap = {};
+  for (const s of FUNDING_SERIES) {
+    const anchor = overrides[s.id];
+    map[s.id] = simSeriesFromDef(anchor != null ? { ...s, anchor } : s, s.id, n);
+  }
   return map;
 }
 
