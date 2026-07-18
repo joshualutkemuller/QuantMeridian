@@ -417,30 +417,149 @@ lands, keeps the old chain — no big-bang cutover).
 
 ## 12. Open decisions & risks
 
-1. **Economic release calendar (CAL).** Add `gold.release_calendar` to the
-   pipeline (ingest FRED `/releases/dates`), or leave CAL as a flagged live
-   exception? *Recommendation:* small pipeline add — keeps CAL in Tier A.
-2. **FOMC rate probabilities.** No CME connector in the pipeline. Keep the
-   `macro_data_etl` FedProbabilityEngine (its inputs fed from Gold short rates),
-   or defer the module? *Recommendation:* keep FedProbabilityEngine as a
-   compute-only module reading Gold rate series — it's model output, not a feed.
-3. **PCE item level (INFL).** Ship INFL with CPI item tree + PCE headline/core
-   now; add PCE items when the pipeline lands the BEA manifest. Accept the
-   partial PCE drill in the interim? *Recommendation:* yes, ship partial.
-4. **STAT interactivity.** Precomputed `stats_pairs` cover curated pairs; arbitrary
-   user-selected pairs need a raw-obs-from-Gold + client-recompute path. Confirm
-   the interactive surface stays (recompute on DB inputs) vs. restricting STAT to
-   the curated set.
-5. **International: FRED-mirror vs World Bank.** The pipeline can source global
-   CPI/policy either via FRED country-mirror codes or World Bank. Pick one to
-   standardize GCPI/GPOL on (pipeline gap doc flags this as a design choice).
-6. **SQLite in serverless deploy.** A SQLite file works locally and in a single
-   long-lived server, but not across serverless instances — hence Postgres/Delta
-   for deploy (D3). Confirm the deploy target's DB so `GoldStore`'s prod driver is
-   provisioned.
-7. **Refresh SLA.** Gold is batch. Define acceptable staleness per module (daily
-   for macro; intraday for funding/curve if the pipeline runs intraday) and set
-   the `AGING`/`STALE` thresholds in §8 accordingly.
+Items marked **✅ RESOLVED** were decided during the July 2026 handoff session and
+are reflected in code. Items marked **🔴 DECISION NEEDED** are explicitly blocked
+on an owner choice before implementation can proceed.
+
+---
+
+### ✅ RESOLVED — FOMC rate probabilities (was item 2)
+
+**Decision made 2026-07-18:** Keep the `macro_data_etl` FedProbabilityEngine as a
+compute-only module. Its probability ladder is anchored to live Gold short rates
+(SOFR/EFFR from `getMacroInputs().benchmarks`). Implemented in `etlMacro.ts`
+(`fomcFromEtl(spotEffectiveRate?)`) + `GET /api/econ/fomc` + `useFomc()` hook.
+No pipeline change needed — this is model output grounded in Gold inputs, not a feed.
+
+---
+
+### ✅ RESOLVED — SIM mode toggle (was Phase 6 pruning)
+
+**Decision made 2026-07-18:** Keep the SIM toggle permanently as a developer
+audit tool. SIM OFF = empty state in all hooks (audit mode, shows which modules
+have no real data). SIM ON = SIM fallback fills gaps as before. The toggle is not
+removed in Phase 6. The `simMode.tsx` + `useSimMode()` infrastructure stays.
+
+---
+
+### 🔴 DECISION NEEDED — Economic release calendar (CAL)
+
+**Blocks:** CAL module (`/api/econ/calendar`), `ECON` breadth counter, scheduled
+event overlays on charts.
+
+**Question:** Should the pipeline add a `gold.release_calendar` table (ingesting
+FRED `/releases/dates` + `/releases/dates/upcoming`)? Or does CAL remain a
+permanent Tier B live exception?
+
+**Two paths:**
+
+| Path | Work required | Result |
+|---|---|---|
+| **A — Pipeline adds `gold.release_calendar`** | Pipeline task: add `/releases/dates` ingestion to `series_catalog.yml`, add DDL + Gold view. Terminal: rewrite `/api/econ/calendar` to read that table. | CAL becomes fully Tier A; no live FRED call in prod. |
+| **B — Permanent Tier B exception** | No new work. Current `// Exception to DB-only policy` annotation stays. | CAL stays live; FRED key required for release dates in prod. |
+
+*Recommendation: Path A — it's a small, bounded pipeline add (one ingestion config + one DDL file) and it closes the last live-FRED dependency in the ECON module.*
+
+**Current state in code:** annotated as `// Exception to DB-only policy` on the
+import line of `src/app/api/econ/calendar/route.ts`. Will not trip the CI grep gate.
+
+---
+
+### 🔴 DECISION NEEDED — PCE item-level drill (INFL)
+
+**Blocks:** Full PCE basket breakdown in the INFL module (item-level MoM/YoY,
+contribution_pp, weight).
+
+**Question:** Accept INFL shipping with CPI item tree + PCE headline/core now, and
+add PCE item drill later when the pipeline delivers the BEA manifest? Or hold INFL
+until full PCE parity?
+
+**Context:** The pipeline currently ingests PCE headline and core only. PCE
+item-level requires the BEA NIPA table manifest (`Table 2.4.4U`), which the
+pipeline flagged as a deferred item in its gap doc. This is pipeline work, not
+terminal work.
+
+*Recommendation: Ship INFL now with headline/core PCE + full CPI tree. Add a
+"PCE item drill: pending BEA manifest in pipeline" notice in the INFL UI. Revisit
+when the pipeline delivers the BEA series.*
+
+---
+
+### 🔴 DECISION NEEDED — STAT module: curated pairs vs. interactive recompute
+
+**Blocks:** `GET /api/econ/stats` cutover to Gold; STAT module behavior post-migration.
+
+**Question:** After the Gold cutover, should the STAT module:
+
+| Option | Description | Trade-off |
+|---|---|---|
+| **A — Curated pairs only** | `stats` route reads precomputed `gold.series_correlation`, `series_lead_lag`, `series_structural_breaks` for the curated `stats_pairs.yml` set. | Fastest route; no interactive flexibility. |
+| **B — Interactive recompute on Gold inputs** | `stats` route fetches raw transformed obs from `gold.fred_feature_transforms` for any user-selected pair, then runs the stat math server-side (or client-side). | Preserves arbitrary pair selection; requires keeping the TS stat math (or porting it server-side). |
+| **C — Curated pairs first, interactive later** | Ship Tier A cutover with option A, add interactive path in a follow-on. | Pragmatic; keeps Phase 5 scope small. |
+
+*Recommendation: Option C — curated pairs unblocks the Gold cutover; the interactive
+path is a feature addition that can follow independently.*
+
+---
+
+### 🔴 DECISION NEEDED — International data source: FRED-mirror vs World Bank
+
+**Blocks:** `GCPI` and `GPOL` module routes in Phase 5.
+
+**Question:** For global CPI and policy rates, should the pipeline standardize on:
+
+| Source | Coverage | Freshness | Notes |
+|---|---|---|---|
+| **FRED country-mirror codes** (`CPALTT01XXM659N`, etc.) | ~40 countries | Monthly; FRED-lagged | Already in `econSeries.ts` catalog; pipeline can ingest directly. |
+| **World Bank API** (`inflation.worldbank.org`) | 200+ countries | Annual/quarterly; released with longer lag | Broader but slower; requires a new pipeline connector. |
+
+The pipeline flagged this as a design choice in its gap doc (§ international data).
+
+*Recommendation: FRED-mirror for Phase 5 (fastest path; countries already cataloged);
+add World Bank as an optional enrichment layer in a later phase for countries not
+mirrored on FRED.*
+
+---
+
+### 🔴 DECISION NEEDED — Deploy target DB backend (D3 confirmation)
+
+**Blocks:** Phase 0 (`GoldStore` implementation); all subsequent phases in deployed
+environments.
+
+**Question:** For the production (non-local) deployment, what is the DB backend?
+
+| Option | Notes |
+|---|---|
+| **Postgres** | Standard; `pg` driver; pipeline's `--postgres` publish mode. |
+| **Databricks / Delta Lake** | Unity Catalog; `@databricks/sql` driver; pipeline's Databricks publish mode. |
+
+`GoldStore` supports both, but the prod driver must be provisioned and the
+`MACRO_DB_URL` / `MACRO_DB_BACKEND` env vars set in the deploy config before
+Phase 0 can be validated in a non-local environment.
+
+*This is a deployment infrastructure decision, not a terminal code decision.*
+
+---
+
+### 🔴 DECISION NEEDED — Staleness thresholds for `AGING` / `STALE` badges
+
+**Blocks:** §8 provenance redesign; `gold.v_source_coverage` integration in DATAOPS.
+
+**Question:** What are the acceptable staleness thresholds (in days) per module tier?
+
+Suggested starting point for discussion:
+
+| Module group | `AGING` after | `STALE` after |
+|---|---|---|
+| Macro indicators (ECON, BMRK, REGIME) | 2 days | 5 days |
+| Rates & curve (CURV, BRA, FUND) | 1 day | 3 days |
+| Credit spreads (CRDT) | 1 day | 3 days |
+| Inflation (INFL, GCPI) | 7 days | 30 days |
+| Markets (MKT, SNAP, IRET) | 1 day | 2 days |
+| Stats / EDA (STAT) | 7 days | 30 days |
+
+These thresholds need to be confirmed by the data team and encoded in the
+`GoldStore` helper before Phase 6 badge logic is implemented.
 
 ---
 
