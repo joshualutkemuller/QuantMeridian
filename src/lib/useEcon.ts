@@ -112,7 +112,6 @@ export function useCurveSnapshots(years = 7): { data: CurveSnapshot[]; source: D
     getCurveSnapshots(),
     (j) => (Array.isArray(j.snapshots) && j.snapshots.length ? j.snapshots : getCurveSnapshots()),
     "SIM",
-    [],
   );
 }
 

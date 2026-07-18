@@ -11,6 +11,7 @@ import { SourceBadge } from "@/components/econ/SourceBadge";
 import { TermSelect } from "@/components/ui/TermSelect";
 import { isRealEconSource, useCurveSnapshots, useInversions } from "@/lib/useEcon";
 import {
+  getCurveSnapshots,
   getCurveMetrics,
   currentSpreadBps,
   spreadDef,
@@ -57,7 +58,9 @@ export default function TreasuryCurveLab() {
   // Real point-in-time snapshots (Today + historical) from each tenor's FRED
   // daily history; falls back to the simulated presets without a key.
   const { data: snapshots, source } = useCurveSnapshots();
-  const today = snapshots.find((s) => s.id === "now") ?? snapshots[0];
+  const fallbackSnapshots = getCurveSnapshots();
+  const curveSnapshots = snapshots.length ? snapshots : fallbackSnapshots;
+  const today = curveSnapshots.find((s) => s.id === "now") ?? curveSnapshots[0] ?? fallbackSnapshots[0];
   const todayY = (t: string) => today.points.find((p) => p.tenor === t)?.yield ?? 0;
 
   // The live "now" curve drives the KPI strip.
@@ -67,7 +70,7 @@ export default function TreasuryCurveLab() {
   const [focusedId, setFocusedId] = useState<string>("now");
   const [spreadId, setSpreadId] = useState<string>("10Y2Y");
   const [showTable, setShowTable] = useState<boolean>(false);
-  const focused = snapshots.find((s) => s.id === focusedId) ?? today;
+  const focused = curveSnapshots.find((s) => s.id === focusedId) ?? today;
   const focusedMetrics = getCurveMetrics(focused);
 
   const toggleOverlay = (id: string) => {
@@ -81,7 +84,7 @@ export default function TreasuryCurveLab() {
   };
 
   // Build overlay lines in snapshot order so colors stay stable.
-  const lines: CurveLine[] = snapshots
+  const lines: CurveLine[] = curveSnapshots
     .map((s, i) => ({ s, i }))
     .filter(({ s }) => overlay.has(s.id))
     .map(({ s, i }) => ({
@@ -92,7 +95,7 @@ export default function TreasuryCurveLab() {
     }));
 
   // Overlaid snapshots (in snapshot order) → columns of the comparison table.
-  const overlaySnaps = snapshots.filter((s) => overlay.has(s.id));
+  const overlaySnaps = curveSnapshots.filter((s) => overlay.has(s.id));
 
   // Tenor table for the focused snapshot.
   interface TenorRow extends CurvePoint {
@@ -195,10 +198,10 @@ export default function TreasuryCurveLab() {
   ];
 
   // 2s10s for each overlaid line, for the legend.
-  const legendItems = snapshots
+  const legendItems = curveSnapshots
     .filter((s) => overlay.has(s.id))
     .map((s) => {
-      const idx = snapshots.findIndex((x) => x.id === s.id);
+      const idx = curveSnapshots.findIndex((x) => x.id === s.id);
       return { id: s.id, label: s.label, color: colorFor(s.id, idx), s2s10: getCurveMetrics(s).s2s10 };
     });
 
@@ -236,7 +239,7 @@ export default function TreasuryCurveLab() {
           className="xl:col-span-2"
           right={
             <div className="flex flex-wrap items-center gap-1">
-              {snapshots.map((s) => (
+              {curveSnapshots.map((s) => (
                 <button
                   key={s.id}
                   onClick={() => toggleOverlay(s.id)}
@@ -275,7 +278,7 @@ export default function TreasuryCurveLab() {
                     <tr className="border-b border-term-border">
                       <th className="px-1.5 py-1 text-left text-3xs uppercase tracking-wide text-term-text-mute">Tenor</th>
                       {overlaySnaps.map((s) => (
-                        <th key={s.id} className="px-1.5 py-1 text-right text-3xs font-semibold" style={{ color: colorFor(s.id, snapshots.findIndex((x) => x.id === s.id)) }} title={`${s.label} · ${s.date}`}>
+                        <th key={s.id} className="px-1.5 py-1 text-right text-3xs font-semibold" style={{ color: colorFor(s.id, curveSnapshots.findIndex((x) => x.id === s.id)) }} title={`${s.label} · ${s.date}`}>
                           {s.label}
                         </th>
                       ))}
@@ -335,7 +338,7 @@ export default function TreasuryCurveLab() {
           }
         >
           <div className="flex flex-wrap gap-1 border-b border-term-border px-2 py-2">
-            {snapshots.map((s) => (
+            {curveSnapshots.map((s) => (
               <button
                 key={s.id}
                 onClick={() => setFocusedId(s.id)}
@@ -457,12 +460,12 @@ export default function TreasuryCurveLab() {
 
         {/* ── Rates Relative Value ─────────────────────────────────────── */}
         {(() => {
-          const histSnaps = isRealEconSource(source) ? snapshots.filter((s) => s.id !== "now") : [];
+          const histSnaps = isRealEconSource(source) ? curveSnapshots.filter((s) => s.id !== "now") : [];
           const butterflies = histSnaps.length >= 20 ? computeButterfliesFromHistory(today, histSnaps) : computeButterflies(today);
           const spreadZs = histSnaps.length >= 20 ? computeSpreadZFromHistory(today, histSnaps) : computeSpreadZScores(today);
           const carryRoll = computeCarryRoll(today);
           const realBe = computeRealBreakeven();
-          const priorSnap = snapshots.find((s) => s.id === "1m") ?? snapshots[1];
+          const priorSnap = curveSnapshots.find((s) => s.id === "1m") ?? curveSnapshots[1] ?? today;
           const curveMove = classifyCurveMove(today, priorSnap);
 
           const SIGNAL_TONE_RV: Record<string, "up" | "amber" | "down" | "violet"> = { Rich: "down", Fair: "amber", Cheap: "up" };
