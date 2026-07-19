@@ -7,7 +7,7 @@ import { useSimMode } from "@/lib/simMode";
 export function CommandBar({ onOpenPalette, onToggleSidebar }: { onOpenPalette: () => void; onToggleSidebar: () => void }) {
   const path = usePathname();
   const current = NAV.find((n) => n.href === path) ?? NAV[0];
-  const { simEnabled, toggle: toggleSim } = useSimMode();
+  const { simEnabled, snapshotFallbackEnabled, toggle: toggleSim, toggleSnapshotFallback } = useSimMode();
   return (
     <header className="flex h-9 shrink-0 items-center gap-2 border-b border-term-border bg-term-panel px-2 sm:gap-3 sm:px-3">
       <button onClick={onToggleSidebar} className="shrink-0 text-term-text-mute hover:text-term-amber" title="Toggle sidebar">
@@ -46,6 +46,21 @@ export function CommandBar({ onOpenPalette, onToggleSidebar }: { onOpenPalette: 
         title="Search"
       >
         <Search size={16} />
+      </button>
+
+      <button
+        onClick={toggleSnapshotFallback}
+        className={`flex shrink-0 items-center gap-1.5 rounded-sm border px-2 py-0.5 text-3xs font-semibold uppercase tracking-wide transition-colors ${
+          snapshotFallbackEnabled
+            ? "border-term-violet/40 bg-term-violet/10 text-term-violet hover:bg-term-violet/20"
+            : "border-term-border bg-term-panel-2 text-term-text-mute hover:border-term-text-mute"
+        }`}
+        title={snapshotFallbackEnabled ? "SNAPSHOT FALLBACK ON — committed snapshots can fill gaps when DB/live data is unavailable. Click to suppress snapshots." : "SNAPSHOT FALLBACK OFF — committed snapshots are suppressed unless explicitly enabled for testing."}
+      >
+        <span className={`h-1.5 w-1.5 rounded-full ${snapshotFallbackEnabled ? "bg-term-violet animate-blink" : "bg-term-text-mute"}`} />
+        <span className="hidden lg:inline">SNAPSHOT FALLBACK</span>
+        <span className="lg:hidden">SNAP</span>
+        {snapshotFallbackEnabled ? "ON" : "OFF"}
       </button>
 
       <button

@@ -8,7 +8,8 @@ import { getIndexReturnMatrix, INDEXES as FALLBACK_INDEXES, type IndexYearSummar
 import { useMarketView, type MarketSource } from "@/lib/useMarket";
 import { ProvenanceBadge } from "@/components/ui/ProvenanceBadge";
 import { PRICE_SNAPSHOTS, SNAPSHOTS, type IndexReturnsView, type ReturnBasis } from "@/data/marketPipeline";
-import { fmtNum, fmtSignedPct } from "@/lib/format";
+import { fmtSignedPct } from "@/lib/format";
+import { useSimMode } from "@/lib/simMode";
 
 function returnClass(v: number | null): string {
   if (v === null) return "text-term-text-mute";
@@ -71,19 +72,35 @@ function snapshotForBasis(basis: ReturnBasis): IndexReturnsView {
   return (basis === "price" ? PRICE_SNAPSHOTS["index-returns"] : SNAPSHOTS["index-returns"]) as unknown as IndexReturnsView;
 }
 
+function emptyIndexReturnMatrix(symbol: string): ReturnType<typeof getIndexReturnMatrix> {
+  const generated = getIndexReturnMatrix(symbol);
+  return {
+    ...generated,
+    years: [],
+    rows: [],
+    annualReturns: {},
+    averageAnnualReturn: 0,
+    summaries: [],
+  };
+}
+
 export default function IndexReturnAnalyticsPage() {
   const [symbol, setSymbol] = useState("SPX");
   const [basis, setBasis] = useState<ReturnBasis>("total");
   const [asof, setAsOf] = useState("");
+  const { simEnabled, snapshotFallbackEnabled } = useSimMode();
   const { data: liveData, source, earliestAsOf } = useMarketView<IndexReturnsView>("index-returns", basis, asof);
   const snapshotData = useMemo(() => snapshotForBasis(basis), [basis]);
-  const indexes = liveData?.indices?.length ? liveData.indices : snapshotData.indices?.length ? snapshotData.indices : FALLBACK_INDEXES;
+  const indexes = liveData?.indices?.length ? liveData.indices : snapshotFallbackEnabled && snapshotData.indices?.length ? snapshotData.indices : FALLBACK_INDEXES;
   const liveMatrix = liveData?.matrices?.[symbol];
   const snapshotMatrix = snapshotData.matrices?.[symbol];
   const matrixIsLive = hasUsableMatrix(liveMatrix);
-  const matrixIsSnapshot = !matrixIsLive && hasUsableMatrix(snapshotMatrix);
-  const matrix = useMemo(() => matrixIsLive ? liveMatrix : matrixIsSnapshot ? snapshotMatrix : getIndexReturnMatrix(symbol), [liveMatrix, matrixIsLive, matrixIsSnapshot, snapshotMatrix, symbol]);
-  const matrixSource: MarketSource | "SIM" = matrixIsLive ? source : matrixIsSnapshot ? "SNAPSHOT" : "SIM";
+  const matrixIsSnapshot = snapshotFallbackEnabled && !matrixIsLive && hasUsableMatrix(snapshotMatrix);
+  const matrix = useMemo(
+    () => matrixIsLive ? liveMatrix : matrixIsSnapshot ? snapshotMatrix : simEnabled ? getIndexReturnMatrix(symbol) : emptyIndexReturnMatrix(symbol),
+    [liveMatrix, matrixIsLive, matrixIsSnapshot, simEnabled, snapshotMatrix, symbol],
+  );
+  const matrixSource: MarketSource | "SIM" = matrixIsLive ? source : matrixIsSnapshot ? "SNAPSHOT" : simEnabled ? "SIM" : "LOADING";
   const matrixAsOf = matrixIsLive ? liveData?.asof : matrixIsSnapshot ? snapshotData.asof : undefined;
   const columns = [...matrix.years, matrix.ytdYear];
   const completedYears = matrix.summaries.filter((s) => !s.isYtd);
@@ -103,10 +120,10 @@ export default function IndexReturnAnalyticsPage() {
       <KpiStrip>
         <Stat label="Index" value={matrix.index.symbol} sub={matrix.index.name} tone="amber" />
         <Stat label="Underlying" value={matrix.index.proxy ?? matrix.index.symbol} sub={basis === "total" ? "adjusted close" : "raw close"} tone="neutral" />
-        <Stat label="Current YTD" value={ytd?.annualReturn === null ? "—" : fmtSignedPct(ytd?.annualReturn ?? 0, 2)} sub={`${matrix.ytdYear} through Jun`} tone={(ytd?.annualReturn ?? 0) >= 0 ? "up" : "down"} />
+        <Stat label="Current YTD" value={ytd?.annualReturn === null || ytd === undefined ? "—" : fmtSignedPct(ytd.annualReturn, 2)} sub={ytd ? `${matrix.ytdYear} through Jun` : "need history"} tone={(ytd?.annualReturn ?? 0) >= 0 ? "up" : "down"} />
         <Stat label="Best Full Year" value={bestYear ? `${bestYear.year}` : "—"} sub={bestYear ? fmtSignedPct(bestYear.annualReturn ?? 0, 2) : "need history"} tone="up" />
         <Stat label="Worst Full Year" value={worstYear ? `${worstYear.year}` : "—"} sub={worstYear ? fmtSignedPct(worstYear.annualReturn ?? 0, 2) : "need history"} tone="down" />
-        <Stat label="Avg Annual*" value={fmtSignedPct(matrix.averageAnnualReturn, 2)} sub="excludes current YTD" />
+        <Stat label="Avg Annual*" value={completedYears.length ? fmtSignedPct(matrix.averageAnnualReturn, 2) : "—"} sub="excludes current YTD" />
       </KpiStrip>
 
       <div className="flex flex-wrap gap-1 border-b border-term-border bg-term-panel px-2 py-1">

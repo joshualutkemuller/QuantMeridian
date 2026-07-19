@@ -65,6 +65,12 @@ function asOfDate(req: Request): string | null {
   return raw && /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null;
 }
 
+function snapshotFallbackEnabled(req: Request): boolean {
+  const requested = new URL(req.url).searchParams.get("snapshot");
+  if (requested === "1" || requested === "true") return true;
+  return process.env.MARKET_SNAPSHOT_FALLBACK === "1";
+}
+
 function dbView(view: MarketView, basis: ReturnBasis): string {
   return basis === "price" && view in PRICE_SNAPSHOTS ? `${view}:price` : view;
 }
@@ -583,7 +589,7 @@ function filterSnapshotByAsOf(data: unknown, view: MarketView, asof: string): un
  *   1. MARKET_DB_URL    — local DuckDB file or Postgres `analytics_api_views`  → source "DB"
  *   2. MARKET_DATA_DIR  — directory of exported view JSON (`mdp export-views`) → source "FILE"
  *   3. MARKET_PIPELINE_URL — the running FastAPI service                       → source "LIVE"
- *   4. committed build-time snapshot                                          → source "SNAPSHOT"
+ *   4. committed build-time snapshot, only when explicitly enabled             → source "SNAPSHOT"
  *
  * Always 200 with a `source` field so the UI renders uniformly and never blocks.
  */
@@ -679,6 +685,17 @@ export async function GET(req: Request, { params }: { params: { view: string } }
   }
 
   // 4. committed build-time snapshot
+  if (!snapshotFallbackEnabled(req)) {
+    return json({
+      source: "SNAPSHOT_DISABLED",
+      view,
+      basis,
+      ...(asof ? { asof } : {}),
+      earliestAsOf: null,
+      data: null,
+      detail: "Snapshot fallback is off by default. Add snapshot=1 or set MARKET_SNAPSHOT_FALLBACK=1 to enable committed snapshots.",
+    });
+  }
   const snapData = snapshotFor(view, basis);
   const earliestAsOf = extractEarliestAsOf(snapData, view);
   const filtered = asof ? filterSnapshotByAsOf(snapData, view, asof) : snapData;

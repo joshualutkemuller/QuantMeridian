@@ -49,34 +49,55 @@ function useEconResource<T>(
   fallbackSource: DataSource = "SIM",
   emptyValue?: T,
 ): { data: T; source: DataSource } {
-  const { simEnabled } = useSimMode();
+  const { simEnabled, snapshotFallbackEnabled } = useSimMode();
+  const suppressSnapshot = (source: DataSource) => source === "SNAPSHOT" && !snapshotFallbackEnabled;
+  const suppressedData = () => (emptyValue !== undefined ? emptyValue : fallback);
+  const suppressedSource = () => (emptyValue !== undefined || fallbackSource === "SNAPSHOT" ? "LOADING" : fallbackSource);
   const cached = peekFresh<any>(url);
-  const [rawData, setRawData] = useState<T>(cached ? pick(cached) : fallback);
-  const [rawSource, setRawSource] = useState<DataSource>(cached ? mapSource(cached.source) : fallbackSource);
+  const cachedSource = cached ? mapSource(cached.source) : fallbackSource;
+  const [rawData, setRawData] = useState<T>(cached && !suppressSnapshot(cachedSource) ? pick(cached) : suppressSnapshot(cachedSource) ? suppressedData() : fallback);
+  const [rawSource, setRawSource] = useState<DataSource>(suppressSnapshot(cachedSource) ? suppressedSource() : cachedSource);
 
   useEffect(() => {
     let alive = true;
     const seed = peekFresh<any>(url);
     if (seed) {
-      setRawData(pick(seed));
-      setRawSource(mapSource(seed.source));
+      const seedSource = mapSource(seed.source);
+      if (suppressSnapshot(seedSource)) {
+        setRawData(suppressedData());
+        setRawSource(suppressedSource());
+      } else {
+        setRawData(pick(seed));
+        setRawSource(seedSource);
+      }
     } else {
       setRawSource("LOADING");
     }
     fetchJson<any>(url)
       .then((json) => {
         if (!alive) return;
+        const nextSource = mapSource(json.source);
+        if (suppressSnapshot(nextSource)) {
+          setRawData(suppressedData());
+          setRawSource(suppressedSource());
+          return;
+        }
         setRawData(pick(json));
-        setRawSource(mapSource(json.source));
+        setRawSource(nextSource);
       })
       .catch(() => {
         if (!alive) return;
-        setRawSource(fallbackSource);
+        if (suppressSnapshot(fallbackSource)) {
+          setRawData(suppressedData());
+          setRawSource(suppressedSource());
+        } else {
+          setRawSource(fallbackSource);
+        }
       });
     return () => {
       alive = false;
     };
-  }, [url]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [url, snapshotFallbackEnabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // When SIM is off, suppress SIM-sourced data
   if (!simEnabled && rawSource === "SIM" && emptyValue !== undefined) {
