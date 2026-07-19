@@ -127,6 +127,19 @@ function physicalTable(table: string, backend: Backend): string {
   return `gold.${table}`;
 }
 
+function historyDateColumn(table: string): string {
+  if (
+    table === "equity_return_daily" ||
+    table === "equity_total_return_index" ||
+    table === "fred_feature_transforms" ||
+    table === "fred_latest_observation" ||
+    table === "curve_spread_daily"
+  ) {
+    return "observation_date";
+  }
+  return "date";
+}
+
 // ---------------------------------------------------------------------------
 // Short in-process TTL cache (avoids per-request DB storms)
 // ---------------------------------------------------------------------------
@@ -278,9 +291,11 @@ export function createGoldStore(): GoldStore {
 
       const phys = physicalTable(table, backend);
       const { clause, params } = buildWhere(key, backend);
+      const dateColumn = historyDateColumn(table);
+      const select = dateColumn === "date" ? "*" : `*, ${dateColumn} AS date`;
       const sql = limit
-        ? `SELECT * FROM ${phys} ${clause} ORDER BY date DESC LIMIT ${Number(limit)}`.trim()
-        : `SELECT * FROM ${phys} ${clause} ORDER BY date ASC`.trim();
+        ? `SELECT ${select} FROM ${phys} ${clause} ORDER BY ${dateColumn} DESC LIMIT ${Number(limit)}`.trim()
+        : `SELECT ${select} FROM ${phys} ${clause} ORDER BY ${dateColumn} ASC`.trim();
       const rows = await query<T>(sql, params, backend);
       const ordered = limit ? rows.reverse() : rows;
       logGoldReadSuccess(`history:${table}`, backend, ordered.length);

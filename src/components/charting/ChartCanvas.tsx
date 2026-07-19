@@ -73,7 +73,7 @@ export const ChartCanvas = forwardRef<ChartCanvasHandle, ChartCanvasProps>(funct
   const candleVals: (number | null)[][] = candles ? [candles.map((c) => c.h), candles.map((c) => c.l)] : [];
   const [min, max] = extent([...series.map((s) => s.values), ...overlays.map((s) => s.values), ...candleVals]);
   const range = max - min || 1;
-  const hasData = n > 1 && (series.some((s) => s.values.some((v) => v != null)) || (candles?.some((c) => c.c != null) ?? false));
+  const hasData = n > 0 && (series.some((s) => s.values.some((v) => v != null)) || (candles?.some((c) => c.c != null) ?? false));
 
   const x = (i: number) => padL + (i / Math.max(1, n - 1)) * (W - padL - padR);
   const yMain = (v: number) => mainTop + (1 - (v - min) / range) * (mainBot - mainTop);
@@ -171,6 +171,9 @@ export const ChartCanvas = forwardRef<ChartCanvasHandle, ChartCanvasProps>(funct
             <g key={`s${si}`}>
               {s.area && d && <path d={`${d} L${x(n - 1).toFixed(1)},${yMain(min).toFixed(1)} L${x(0).toFixed(1)},${yMain(min).toFixed(1)} Z`} fill={s.color} fillOpacity={0.12} />}
               <path d={d} fill="none" stroke={s.color} strokeWidth={s.ghost ? 1 : 1.4} strokeLinejoin="round" strokeDasharray={s.ghost ? "2 4" : s.dashed ? "4 3" : undefined} opacity={s.ghost ? 0.28 : 1} />
+              {n === 1 && s.values[0] != null && Number.isFinite(s.values[0]) && (
+                <circle cx={x(0)} cy={yMain(s.values[0])} r={2.8} fill={s.color} opacity={s.ghost ? 0.28 : 1} />
+              )}
             </g>
           );
         })}
