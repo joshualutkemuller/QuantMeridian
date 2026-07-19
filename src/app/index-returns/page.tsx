@@ -59,17 +59,27 @@ function AnnualDrawdownBars({ data }: { data: IndexYearSummary[] }) {
   );
 }
 
+function hasUsableMatrix(matrix: IndexReturnsView["matrices"][string] | undefined): matrix is IndexReturnsView["matrices"][string] {
+  return Boolean(
+    matrix?.rows?.length &&
+    matrix.summaries?.some((s) => !s.isYtd) &&
+    Number.isFinite(matrix.ytdYear)
+  );
+}
+
 export default function IndexReturnAnalyticsPage() {
   const [symbol, setSymbol] = useState("SPX");
   const [basis, setBasis] = useState<ReturnBasis>("total");
   const [asof, setAsOf] = useState("");
   const { data: liveData, source, earliestAsOf } = useMarketView<IndexReturnsView>("index-returns", basis, asof);
   const indexes = liveData?.indices?.length ? liveData.indices : FALLBACK_INDEXES;
-  const matrixIsLive = !!liveData?.matrices?.[symbol];
-  const matrix = useMemo(() => liveData?.matrices?.[symbol] ?? getIndexReturnMatrix(symbol), [liveData, symbol]);
+  const liveMatrix = liveData?.matrices?.[symbol];
+  const matrixIsLive = hasUsableMatrix(liveMatrix);
+  const matrix = useMemo(() => matrixIsLive ? liveMatrix : getIndexReturnMatrix(symbol), [liveMatrix, matrixIsLive, symbol]);
   const columns = [...matrix.years, matrix.ytdYear];
-  const bestYear = matrix.summaries.filter((s) => !s.isYtd).sort((a, b) => (b.annualReturn ?? -999) - (a.annualReturn ?? -999))[0];
-  const worstYear = matrix.summaries.filter((s) => !s.isYtd).sort((a, b) => (a.annualReturn ?? 999) - (b.annualReturn ?? 999))[0];
+  const completedYears = matrix.summaries.filter((s) => !s.isYtd);
+  const bestYear = [...completedYears].sort((a, b) => (b.annualReturn ?? -999) - (a.annualReturn ?? -999))[0] ?? null;
+  const worstYear = [...completedYears].sort((a, b) => (a.annualReturn ?? 999) - (b.annualReturn ?? 999))[0] ?? null;
   const ytd = matrix.summaries.find((s) => s.isYtd);
   return (
     <div className="flex min-h-full flex-col">
@@ -85,8 +95,8 @@ export default function IndexReturnAnalyticsPage() {
         <Stat label="Index" value={matrix.index.symbol} sub={matrix.index.name} tone="amber" />
         <Stat label="Underlying" value={matrix.index.proxy ?? matrix.index.symbol} sub={basis === "total" ? "adjusted close" : "raw close"} tone="neutral" />
         <Stat label="Current YTD" value={ytd?.annualReturn === null ? "—" : fmtSignedPct(ytd?.annualReturn ?? 0, 2)} sub={`${matrix.ytdYear} through Jun`} tone={(ytd?.annualReturn ?? 0) >= 0 ? "up" : "down"} />
-        <Stat label="Best Full Year" value={`${bestYear.year}`} sub={fmtSignedPct(bestYear.annualReturn ?? 0, 2)} tone="up" />
-        <Stat label="Worst Full Year" value={`${worstYear.year}`} sub={fmtSignedPct(worstYear.annualReturn ?? 0, 2)} tone="down" />
+        <Stat label="Best Full Year" value={bestYear ? `${bestYear.year}` : "—"} sub={bestYear ? fmtSignedPct(bestYear.annualReturn ?? 0, 2) : "need history"} tone="up" />
+        <Stat label="Worst Full Year" value={worstYear ? `${worstYear.year}` : "—"} sub={worstYear ? fmtSignedPct(worstYear.annualReturn ?? 0, 2) : "need history"} tone="down" />
         <Stat label="Avg Annual*" value={fmtSignedPct(matrix.averageAnnualReturn, 2)} sub="excludes current YTD" />
       </KpiStrip>
 
