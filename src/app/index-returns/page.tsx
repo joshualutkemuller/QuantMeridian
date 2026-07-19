@@ -7,7 +7,7 @@ import { MarketDataControls } from "@/components/market/MarketDataControls";
 import { getIndexReturnMatrix, INDEXES as FALLBACK_INDEXES, type IndexYearSummary } from "@/data/marketAnalytics";
 import { useMarketView, type MarketSource } from "@/lib/useMarket";
 import { ProvenanceBadge } from "@/components/ui/ProvenanceBadge";
-import type { IndexReturnsView, ReturnBasis } from "@/data/marketPipeline";
+import { PRICE_SNAPSHOTS, SNAPSHOTS, type IndexReturnsView, type ReturnBasis } from "@/data/marketPipeline";
 import { fmtNum, fmtSignedPct } from "@/lib/format";
 
 function returnClass(v: number | null): string {
@@ -67,15 +67,24 @@ function hasUsableMatrix(matrix: IndexReturnsView["matrices"][string] | undefine
   );
 }
 
+function snapshotForBasis(basis: ReturnBasis): IndexReturnsView {
+  return (basis === "price" ? PRICE_SNAPSHOTS["index-returns"] : SNAPSHOTS["index-returns"]) as unknown as IndexReturnsView;
+}
+
 export default function IndexReturnAnalyticsPage() {
   const [symbol, setSymbol] = useState("SPX");
   const [basis, setBasis] = useState<ReturnBasis>("total");
   const [asof, setAsOf] = useState("");
   const { data: liveData, source, earliestAsOf } = useMarketView<IndexReturnsView>("index-returns", basis, asof);
-  const indexes = liveData?.indices?.length ? liveData.indices : FALLBACK_INDEXES;
+  const snapshotData = useMemo(() => snapshotForBasis(basis), [basis]);
+  const indexes = liveData?.indices?.length ? liveData.indices : snapshotData.indices?.length ? snapshotData.indices : FALLBACK_INDEXES;
   const liveMatrix = liveData?.matrices?.[symbol];
+  const snapshotMatrix = snapshotData.matrices?.[symbol];
   const matrixIsLive = hasUsableMatrix(liveMatrix);
-  const matrix = useMemo(() => matrixIsLive ? liveMatrix : getIndexReturnMatrix(symbol), [liveMatrix, matrixIsLive, symbol]);
+  const matrixIsSnapshot = !matrixIsLive && hasUsableMatrix(snapshotMatrix);
+  const matrix = useMemo(() => matrixIsLive ? liveMatrix : matrixIsSnapshot ? snapshotMatrix : getIndexReturnMatrix(symbol), [liveMatrix, matrixIsLive, matrixIsSnapshot, snapshotMatrix, symbol]);
+  const matrixSource: MarketSource | "SIM" = matrixIsLive ? source : matrixIsSnapshot ? "SNAPSHOT" : "SIM";
+  const matrixAsOf = matrixIsLive ? liveData?.asof : matrixIsSnapshot ? snapshotData.asof : undefined;
   const columns = [...matrix.years, matrix.ytdYear];
   const completedYears = matrix.summaries.filter((s) => !s.isYtd);
   const bestYear = [...completedYears].sort((a, b) => (b.annualReturn ?? -999) - (a.annualReturn ?? -999))[0] ?? null;
@@ -87,8 +96,8 @@ export default function IndexReturnAnalyticsPage() {
         code="IRET"
         title="Index Return Analytics"
         desc="Monthly return matrix, annual totals and intra-year drawdowns"
-        asOf={asof || liveData?.asof || null}
-        right={<span className="flex items-center gap-2"><MarketDataControls basis={basis} onBasisChange={setBasis} asof={asof} onAsOfChange={setAsOf} latestAsOf={liveData?.asof} earliestAsOf={earliestAsOf} /><PipelineTag source={matrixIsLive ? source : "SIM"} asOf={matrixIsLive ? liveData?.asof : undefined} /></span>}
+        asOf={asof || matrixAsOf || liveData?.asof || null}
+        right={<span className="flex items-center gap-2"><MarketDataControls basis={basis} onBasisChange={setBasis} asof={asof} onAsOfChange={setAsOf} latestAsOf={liveData?.asof} earliestAsOf={earliestAsOf} /><PipelineTag source={matrixSource} asOf={matrixAsOf} /></span>}
       />
 
       <KpiStrip>
@@ -114,7 +123,7 @@ export default function IndexReturnAnalyticsPage() {
           code="MATRIX"
           className="xl:col-span-12"
           accent
-          right={<span className="text-3xs text-term-text-mute">Proxy {matrix.index.proxy ?? matrix.index.symbol} · {basis === "total" ? "adjusted close" : "raw close"} · {asof || liveData?.asof || "latest"}</span>}
+          right={<span className="text-3xs text-term-text-mute">Proxy {matrix.index.proxy ?? matrix.index.symbol} · {basis === "total" ? "adjusted close" : "raw close"} · {asof || matrixAsOf || liveData?.asof || "latest"}</span>}
         >
           <div className="overflow-auto">
             <table className="w-full min-w-[1040px] border-collapse">
