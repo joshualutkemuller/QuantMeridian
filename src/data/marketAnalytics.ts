@@ -5,14 +5,17 @@ export type QuiltAsset = string;
 export interface QuiltCell {
   year: number;
   asset: QuiltAsset;
+  proxyTicker?: string;
   displayName?: string;
   assetClass?: string;
+  asOf?: string;
   returnPct: number;
   rank: number;
 }
 
 export interface QuiltYear {
   year: number;
+  asOf?: string;
   cells: QuiltCell[];
 }
 
