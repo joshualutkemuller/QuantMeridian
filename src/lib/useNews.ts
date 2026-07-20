@@ -20,7 +20,7 @@ interface NewsResponse {
  */
 export function useNews(n = 60): { headlines: Headline[]; source: string; clusters: EventCluster[] } {
   const { simEnabled } = useSimMode();
-  const url = `/api/news?n=${n}`;
+  const url = `/api/news?n=${n}${simEnabled ? "&sim=1" : ""}`;
   const cached = peekFresh<NewsResponse>(url);
   const [headlines, setHeadlines] = useState<Headline[]>(cached?.headlines ?? getHeadlines(n));
   const [source, setSource] = useState<string>(cached?.source ?? "SIM");
@@ -42,7 +42,8 @@ export function useNews(n = 60): { headlines: Headline[]; source: string; cluste
         setClusters(j.clusters ?? []);
       })
       .catch(() => {
-        /* keep SIM fallback */
+        if (!alive) return;
+        setSource(simEnabled ? "SIM" : "ERR");
       });
     return () => {
       alive = false;
@@ -50,7 +51,7 @@ export function useNews(n = 60): { headlines: Headline[]; source: string; cluste
   }, [url]);
 
   if (!simEnabled && source === "SIM") {
-    return { headlines: [], source, clusters: [] };
+    return { headlines: [], source: "ERR", clusters: [] };
   }
   return { headlines, source, clusters };
 }

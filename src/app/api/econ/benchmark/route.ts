@@ -5,11 +5,12 @@ import { getSnapshotObservations } from "@/data/econSnapshot"; // MIGRATION FALL
 import { BENCHMARK_SERIES } from "@/data/benchmarkRates";
 import { worstSource } from "@/lib/provenance";
 import { goldEnabled, goldStore } from "@/lib/server/goldStore";
+import { simFallbackEnabled, snapshotFallbackEnabled } from "@/lib/server/fallbacks";
 
 export interface BenchmarkBatchSeries {
   id: string;
   observations: { date: string; value: number }[];
-  source: "FRED" | "SNAPSHOT" | "SIM" | "DB";
+  source: "FRED" | "SNAPSHOT" | "SIM" | "DB" | "ERR";
   trend?: string | null;
   spread_to_benchmark?: number | null;
   regime?: string | null;
@@ -53,6 +54,8 @@ export async function GET(req: Request) {
     .filter(Boolean)
     .slice(0, 60);
   const n = Number(url.searchParams.get("n") ?? 520);
+  const allowSim = simFallbackEnabled(req);
+  const allowSnapshot = snapshotFallbackEnabled(req);
 
   // 1. Gold DB
   if (goldEnabled() && ids.length) {
@@ -81,6 +84,7 @@ export async function GET(req: Request) {
           const obs = obsAll.slice(-n);
 
           if (!obs.length && !board) {
+            if (!allowSim) return { id, observations: [], source: "ERR" as const };
             return { id, observations: getSeriesHistory(id, n), source: "SIM" as const }; // MIGRATION FALLBACK — remove in Phase 6
           }
 
@@ -121,13 +125,16 @@ export async function GET(req: Request) {
         }
       }
 
-      const snap = getSnapshotObservations(id, n); // MIGRATION FALLBACK — remove in Phase 6
-      if (snap) return { id, observations: snap as { date: string; value: number }[], source: "SNAPSHOT" };
+      if (allowSnapshot) {
+        const snap = getSnapshotObservations(id, n); // MIGRATION FALLBACK — remove in Phase 6
+        if (snap) return { id, observations: snap as { date: string; value: number }[], source: "SNAPSHOT" };
+      }
 
+      if (!allowSim) return { id, observations: [], source: "ERR" };
       return { id, observations: getSeriesHistory(id, n), source: "SIM" }; // MIGRATION FALLBACK — remove in Phase 6
     })
   );
 
-  const source = worstSource(series.map((s) => s.source));
+  const source = series.length ? worstSource(series.map((s) => s.source)) : "ERR";
   return json({ source, series });
 }

@@ -1,6 +1,7 @@
 import { json } from "@/lib/server/http";
-import { runMarketLens } from "@/data/marketLens";
+import { runMarketLens, type AnalysisResult } from "@/data/marketLens";
 import { goldEnabled, goldStore } from "@/lib/server/goldStore";
+import { snapshotFallbackEnabled } from "@/lib/server/fallbacks";
 
 const LENS_URL = process.env.MARKET_LENS_URL || "";
 
@@ -90,6 +91,22 @@ async function proxyToBackend(path: string, method: string, body?: unknown): Pro
   return null;
 }
 
+function localRunSource(result: AnalysisResult): "DB" | "FRED" | "SNAPSHOT" | "ECON" | "SIM" | "ERR" {
+  const provenance = result.metadata?.series_provenance;
+  if (!Array.isArray(provenance)) return "ERR";
+  const sources = provenance
+    .map((p) => typeof p === "object" && p !== null ? (p as { source?: unknown }).source : null)
+    .filter((s): s is string => typeof s === "string");
+  if (!sources.length) return "ERR";
+  if (sources.some((s) => s === "unavailable")) return "ERR";
+  if (sources.some((s) => s === "synthetic")) return "SIM";
+  if (sources.some((s) => s === "econ-sim")) return "ECON";
+  if (sources.some((s) => s === "index-monthly" || s === "bilello-yearly")) return "SNAPSHOT";
+  if (sources.some((s) => s === "fred")) return "FRED";
+  if (sources.every((s) => s === "gold-db")) return "DB";
+  return "DB";
+}
+
 /** Validate that a backend GET payload has the shape the UI expects. */
 function isValidGetShape(action: string, id: string, data: unknown): boolean {
   if (data == null) return false;
@@ -99,11 +116,17 @@ function isValidGetShape(action: string, id: string, data: unknown): boolean {
   return false;
 }
 
+function unavailableGetData(action: string) {
+  if (action === "catalog") return { total: 0, entries: [] };
+  return [];
+}
+
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const action = searchParams.get("action") || "views";
   const id = searchParams.get("id") || "";
   const q = searchParams.get("q") || "";
+  const allowSnapshot = snapshotFallbackEnabled(req);
 
   // Try Python backend first — but only trust a well-formed payload. Any error,
   // unreachable backend, or unexpected shape falls through to embedded data so
@@ -132,6 +155,9 @@ export async function GET(req: Request) {
   // Fallback to embedded data. `fallback: true` flags that the live backend was
   // configured but unavailable/invalid, so the UI can surface a clear notice.
   const fallback = Boolean(LENS_URL);
+  if (!allowSnapshot && action !== "catalog") {
+    return json({ source: "ERR", fallback, data: id ? null : unavailableGetData(action), error: "Market Lens embedded view library is disabled while Snapshot Fallback is off." });
+  }
   if (action === "views" && id) {
     const view = VIEWS.find(v => v.view_id === id);
     if (!view) return json({ error: "View not found" }, { status: 404 });
@@ -170,9 +196,15 @@ export async function GET(req: Request) {
     const filtered = q
       ? CATALOG.filter(c => c.series_id.toUpperCase().includes(q.toUpperCase()) || c.display_name.toUpperCase().includes(q.toUpperCase()))
       : CATALOG;
+    if (!allowSnapshot) {
+      return json({ source: "ERR", fallback, data: { total: 0, entries: [] }, error: "Market Lens embedded catalog is disabled while Snapshot Fallback is off." });
+    }
     return json({ source: "SNAPSHOT", fallback, data: { total: filtered.length, entries: filtered } });
   }
 
+  if (!allowSnapshot) {
+    return json({ source: "ERR", fallback, data: unavailableGetData(action), error: "Market Lens embedded fallback is disabled while Snapshot Fallback is off." });
+  }
   return json({ source: "SNAPSHOT", fallback, data: VIEWS });
 }
 
@@ -191,7 +223,7 @@ export async function POST(req: Request) {
     // engine — same graceful-degradation pattern as /api/market/[view], so the
     // module renders real, configurable analytics with no backend configured.
     const data = await runMarketLens(body);
-    return json({ source: "SNAPSHOT", data });
+    return json({ source: localRunSource(data), data });
   } catch (e) {
     return json({ error: "Invalid request body" }, { status: 400 });
   }

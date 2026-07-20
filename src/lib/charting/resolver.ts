@@ -1,6 +1,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { fetchJson } from "@/lib/fetchCache";
+import { useSimMode } from "@/lib/simMode";
 import { type SeriesRef, type RangePreset, rangeMonths } from "./spec";
 import { POINT_TRANSFORMS, applyPointTransform, applyWindowTransform, type Transform } from "./transforms";
 
@@ -47,6 +48,7 @@ function rangeStart(lastIso: string, range: RangePreset): string | null {
  * normalize transform. Pure client-side; provenance is preserved per series.
  */
 export function useChartSeries(refs: SeriesRef[], range: RangePreset, transform: Transform): ChartData {
+  const { simEnabled, snapshotFallbackEnabled } = useSimMode();
   const key = JSON.stringify(refs);
   const [raw, setRaw] = useState<RawSeries[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,6 +61,8 @@ export function useChartSeries(refs: SeriesRef[], range: RangePreset, transform:
         const qs = new URLSearchParams({ source: r.source, id: r.id });
         if (r.assetClass) qs.set("assetClass", r.assetClass);
         if ((r.source === "econ" || r.source === "fred") && POINT_TRANSFORMS.includes(transform)) qs.set("units", "lin");
+        if (simEnabled) qs.set("sim", "1");
+        if (snapshotFallbackEnabled) qs.set("snapshot", "1");
         return fetchJson<any>(`/api/chart/series?${qs}`)
           .then(
             (j): RawSeries => ({
@@ -79,7 +83,7 @@ export function useChartSeries(refs: SeriesRef[], range: RangePreset, transform:
     return () => {
       alive = false;
     };
-  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [key, simEnabled, snapshotFallbackEnabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { axis, series } = useMemo(() => {
     if (!raw.length) return { axis: [] as string[], series: [] as ResolvedSeries[] };

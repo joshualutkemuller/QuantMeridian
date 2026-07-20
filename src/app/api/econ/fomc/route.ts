@@ -10,12 +10,15 @@ import {
   etlFedModelInputs,
 } from "@/data/etlMacro";
 import { CURRENT_TARGET } from "@/data/econRates";
+import { simFallbackEnabled } from "@/lib/server/fallbacks";
 
 export const runtime = "nodejs";
 
-export async function GET() {
+export async function GET(req: Request) {
   if (!hasEtlFedData()) {
-    return json({ source: "SIM", meetings: [], path: [], currentTarget: CURRENT_TARGET });
+    return simFallbackEnabled(req)
+      ? json({ source: "SIM", meetings: [], path: [], currentTarget: CURRENT_TARGET })
+      : json({ source: "ERR", meetings: [], path: [], currentTarget: CURRENT_TARGET, error: "No ETL/Fed data available; enable SIM in the ribbon to use generated fallback data." });
   }
 
   // Pull live effective rate from Gold DB benchmarks — SOFR is the primary

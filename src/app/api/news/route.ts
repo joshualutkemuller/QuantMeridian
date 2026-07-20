@@ -3,6 +3,7 @@ import { json } from "@/lib/server/http";
 import { fetchLiveNews } from "@/lib/server/newsProviders";
 import { enrichWithNlp, fetchNlpClusters } from "@/lib/server/sentimentNlp";
 import { getHeadlines } from "@/data/news";
+import { simFallbackEnabled } from "@/lib/server/fallbacks";
 
 
 /**
@@ -14,8 +15,10 @@ import { getHeadlines } from "@/data/news";
  * supplies transformer event clusters for NEWS-6 (empty → keyword clustering).
  */
 export async function GET(req: Request) {
-  const n = Math.min(120, Math.max(10, Number(new URL(req.url).searchParams.get("n") ?? 60)));
+  const url = new URL(req.url);
+  const n = Math.min(120, Math.max(10, Number(url.searchParams.get("n") ?? 60)));
   const live = await fetchLiveNews(n).catch(() => null);
+  if (!live && !simFallbackEnabled(req)) return json({ source: "ERR", headlines: [], clusters: [] });
   const base = live ?? { source: "SIM", headlines: getHeadlines(n) };
   const [{ headlines, nlp }, clusters] = await Promise.all([
     enrichWithNlp(base.headlines).catch(() => ({ headlines: base.headlines, nlp: false })),

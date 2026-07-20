@@ -409,6 +409,18 @@ lands, keeps the old chain — no big-bang cutover).
 - [ ] **CI grep gate:** fail the build if `fredSeries|fredLatest|getSeriesHistory|
       getSnapshotObservations` appears under `src/app/api/econ`, `.../market`,
       `.../chart` (Tier A dirs). Encodes "no fallback" as a test.
+- [ ] **Runtime fallback gate:** Tier A/C routes must only use `SIM` when the
+      request explicitly opts in (`sim=1`, driven by the top-ribbon SIM toggle).
+      With SIM off, missing data returns an empty/error payload so gaps are
+      visible during testing.
+- [ ] **Snapshot fallback gate:** Tier A/C routes must only use committed
+      snapshots when the request explicitly opts in (`snapshot=1`, driven by the
+      top-ribbon Snapshot Fallback toggle). Direct endpoints such as
+      `/api/econ/series` and `/api/chart/series` need the same server-side
+      guard as `/api/market/[view]`.
+- [ ] Hard-coded `source="SIM"` badges are allowed only for modules that are
+      explicitly deterministic-book Tier C surfaces; the badge must render as
+      unavailable/error when SIM mode is off.
 - [ ] Each Tier-B route has the "Exception to DB-only policy" header comment.
 - [ ] `gold.powerbi_catalog` join test: every Tier A module has ≥1 mapped Gold
       object; every consumed Gold table exists in `dim_series`/catalog.
@@ -439,6 +451,112 @@ No pipeline change needed — this is model output grounded in Gold inputs, not 
 audit tool. SIM OFF = empty state in all hooks (audit mode, shows which modules
 have no real data). SIM ON = SIM fallback fills gaps as before. The toggle is not
 removed in Phase 6. The `simMode.tsx` + `useSimMode()` infrastructure stays.
+
+---
+
+### 🟡 FOLLOW-UP — Remaining rewiring exposed by SIM/Snapshot audit mode
+
+These are not new product requirements; they are cleanup items surfaced while
+testing the deploy with SIM OFF and Snapshot Fallback OFF. They should be worked
+before declaring the Gold cutover complete.
+
+#### 1. Snapshot fallback needs the same explicit gate as SIM
+
+**Problem:** The shared client hooks suppress snapshots when Snapshot Fallback is
+off, but some direct routes can still return `SNAPSHOT` without a request opt-in.
+This is the same class of issue as silent SIM fallback.
+
+**Fix:** Add a server-side `snapshot=1` gate to Tier A/C direct endpoints,
+especially:
+
+- `/api/econ/series`
+- `/api/chart/series`
+- `/api/econ/batch`
+- `/api/econ/benchmark`
+- `/api/econ/curve`
+- `/api/econ/curve-history`
+- `/api/econ/inversions`
+- `/api/econ/stats`
+
+**Acceptance:** With Snapshot Fallback OFF, a missing DB/live read produces an
+explicit empty/error payload, not a committed snapshot. With Snapshot Fallback
+ON, snapshots may fill gaps for testing.
+
+#### 2. Deterministic-book modules need explicit empty/not-wired states
+
+**Problem:** Several Tier C modules are intentionally synthetic-book surfaces.
+Their badges now show unavailable/error when SIM is off, but some page bodies
+still render generated book rows because their UI is built directly from static
+generators.
+
+**Modules to audit:** `COLL`, `SXU`, `DESK`, `PB`, `SQZ`, `OPT`, `AI/Copilot`,
+and parts of `EDA`.
+
+**Fix:** Either wire the module's macro inputs to `getMacroInputs()`/Gold and
+label the remaining fictional book as deterministic-book, or render an explicit
+"not wired / no real book source" empty state while SIM is off.
+
+**Acceptance:** SIM OFF makes gaps obvious: no page should look populated with
+generated rows unless it clearly states the remaining book is fictional and all
+macro inputs are Gold-backed.
+
+#### 3. Inflation Explorer still has Gold coverage gaps
+
+**Problem:** The local Gold DB currently has most CPI component series, but the
+Inflation Explorer batch still misses several PCE/headline series used by the UI.
+When SIM is off, these should appear as gaps rather than downgrading the module
+to generated data.
+
+**Observed missing series during local audit:**
+
+- `PCEPI`
+- `PCEPILFE`
+- `DHUTRC1M027SBEA`
+- `DHLCRG3M086SBEA`
+- `DTRSRC1M027SBEA`
+- `DRCARC1M027SBEA`
+
+**Fix:** Add/verify these mappings in the FRED/BEA pipeline. PCE item-level
+series may require the BEA manifest noted in the PCE item-level decision below.
+
+**Acceptance:** INFL displays CPI rows from Gold and clearly marks PCE rows that
+are unavailable until pipeline coverage is added.
+
+#### 4. Client-side fallback helpers must stop masking gaps
+
+**Problem:** A few pages still call client-side deterministic helpers such as
+`getSeriesHistory()` / `getSocialIntel()` / `getPolymarkets()` directly. The
+badge guard prevents these from looking live when SIM is off, but the cleaner
+behavior is to return empty rows in audit mode.
+
+**Known examples from audit:**
+
+- Economics overview selected-history fallback
+- Sec-Finance rate array fallbacks
+- Sentiment social/AAII-derived fallback paths
+- Polymarket/news/social hook initial states
+
+**Fix:** Route these through the shared hooks or check `useSimMode()` before
+using local generators.
+
+**Acceptance:** With SIM OFF, local deterministic helpers do not populate module
+bodies unless explicitly enabled.
+
+#### 5. Copy, docs, and DataOps labels need to match the new policy
+
+**Problem:** Some UI copy still says "falls back to SNAPSHOT/SIM" or "set
+FRED_API_KEY for live data." That was accurate before the Gold DB cutover, but
+now it obscures whether the module is DB-backed, snapshot-filled, or unavailable.
+
+**Fix:** Update UI/status copy to say:
+
+- Gold DB/live source first.
+- Snapshot Fallback is OFF by default and only fills gaps when explicitly enabled.
+- SIM is OFF by default and only fills gaps when explicitly enabled.
+- Missing Gold coverage should be reported as unavailable, not silently modeled.
+
+**Acceptance:** DataOps health, drilldown footers, module headers, and tooltips
+use the same language as the ribbon toggles.
 
 ---
 

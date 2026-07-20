@@ -4,6 +4,7 @@ import { getSeriesHistory, seriesById, resolveFred } from "@/data/econSeries"; /
 import { getMarketLensSeries } from "@/data/marketLens";
 import { getSnapshotObservations, getSnapshotRawObservations } from "@/data/econSnapshot"; // MIGRATION FALLBACK — remove in Phase 6
 import { goldEnabled, goldStore } from "@/lib/server/goldStore";
+import { simFallbackEnabled, snapshotFallbackEnabled } from "@/lib/server/fallbacks";
 
 interface GoldObsRow { series_id: string; date: string; observation_date?: string; value: number }
 interface GoldEquityRow {
@@ -36,6 +37,8 @@ export async function GET(req: Request) {
   const id = sp.get("id") ?? "";
   const assetClass = sp.get("assetClass") ?? undefined;
   const reqUnits = sp.get("units") ?? undefined;
+  const allowSim = simFallbackEnabled(req);
+  const allowSnapshot = snapshotFallbackEnabled(req);
   if (!id) return json({ error: "id required" }, { status: 400 });
 
   // Market / lens / book — daily price or macro level series from Gold equity tables.
@@ -76,6 +79,12 @@ export async function GET(req: Request) {
         : s.source === "econ-sim" ? "ECON"
         : s.source === "synthetic" ? "SIM"
         : "SNAPSHOT";
+      if (!allowSim && (badge === "SIM" || badge === "ECON")) {
+        return json({ source: "ERR", id, label: id, observations: [], error: "No Gold/real chart data available; enable SIM in the ribbon to use generated fallback data." });
+      }
+      if (!allowSnapshot && badge === "SNAPSHOT") {
+        return json({ source: "ERR", id, label: id, observations: [], error: "No Gold/live chart data available; enable Snapshot Fallback in the ribbon to use committed fallback data." });
+      }
       return json({
         source: badge,
         id,
@@ -125,11 +134,16 @@ export async function GET(req: Request) {
   }
 
   // 3. Snapshot
-  const snap = units === "lin"
-    ? getSnapshotRawObservations(id, n) ?? getSnapshotObservations(id, n) // MIGRATION FALLBACK — remove in Phase 6
-    : getSnapshotObservations(id, n); // MIGRATION FALLBACK — remove in Phase 6
-  if (snap) return json({ source: "SNAPSHOT", id, label: meta?.label ?? id, observations: snap });
+  if (allowSnapshot) {
+    const snap = units === "lin"
+      ? getSnapshotRawObservations(id, n) ?? getSnapshotObservations(id, n) // MIGRATION FALLBACK — remove in Phase 6
+      : getSnapshotObservations(id, n); // MIGRATION FALLBACK — remove in Phase 6
+    if (snap) return json({ source: "SNAPSHOT", id, label: meta?.label ?? id, observations: snap });
+  }
 
   // 4. SIM
+  if (!allowSim) {
+    return json({ source: "ERR", id, label: meta?.label ?? id, observations: [], error: "No DB/FRED/snapshot chart data available; enable SIM in the ribbon to use generated fallback data." });
+  }
   return json({ source: "SIM", id, label: meta?.label ?? id, observations: getSeriesHistory(id, n) }); // MIGRATION FALLBACK — remove in Phase 6
 }

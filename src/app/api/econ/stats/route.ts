@@ -5,6 +5,7 @@ import { STAT_SERIES, simStatFull, monthlyDate } from "@/data/statsConfig";
 import { getSnapshotObservations, getSnapshotRawObservations } from "@/data/econSnapshot"; // MIGRATION FALLBACK — remove in Phase 6
 import type { Obs } from "@/lib/stats";
 import { goldEnabled, goldStore } from "@/lib/server/goldStore";
+import { simFallbackEnabled, snapshotFallbackEnabled } from "@/lib/server/fallbacks";
 
 interface GoldObsRow {
   series_id: string;
@@ -38,6 +39,8 @@ export async function GET(req: Request) {
   const end = url.searchParams.get("end") ?? monthlyDate(0);
   const sim = simStatFull(320);
   const ids = STAT_SERIES.map(([id]) => id);
+  const allowSim = simFallbackEnabled(req);
+  const allowSnapshot = snapshotFallbackEnabled(req);
 
   // 1. Gold DB
   if (goldEnabled()) {
@@ -63,6 +66,7 @@ export async function GET(req: Request) {
         const series = STAT_SERIES.map(([id, label], idx) => {
           const obs = byId.get(id);
           if (obs?.length) return { id, label, points: toMonthly(obs, start, end) };
+          if (!allowSim) return { id, label, points: [] };
           return { id, label, points: sim[idx].points.filter((p) => p.date >= start && p.date <= end) };
         });
 
@@ -93,17 +97,20 @@ export async function GET(req: Request) {
           /* fall through */
         }
       }
-      const snap = getSnapshotRawObservations(id) ?? getSnapshotObservations(id); // MIGRATION FALLBACK — remove in Phase 6
-      if (snap) {
-        const pts = toMonthly(snap, start, end);
-        if (pts.length > 6) {
-          anySnapshot = true;
-          return { id, label, points: pts };
+      if (allowSnapshot) {
+        const snap = getSnapshotRawObservations(id) ?? getSnapshotObservations(id); // MIGRATION FALLBACK — remove in Phase 6
+        if (snap) {
+          const pts = toMonthly(snap, start, end);
+          if (pts.length > 6) {
+            anySnapshot = true;
+            return { id, label, points: pts };
+          }
         }
       }
+      if (!allowSim) return { id, label, points: [] };
       return { id, label, points: sim[idx].points.filter((p) => p.date >= start && p.date <= end) };
     })
   );
 
-  return json({ source: anyFred ? "FRED" : anySnapshot ? "SNAPSHOT" : "SIM", start, end, series });
+  return json({ source: anyFred ? "FRED" : anySnapshot ? "SNAPSHOT" : allowSim ? "SIM" : "ERR", start, end, series });
 }

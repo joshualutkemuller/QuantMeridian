@@ -5,6 +5,7 @@ import {
   classifyFreshness,
   FRESHNESS_TONE_CLASS,
 } from "@/lib/provenance";
+import { useSimMode } from "@/lib/simMode";
 
 /**
  * Canonical data-provenance pill. Renders any source code (FRED, DB, FILE,
@@ -25,7 +26,12 @@ export function ProvenanceBadge({
   asOf?: string | null;
   className?: string;
 }) {
-  const meta = provenanceMeta(source);
+  const { simEnabled, snapshotFallbackEnabled } = useSimMode();
+  const effectiveSource =
+    source === "SIM" && !simEnabled ? "ERR"
+    : source === "SNAPSHOT" && !snapshotFallbackEnabled ? "ERR"
+    : source;
+  const meta = provenanceMeta(effectiveSource);
   const tone = PROVENANCE_TONE_CLASS[meta.tone];
   const fresh = asOf !== undefined ? classifyFreshness(asOf) : null;
   const stale = fresh && (fresh.status === "AGING" || fresh.status === "STALE") ? fresh : null;

@@ -14,7 +14,7 @@ type SocialResponse = SocialIntel & { source: string };
  */
 export function useSocial(): { intel: SocialIntel; source: string } {
   const { simEnabled } = useSimMode();
-  const url = "/api/social";
+  const url = `/api/social${simEnabled ? "?sim=1" : ""}`;
   const cached = peekFresh<SocialResponse>(url);
   const [intel, setIntel] = useState<SocialIntel>(cached ?? getSocialIntel());
   const [source, setSource] = useState<string>(cached?.source ?? "SIM");
@@ -34,7 +34,8 @@ export function useSocial(): { intel: SocialIntel; source: string } {
         setSource(s ?? "SIM");
       })
       .catch(() => {
-        /* keep SIM fallback */
+        if (!alive) return;
+        setSource(simEnabled ? "SIM" : "ERR");
       });
     return () => {
       alive = false;
@@ -42,7 +43,7 @@ export function useSocial(): { intel: SocialIntel; source: string } {
   }, [url]);
 
   if (!simEnabled && source === "SIM") {
-    return { intel: { tickers: [], sectors: [], themes: [], totalPosts: 0, platforms: [] }, source };
+    return { intel: { tickers: [], sectors: [], themes: [], totalPosts: 0, platforms: [] }, source: "ERR" };
   }
   return { intel, source };
 }

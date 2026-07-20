@@ -13,6 +13,7 @@ import {
   tenorToFredId,
 } from "@/data/econCurve";
 import { goldEnabled, goldStore } from "@/lib/server/goldStore";
+import { simFallbackEnabled, snapshotFallbackEnabled } from "@/lib/server/fallbacks";
 
 interface GoldEpisodeRow {
   spread_id: string;
@@ -51,6 +52,8 @@ function snapshotObs(id: string) {
  */
 export async function GET(req: Request) {
   const spreadId = new URL(req.url).searchParams.get("spread") ?? "10Y2Y";
+  const allowSim = simFallbackEnabled(req);
+  const allowSnapshot = snapshotFallbackEnabled(req);
   const def = spreadDef(spreadId);
 
   const sim = () => ({
@@ -93,6 +96,14 @@ export async function GET(req: Request) {
       timeline: timeline.length ? timeline : getSpreadSeriesFor(spreadId),
     };
   };
+  const unavailable = (note?: string) => ({
+    source: "ERR" as const,
+    spread: spreadId,
+    inversions: [],
+    stats: computeInversionStats([]),
+    timeline: [],
+    ...(note ? { note } : {}),
+  });
 
   // 1. Gold DB
   if (goldEnabled()) {
@@ -144,7 +155,7 @@ export async function GET(req: Request) {
   }
 
   // 2. FRED
-  if (!fredEnabled()) return json(snap() ?? sim());
+  if (!fredEnabled()) return json((allowSnapshot ? snap() : null) ?? (allowSim ? sim() : unavailable("No DB/FRED/snapshot inversion data available; enable Snapshot Fallback or SIM in the ribbon to use fallback data.")));
 
   try {
     let series: { date: string; bps: number }[] = [];
@@ -156,7 +167,7 @@ export async function GET(req: Request) {
     } else {
       const longId = tenorToFredId(def.longT);
       const shortId = tenorToFredId(def.shortT);
-      if (!longId || !shortId) return json(sim());
+      if (!longId || !shortId) return json(allowSim ? sim() : unavailable("Unsupported spread definition."));
       const [lo, sh] = await Promise.all([
         fredSeries(longId, { start: HISTORY_START, revalidateSec: REVALIDATE }), // MIGRATION FALLBACK — remove in Phase 6
         fredSeries(shortId, { start: HISTORY_START, revalidateSec: REVALIDATE }), // MIGRATION FALLBACK — remove in Phase 6
@@ -166,7 +177,7 @@ export async function GET(req: Request) {
         .filter((o) => o.value !== null && shMap.has(o.date))
         .map((o) => ({ date: o.date, bps: ((o.value as number) - (shMap.get(o.date) as number)) * 100 }));
     }
-    if (series.length < 30) return json(sim());
+    if (series.length < 30) return json(allowSim ? sim() : unavailable("Not enough observations to detect inversions."));
 
     const usrec = await fredSeries("USREC", { start: "1970-01-01", revalidateSec: REVALIDATE }); // MIGRATION FALLBACK — remove in Phase 6
     const recessions = recessionRangesFromUsrec(
@@ -186,6 +197,6 @@ export async function GET(req: Request) {
       timeline,
     });
   } catch (err) {
-    return json({ ...(snap() ?? sim()), note: err instanceof Error ? err.message : "FRED error" });
+    return json({ ...((allowSnapshot ? snap() : null) ?? (allowSim ? sim() : unavailable())), note: err instanceof Error ? err.message : "FRED error" });
   }
 }

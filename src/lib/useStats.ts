@@ -16,7 +16,7 @@ import { useSimMode } from "@/lib/simMode";
 const CACHE = {
   byLabel: new Map<string, Map<string, number>>(),
   earliest: null as string | null, // earliest start date held
-  source: "SIM" as "DB" | "FRED" | "SNAPSHOT" | "SIM",
+  source: "SIM" as "DB" | "FRED" | "SNAPSHOT" | "SIM" | "ERR",
 };
 
 function mergePoints(label: string, points: { date: string; value: number }[]) {
@@ -49,7 +49,7 @@ export function useStatsData(defaultMonths = 240): {
   startDate: string;
   endDate: string;
 } {
-  const { simEnabled } = useSimMode();
+  const { simEnabled, snapshotFallbackEnabled } = useSimMode();
   const [lookbackMonths, setLookbackMonths] = useState(defaultMonths);
   const startDate = monthlyDate(lookbackMonths);
   const endDate = monthlyDate(0);
@@ -61,16 +61,16 @@ export function useStatsData(defaultMonths = 240): {
     let alive = true;
     // Already cached this far back → recompute locally, no fetch.
     if (CACHE.earliest && startDate >= CACHE.earliest) {
-      setSeries(buildActive(startDate));
-      setSource(CACHE.source);
+      setSeries(!simEnabled && CACHE.source === "SIM" ? [] : buildActive(startDate));
+      setSource(!simEnabled && CACHE.source === "SIM" ? "ERR" : CACHE.source);
       return;
     }
     setLoading(true);
     setSource("LOADING");
     const fetchEnd = CACHE.earliest ?? endDate; // only the older delta when extending
-    fetch(`/api/econ/stats?start=${startDate}&end=${fetchEnd}`)
+    fetch(`/api/econ/stats?start=${startDate}&end=${fetchEnd}${simEnabled ? "&sim=1" : ""}${snapshotFallbackEnabled ? "&snapshot=1" : ""}`)
       .then((r) => r.json())
-      .then((j: { source: "DB" | "FRED" | "SNAPSHOT" | "SIM"; series: { label: string; points: { date: string; value: number }[] }[] }) => {
+      .then((j: { source: "DB" | "FRED" | "SNAPSHOT" | "SIM" | "ERR"; series: { label: string; points: { date: string; value: number }[] }[] }) => {
         if (!alive) return;
         for (const s of j.series) mergePoints(s.label, s.points);
         CACHE.earliest = CACHE.earliest && startDate >= CACHE.earliest ? CACHE.earliest : startDate;
@@ -78,11 +78,21 @@ export function useStatsData(defaultMonths = 240): {
         setSource(j.source);
         setSeries(buildActive(startDate));
       })
-      .catch(() => alive && setSeries(sliceSim(startDate)))
+      .catch(() => {
+        if (!alive) return;
+        if (simEnabled) {
+          setSeries(sliceSim(startDate));
+          setSource("SIM");
+        } else {
+          setSeries([]);
+          setSource("ERR");
+        }
+      })
       .finally(() => alive && setLoading(false));
     return () => { alive = false; };
-  }, [startDate, endDate]);
+  }, [startDate, endDate, simEnabled, snapshotFallbackEnabled]);
 
   const effectiveSeries = !simEnabled && source === "SIM" ? [] : series;
-  return { series: effectiveSeries, source, loading, lookbackMonths, setLookbackMonths, startDate, endDate };
+  const effectiveSource = !simEnabled && source === "SIM" ? "ERR" : source;
+  return { series: effectiveSeries, source: effectiveSource, loading, lookbackMonths, setLookbackMonths, startDate, endDate };
 }

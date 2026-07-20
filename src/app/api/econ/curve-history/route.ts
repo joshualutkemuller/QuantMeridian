@@ -3,6 +3,7 @@ import { fredEnabled, fredSeries } from "@/lib/server/fred"; // MIGRATION FALLBA
 import { CURVE_TENORS, buildLiveSnapshots, getCurveSnapshots, type CurveHistory } from "@/data/econCurve";
 import { getSnapshotObservations, getSnapshotRawObservations } from "@/data/econSnapshot"; // MIGRATION FALLBACK — remove in Phase 6
 import { goldEnabled, goldStore } from "@/lib/server/goldStore";
+import { simFallbackEnabled, snapshotFallbackEnabled } from "@/lib/server/fallbacks";
 
 interface GoldCurveRow {
   as_of_date: string;
@@ -51,6 +52,8 @@ export async function GET(req: Request) {
   const reqYears = Number(new URL(req.url).searchParams.get("years") ?? 7);
   const years = Math.max(2, Math.min(25, Number.isFinite(reqYears) ? reqYears : 7));
   const start = `${new Date().getUTCFullYear() - years}-01-01`;
+  const allowSim = simFallbackEnabled(req);
+  const allowSnapshot = snapshotFallbackEnabled(req);
 
   // 1. Gold DB
   if (goldEnabled()) {
@@ -91,12 +94,16 @@ export async function GET(req: Request) {
   }
 
   const sim = getCurveSnapshots();
-  const snapHistory = snapshotHistory();
+  const snapHistory = allowSnapshot ? snapshotHistory() : null;
   const snap = snapHistory ? buildLiveSnapshots(snapHistory) : null;
 
   // 2. FRED
   if (!fredEnabled()) {
-    return snap ? json({ source: "SNAPSHOT", snapshots: snap }) : json({ source: "SIM", snapshots: sim });
+    return snap
+      ? json({ source: "SNAPSHOT", snapshots: snap })
+      : allowSim
+        ? json({ source: "SIM", snapshots: sim })
+        : json({ source: "ERR", snapshots: [], error: "No DB/FRED/snapshot curve history available; enable SIM in the ribbon to use generated fallback data." });
   }
 
   try {
@@ -115,6 +122,8 @@ export async function GET(req: Request) {
   } catch (err) {
     return snap
       ? json({ source: "SNAPSHOT", note: err instanceof Error ? err.message : "FRED error", snapshots: snap })
-      : json({ source: "SIM", note: err instanceof Error ? err.message : "FRED error", snapshots: sim });
+      : allowSim
+        ? json({ source: "SIM", note: err instanceof Error ? err.message : "FRED error", snapshots: sim })
+        : json({ source: "ERR", note: err instanceof Error ? err.message : "FRED error", snapshots: [] });
   }
 }

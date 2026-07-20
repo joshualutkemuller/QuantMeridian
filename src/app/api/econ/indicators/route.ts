@@ -4,8 +4,9 @@ import { FRED_CATALOG, getSeriesHistory, getSeriesHistoryRaw, resolveFred, type 
 import { getSnapshotObservations, getSnapshotRawObservations } from "@/data/econSnapshot"; // MIGRATION FALLBACK — remove in Phase 6
 import { worstSource } from "@/lib/provenance";
 import { goldEnabled, goldStore } from "@/lib/server/goldStore";
+import { simFallbackEnabled, snapshotFallbackEnabled } from "@/lib/server/fallbacks";
 
-type EconSource = "FRED" | "SNAPSHOT" | "SIM" | "DB";
+type EconSource = "FRED" | "SNAPSHOT" | "SIM" | "DB" | "ERR";
 
 export interface LiveIndicator {
   id: string;
@@ -122,7 +123,10 @@ function buildPoint(
  *   3. Committed snapshot
  *   4. Deterministic SIM
  */
-export async function GET() {
+export async function GET(req: Request) {
+  const allowSim = simFallbackEnabled(req);
+  const allowSnapshot = snapshotFallbackEnabled(req);
+
   // 1. Gold DB
   if (goldEnabled()) {
     try {
@@ -141,17 +145,17 @@ export async function GET() {
           sparkById.set(row.series_id, arr);
         }
 
-        const indicators: LiveIndicator[] = FRED_CATALOG.map((s) => {
+        const indicators: LiveIndicator[] = FRED_CATALOG.flatMap((s) => {
           const r = byId.get(s.id);
           if (!r) {
-            // series not yet in Gold — fall through to SIM for this one
+            if (!allowSim) return [];
             const simHist = getSeriesHistory(s.id, 24); // MIGRATION FALLBACK — remove in Phase 6
-            return buildPoint(s, simHist, "SIM");
+            return [buildPoint(s, simHist, "SIM")];
           }
           const latest = r.latest_value ?? s.level;
           const prior = r.prior_value ?? latest;
           const history = sparkById.get(s.id) ?? [prior, latest];
-          return {
+          return [{
             id: s.id,
             value: Number(latest.toFixed(s.decimals)),
             prior: Number(prior.toFixed(s.decimals)),
@@ -173,10 +177,10 @@ export async function GET() {
             percentile: r.percentile,
             surprise: r.surprise,
             direction_is_good: r.direction_is_good,
-          };
+          }];
         });
 
-        return json({ source: "DB", indicators });
+        return json({ source: indicators.length ? "DB" : "ERR", indicators });
       }
     } catch (err) {
       console.warn("[indicators] Gold DB read failed:", (err as Error).message);
@@ -185,7 +189,7 @@ export async function GET() {
 
   // 2. FRED → 3. SNAPSHOT → 4. SIM
   const live = fredEnabled();
-  const out = await Promise.all(
+  const resolved = await Promise.all(
     FRED_CATALOG.map(async (s) => {
       const r = resolveFred(s.id);
       if (live && !r.simOnly) {
@@ -202,22 +206,26 @@ export async function GET() {
           /* fall back */
         }
       }
-      const snap = getSnapshotObservations(s.id, 24); // MIGRATION FALLBACK — remove in Phase 6
-      if (snap) {
-        const rawSnap = getSnapshotRawObservations(s.id, 24);
-        return buildPoint(
-          s,
-          snap as { date: string; value: number }[],
-          "SNAPSHOT",
-          rawSnap ? rawSnap as { date: string; value: number }[] : undefined
-        );
+      if (allowSnapshot) {
+        const snap = getSnapshotObservations(s.id, 24); // MIGRATION FALLBACK — remove in Phase 6
+        if (snap) {
+          const rawSnap = getSnapshotRawObservations(s.id, 24);
+          return buildPoint(
+            s,
+            snap as { date: string; value: number }[],
+            "SNAPSHOT",
+            rawSnap ? rawSnap as { date: string; value: number }[] : undefined
+          );
+        }
       }
+      if (!allowSim) return null;
       const simHist = getSeriesHistory(s.id, 24); // MIGRATION FALLBACK — remove in Phase 6
       const resolved = resolveFred(s.id);
       const simRaw = resolved.units !== "lin" ? getSeriesHistoryRaw(s.id, 24) ?? undefined : undefined; // MIGRATION FALLBACK — remove in Phase 6
       return buildPoint(s, simHist, "SIM", simRaw);
     })
   );
-  const source: EconSource = worstSource(out.map((o) => o.source));
+  const out = resolved.filter((i): i is LiveIndicator => i !== null);
+  const source: EconSource = out.length ? worstSource(out.map((o) => o.source)) : "ERR";
   return json({ source, indicators: out });
 }

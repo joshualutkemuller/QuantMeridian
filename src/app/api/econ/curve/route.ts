@@ -3,6 +3,7 @@ import { fredEnabled, fredLatest } from "@/lib/server/fred"; // MIGRATION FALLBA
 import { getCurrentCurve } from "@/data/econCurve";
 import { getSnapshotObservations, getSnapshotRawObservations } from "@/data/econSnapshot"; // MIGRATION FALLBACK — remove in Phase 6
 import { goldEnabled, goldStore } from "@/lib/server/goldStore";
+import { simFallbackEnabled, snapshotFallbackEnabled } from "@/lib/server/fallbacks";
 
 interface GoldCurveRow {
   as_of_date: string;
@@ -45,7 +46,9 @@ function snapshotCurve() {
  *   3. Committed snapshot
  *   4. Deterministic SIM
  */
-export async function GET() {
+export async function GET(req: Request) {
+  const allowSim = simFallbackEnabled(req);
+  const allowSnapshot = snapshotFallbackEnabled(req);
   const sim = getCurrentCurve();
 
   // 1. Gold DB
@@ -95,9 +98,13 @@ export async function GET() {
   }
 
   // 2. FRED
-  const snap = snapshotCurve();
+  const snap = allowSnapshot ? snapshotCurve() : null;
   if (!fredEnabled()) {
-    return snap ? json({ source: "SNAPSHOT", asOf: snap.date, curve: snap }) : json({ source: "SIM", curve: sim });
+    return snap
+      ? json({ source: "SNAPSHOT", asOf: snap.date, curve: snap })
+      : allowSim
+        ? json({ source: "SIM", curve: sim })
+        : json({ source: "ERR", curve: null, error: "No DB/FRED/snapshot curve data available; enable SIM in the ribbon to use generated fallback data." });
   }
   try {
     const resolved = await Promise.all(
@@ -117,6 +124,8 @@ export async function GET() {
   } catch (err) {
     return snap
       ? json({ source: "SNAPSHOT", note: err instanceof Error ? err.message : "FRED error", asOf: snap.date, curve: snap })
-      : json({ source: "SIM", note: err instanceof Error ? err.message : "FRED error", curve: sim });
+      : allowSim
+        ? json({ source: "SIM", note: err instanceof Error ? err.message : "FRED error", curve: sim })
+        : json({ source: "ERR", note: err instanceof Error ? err.message : "FRED error", curve: null });
   }
 }

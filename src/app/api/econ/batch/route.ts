@@ -4,11 +4,12 @@ import { getSeriesHistory, getSeriesHistoryRaw, resolveFred } from "@/data/econS
 import { getSnapshotObservations, getSnapshotRawObservations } from "@/data/econSnapshot"; // MIGRATION FALLBACK — remove in Phase 6
 import { worstSource } from "@/lib/provenance";
 import { goldEnabled, goldStore } from "@/lib/server/goldStore";
+import { simFallbackEnabled, snapshotFallbackEnabled } from "@/lib/server/fallbacks";
 
 export interface BatchSeries {
   id: string;
   observations: { date: string; value: number }[];
-  source: "FRED" | "SNAPSHOT" | "SIM" | "DB";
+  source: "FRED" | "SNAPSHOT" | "SIM" | "DB" | "ERR";
 }
 
 interface GoldFeatureRow {
@@ -39,6 +40,8 @@ export async function GET(req: Request) {
   const ids = (url.searchParams.get("ids") ?? "").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 60);
   const n = Number(url.searchParams.get("n") ?? 15);
   const unitsOverride = url.searchParams.get("units") ?? undefined;
+  const allowSim = simFallbackEnabled(req);
+  const allowSnapshot = snapshotFallbackEnabled(req);
 
   if (!ids.length) return json({ source: "DB", series: [] });
 
@@ -72,7 +75,7 @@ export async function GET(req: Request) {
         const series: BatchSeries[] = ids.map((id) => {
           const obs = byId.get(id);
           if (!obs?.length) {
-            // Not in Gold — fall back for this series
+            if (!allowSim) return { id, observations: [], source: "ERR" as const };
             const r = resolveFred(id);
             const wantsRaw = unitsOverride === "lin" && r.units !== "lin";
             const simObs = wantsRaw ? getSeriesHistoryRaw(id, n) ?? getSeriesHistory(id, n) : getSeriesHistory(id, n); // MIGRATION FALLBACK — remove in Phase 6
@@ -103,8 +106,11 @@ export async function GET(req: Request) {
           /* fall through */
         }
       }
-      const snap = units === "lin" ? getSnapshotRawObservations(id, n) ?? getSnapshotObservations(id, n) : getSnapshotObservations(id, n); // MIGRATION FALLBACK — remove in Phase 6
-      if (snap) return { id, observations: snap as { date: string; value: number }[], source: "SNAPSHOT" };
+      if (allowSnapshot) {
+        const snap = units === "lin" ? getSnapshotRawObservations(id, n) ?? getSnapshotObservations(id, n) : getSnapshotObservations(id, n); // MIGRATION FALLBACK — remove in Phase 6
+        if (snap) return { id, observations: snap as { date: string; value: number }[], source: "SNAPSHOT" };
+      }
+      if (!allowSim) return { id, observations: [], source: "ERR" };
       const wantsRaw = units === "lin" && r.units !== "lin";
       const simObs = wantsRaw ? getSeriesHistoryRaw(id, n) ?? getSeriesHistory(id, n) : getSeriesHistory(id, n); // MIGRATION FALLBACK — remove in Phase 6
       return { id, observations: simObs, source: "SIM" };

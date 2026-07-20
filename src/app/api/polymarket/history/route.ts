@@ -2,6 +2,7 @@
 import { json } from "@/lib/server/http";
 import { fetchLivePriceHistory } from "@/lib/server/polymarket";
 import { getPolyPriceHistory } from "@/data/polymarket";
+import { simFallbackEnabled } from "@/lib/server/fallbacks";
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -19,5 +20,6 @@ export async function GET(req: Request) {
   }
 
   // 2. SIM — deterministic fallback
+  if (!simFallbackEnabled(req)) return json({ source: "ERR", data: [] });
   return json({ source: "SIM", data: getPolyPriceHistory(id, days) });
 }

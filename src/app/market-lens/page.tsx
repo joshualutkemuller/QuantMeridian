@@ -5,6 +5,7 @@ import { PageHeader, KpiStrip } from "@/components/ui/PageHeader";
 import { Panel, Stat, Tag } from "@/components/ui/Panel";
 import { fmtNum, fmtSignedPct } from "@/lib/format";
 import { ProvenanceBadge } from "@/components/ui/ProvenanceBadge";
+import { useSimMode } from "@/lib/simMode";
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -52,7 +53,7 @@ interface AnalysisResult {
   sample_size: number;
 }
 
-type Source = "LIVE" | "SNAPSHOT" | "LOADING";
+type Source = "LIVE" | "DB" | "FRED" | "SNAPSHOT" | "ECON" | "SIM" | "ERR" | "LOADING";
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -80,6 +81,7 @@ const WINDOW_OPTIONS = ["1W", "1M", "3M", "6M", "1Y", "2Y", "3Y", "5Y"];
 // ── Data Fetching ──────────────────────────────────────────────────────
 
 function useLensData<T>(action: string, id?: string) {
+  const { snapshotFallbackEnabled } = useSimMode();
   const [data, setData] = useState<T | null>(null);
   const [source, setSource] = useState<Source>("LOADING");
   const [fallback, setFallback] = useState(false);
@@ -89,21 +91,22 @@ function useLensData<T>(action: string, id?: string) {
     setSource("LOADING");
     const params = new URLSearchParams({ action });
     if (id) params.set("id", id);
+    if (snapshotFallbackEnabled) params.set("snapshot", "1");
     fetch(`/api/market-lens?${params}`)
       .then((r) => r.json())
       .then((json) => {
         if (!alive) return;
         setData(json.data as T);
-        setSource(json.source === "LIVE" ? "LIVE" : "SNAPSHOT");
+        setSource(["LIVE", "DB", "FRED", "SNAPSHOT", "ECON", "SIM", "ERR"].includes(json.source) ? json.source : "SNAPSHOT");
         setFallback(Boolean(json.fallback));
       })
       .catch(() => {
         if (!alive) return;
-        setSource("SNAPSHOT");
+        setSource(snapshotFallbackEnabled ? "SNAPSHOT" : "ERR");
         setFallback(true); // request failed entirely — embedded data in use
       });
     return () => { alive = false; };
-  }, [action, id]);
+  }, [action, id, snapshotFallbackEnabled]);
 
   return { data, source, fallback };
 }
@@ -560,6 +563,7 @@ function NarrativePanel({ narrative, warnings }: { narrative: string; warnings: 
 // ── Main Page ──────────────────────────────────────────────────────────
 
 export default function MarketLensStudioPage() {
+  const { simEnabled, snapshotFallbackEnabled } = useSimMode();
   const { data: views, source: viewsSource, fallback: viewsFallback } = useLensData<ViewDef[]>("views");
   const { data: presets } = useLensData<PresetDef[]>("presets");
   const { data: catalogData } = useLensData<{ total: number; entries: CatalogEntry[] }>("catalog");
@@ -578,7 +582,7 @@ export default function MarketLensStudioPage() {
 
   // Analysis state
   const [result, setResult] = useState<AnalysisResult | null>(null);
-  const [analysisSource, setAnalysisSource] = useState<Source>("SNAPSHOT");
+  const [analysisSource, setAnalysisSource] = useState<Source>("LOADING");
   const [running, setRunning] = useState(false);
 
   const selectedView = useMemo(
@@ -659,19 +663,21 @@ export default function MarketLensStudioPage() {
       }),
       forward_windows: Array.from(selectedWindows),
       selected_tiles: Array.from(enabledTiles),
+      allow_snapshot_fallback: snapshotFallbackEnabled,
+      allow_sim_fallback: simEnabled,
     };
 
     try {
       const res = await fetch("/api/market-lens", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const json = await res.json();
       setResult(json.data as AnalysisResult);
-      setAnalysisSource(json.source === "LIVE" ? "LIVE" : "SNAPSHOT");
+      setAnalysisSource(["LIVE", "DB", "FRED", "SNAPSHOT", "ECON", "SIM", "ERR"].includes(json.source) ? json.source : "ERR");
     } catch {
-      setAnalysisSource("SNAPSHOT");
+      setAnalysisSource("ERR");
     } finally {
       setRunning(false);
     }
-  }, [selectedViewId, selectedSeries, selectedWindows, enabledTiles, selectedView, catalog]);
+  }, [selectedViewId, selectedSeries, selectedWindows, enabledTiles, selectedView, catalog, snapshotFallbackEnabled, simEnabled]);
 
   const visibleTiles = useMemo(
     () => (result?.tiles ?? []).filter((t) => enabledTiles.size === 0 || enabledTiles.has(t.tile_id)),
@@ -729,8 +735,8 @@ export default function MarketLensStudioPage() {
           <span>{viewsFallback ? "⚠" : "ℹ"}</span>
           <span>
             {viewsFallback
-              ? "Live Market Lens backend unavailable — showing the built-in view library. Analytics run on the local engine (committed snapshots + FRED)."
-              : "Built-in view library — analytics run on the local engine (committed snapshots + FRED). Set MARKET_LENS_URL to connect the live Python engine."}
+              ? "Live Market Lens backend unavailable — showing the built-in view library. Analytics run on the local engine with Gold DB first; snapshots and SIM require the ribbon toggles."
+              : "Built-in view library — analytics run on the local engine with Gold DB first. Snapshot and SIM fallbacks are off unless enabled in the top ribbon."}
           </span>
         </div>
       )}
@@ -860,7 +866,7 @@ export default function MarketLensStudioPage() {
                 <span>·</span>
                 <span>Sample: {result.sample_size}</span>
                 <span>·</span>
-                <span>Source: <Tag tone={analysisSource === "LIVE" ? "up" : "violet"}>{analysisSource}</Tag></span>
+                <span>Source: <Tag tone={analysisSource === "LIVE" || analysisSource === "DB" || analysisSource === "FRED" ? "up" : analysisSource === "ERR" ? "down" : analysisSource === "SIM" || analysisSource === "ECON" ? "amber" : "violet"}>{analysisSource}</Tag></span>
                 {(() => {
                   const notes = result.metadata?.proxy_notes;
                   if (!Array.isArray(notes) || notes.length === 0) return null;

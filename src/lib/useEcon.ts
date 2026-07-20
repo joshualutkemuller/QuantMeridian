@@ -15,9 +15,9 @@ import {
 import { type EconEvent } from "@/data/econRates";
 import { useSimMode } from "@/lib/simMode";
 
-export type DataSource = "DB" | "FRED" | "SNAPSHOT" | "SIM" | "LOADING" | "ETL";
+export type DataSource = "DB" | "FRED" | "SNAPSHOT" | "SIM" | "LOADING" | "ETL" | "ERR";
 export type RealEconSource = "DB" | "FRED" | "SNAPSHOT";
-export type EconSeriesSource = RealEconSource | "SIM";
+export type EconSeriesSource = RealEconSource | "SIM" | "ERR";
 
 /** True when a row came from an external/committed source rather than generated SIM. */
 export function isRealEconSource(source: unknown): source is RealEconSource {
@@ -26,12 +26,24 @@ export function isRealEconSource(source: unknown): source is RealEconSource {
 
 /** Map a route's `source` string to the badge vocabulary. */
 function mapSource(s: unknown): DataSource {
-  if (typeof s !== "string") return "SIM";
+  if (typeof s !== "string") return "ERR";
   if (s === "DB") return "DB";
   if (s === "FRED" || s.includes("FRED") || s.includes("Finnhub")) return "FRED";
   if (s === "SNAPSHOT") return "SNAPSHOT";
   if (s === "ETL") return "ETL";
+  if (s === "ERR") return "ERR";
+  if (s === "LOADING") return "LOADING";
+  if (s === "SIM") return "SIM";
   return "SIM";
+}
+
+function withFallbackParams(url: string, opts: { simEnabled: boolean; snapshotFallbackEnabled: boolean }): string {
+  const params: string[] = [];
+  if (opts.simEnabled) params.push("sim=1");
+  if (opts.snapshotFallbackEnabled) params.push("snapshot=1");
+  if (!params.length) return url;
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}${params.join("&")}`;
 }
 
 /**
@@ -50,22 +62,25 @@ function useEconResource<T>(
   emptyValue?: T,
 ): { data: T; source: DataSource } {
   const { simEnabled, snapshotFallbackEnabled } = useSimMode();
+  const requestUrl = withFallbackParams(url, { simEnabled, snapshotFallbackEnabled });
   const suppressSnapshot = (source: DataSource) => source === "SNAPSHOT" && !snapshotFallbackEnabled;
+  const suppressSim = (source: DataSource) => source === "SIM" && !simEnabled;
+  const shouldSuppress = (source: DataSource) => suppressSnapshot(source) || suppressSim(source);
   const suppressedData = () => (emptyValue !== undefined ? emptyValue : fallback);
-  const suppressedSource = () => (emptyValue !== undefined || fallbackSource === "SNAPSHOT" ? "LOADING" : fallbackSource);
-  const cached = peekFresh<any>(url);
+  const suppressedSource = (source: DataSource) => source === "SIM" ? "ERR" : emptyValue !== undefined || fallbackSource === "SNAPSHOT" ? "LOADING" : fallbackSource;
+  const cached = peekFresh<any>(requestUrl);
   const cachedSource = cached ? mapSource(cached.source) : fallbackSource;
-  const [rawData, setRawData] = useState<T>(cached && !suppressSnapshot(cachedSource) ? pick(cached) : suppressSnapshot(cachedSource) ? suppressedData() : fallback);
-  const [rawSource, setRawSource] = useState<DataSource>(suppressSnapshot(cachedSource) ? suppressedSource() : cachedSource);
+  const [rawData, setRawData] = useState<T>(cached && !shouldSuppress(cachedSource) ? pick(cached) : shouldSuppress(cachedSource) ? suppressedData() : fallback);
+  const [rawSource, setRawSource] = useState<DataSource>(shouldSuppress(cachedSource) ? suppressedSource(cachedSource) : cachedSource);
 
   useEffect(() => {
     let alive = true;
-    const seed = peekFresh<any>(url);
+    const seed = peekFresh<any>(requestUrl);
     if (seed) {
       const seedSource = mapSource(seed.source);
-      if (suppressSnapshot(seedSource)) {
+      if (shouldSuppress(seedSource)) {
         setRawData(suppressedData());
-        setRawSource(suppressedSource());
+        setRawSource(suppressedSource(seedSource));
       } else {
         setRawData(pick(seed));
         setRawSource(seedSource);
@@ -73,13 +88,13 @@ function useEconResource<T>(
     } else {
       setRawSource("LOADING");
     }
-    fetchJson<any>(url)
+    fetchJson<any>(requestUrl)
       .then((json) => {
         if (!alive) return;
         const nextSource = mapSource(json.source);
-        if (suppressSnapshot(nextSource)) {
+        if (shouldSuppress(nextSource)) {
           setRawData(suppressedData());
-          setRawSource(suppressedSource());
+          setRawSource(suppressedSource(nextSource));
           return;
         }
         setRawData(pick(json));
@@ -87,9 +102,9 @@ function useEconResource<T>(
       })
       .catch(() => {
         if (!alive) return;
-        if (suppressSnapshot(fallbackSource)) {
+        if (shouldSuppress(fallbackSource)) {
           setRawData(suppressedData());
-          setRawSource(suppressedSource());
+          setRawSource(suppressedSource(fallbackSource));
         } else {
           setRawSource(fallbackSource);
         }
@@ -97,12 +112,7 @@ function useEconResource<T>(
     return () => {
       alive = false;
     };
-  }, [url, snapshotFallbackEnabled]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // When SIM is off, suppress SIM-sourced data
-  if (!simEnabled && rawSource === "SIM" && emptyValue !== undefined) {
-    return { data: emptyValue, source: rawSource };
-  }
+  }, [requestUrl, snapshotFallbackEnabled, simEnabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return { data: rawData, source: rawSource };
 }
@@ -131,8 +141,9 @@ export function useCurveSnapshots(years = 7): { data: CurveSnapshot[]; source: D
   return useEconResource<CurveSnapshot[]>(
     `/api/econ/curve-history?years=${years}`,
     getCurveSnapshots(),
-    (j) => (Array.isArray(j.snapshots) && j.snapshots.length ? j.snapshots : getCurveSnapshots()),
+    (j) => (Array.isArray(j.snapshots) ? j.snapshots : []),
     "SIM",
+    [],
   );
 }
 
@@ -232,7 +243,7 @@ export function useLiveSeriesSet(
     seeded as Record<string, SeriesObs>,
     (j) => Object.fromEntries((j.series ?? []).map((s: { id: string; observations: { date: string; value: number }[]; source: unknown }) => {
       const mapped = mapSource(s.source);
-      return [s.id, { observations: s.observations, source: isRealEconSource(mapped) ? mapped : "SIM" }];
+      return [s.id, { observations: s.observations, source: isRealEconSource(mapped) || mapped === "ERR" ? mapped : "SIM" }];
     })),
     Object.keys(seeded).length ? "SNAPSHOT" : "SIM",
     {},
@@ -240,7 +251,7 @@ export function useLiveSeriesSet(
 }
 
 export interface MacroInputsData {
-  source: "DB" | "SIM";
+  source: "DB" | "SIM" | "ERR";
   curve: Record<string, number>;
   benchmarks: Record<string, number>;
   funding: { stress_gauge: number | null; sofr_effr_spread_bps: number | null; ioer_effr_spread_bps: number | null };
@@ -267,7 +278,7 @@ const MACRO_INPUTS_FALLBACK: MacroInputsData = {
  * as anchors in SIM time-series generation. Falls back to SIM defaults when
  * Gold DB is not configured (source: "SIM").
  */
-export function useMacroInputs(): { data: MacroInputsData | null; source: "DB" | "SIM" } {
+export function useMacroInputs(): { data: MacroInputsData | null; source: "DB" | "SIM" | "ERR" } {
   const raw = useEconResource<MacroInputsData | null>(
     "/api/econ/macro-inputs",
     MACRO_INPUTS_FALLBACK,
@@ -275,7 +286,7 @@ export function useMacroInputs(): { data: MacroInputsData | null; source: "DB" |
     "SIM",
     null, // suppress SIM when toggle is off — Tier C pages show empty state
   );
-  return { data: raw.data, source: (raw.data?.source ?? "SIM") };
+  return { data: raw.data, source: (raw.data?.source ?? raw.source) as "DB" | "SIM" | "ERR" };
 }
 
 export interface FomcResponse {
@@ -298,15 +309,16 @@ export interface FomcResponse {
  * when Gold DB is not configured.
  */
 export function useFomc(): { data: FomcResponse | null; loading: boolean } {
+  const { simEnabled } = useSimMode();
   const [data, setData] = useState<FomcResponse | null>(null);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     let alive = true;
-    fetchJson<FomcResponse>("/api/econ/fomc")
+    fetchJson<FomcResponse>(`/api/econ/fomc${simEnabled ? "?sim=1" : ""}`)
       .then((j) => { if (alive && j?.meetings) setData(j); })
       .catch(() => {})
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, []);
+  }, [simEnabled]);
   return { data, loading };
 }

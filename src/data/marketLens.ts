@@ -4,6 +4,7 @@ import bilelloRaw from "./market/bilello.json";
 import marketSnapshotRaw from "./market/market_snapshot.json";
 import { getSeriesHistory as econHistory, seriesById as econMeta, resolveFred } from "@/data/econSeries";
 import { fredEnabled, fredSeries } from "@/lib/server/fred";
+import { goldEnabled, goldStore } from "@/lib/server/goldStore";
 import {
   WINDOW_DAYS,
   type Stat,
@@ -50,6 +51,8 @@ export interface LensRunRequest {
   series?: LensSeriesInput[];
   forward_windows?: string[];
   selected_tiles?: string[];
+  allow_snapshot_fallback?: boolean;
+  allow_sim_fallback?: boolean;
 }
 
 export interface TilePayload {
@@ -76,7 +79,14 @@ const HISTORY_YEARS = 12;
 const TRADING_DAYS = 252;
 const N = HISTORY_YEARS * TRADING_DAYS; // ~3024 points
 
-type DataSource = "index-monthly" | "bilello-yearly" | "fred" | "econ-sim" | "synthetic";
+type DataSource = "gold-db" | "index-monthly" | "bilello-yearly" | "fred" | "econ-sim" | "synthetic" | "unavailable";
+
+interface LensRunOptions {
+  allowSnapshotFallback: boolean;
+  allowSimFallback: boolean;
+}
+
+const DEFAULT_RUN_OPTIONS: LensRunOptions = { allowSnapshotFallback: true, allowSimFallback: true };
 
 interface Series {
   id: string;
@@ -271,7 +281,86 @@ function realDailySeries(seriesId: string, anchors: Anchor[], endPrice: number |
 
 const SERIES_CACHE = new Map<string, Series>();
 
-function buildSeries(input: LensSeriesInput): Series {
+interface GoldObsRow { series_id?: string; date?: string; observation_date?: string; value?: number | string | null }
+interface GoldEquityRow {
+  ticker?: string;
+  date?: string;
+  observation_date?: string;
+  close?: number | string | null;
+  total_return_index?: number | string | null;
+  price_return_index?: number | string | null;
+}
+
+function finiteNumber(v: unknown): number | null {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function isLevelInput(input: LensSeriesInput): boolean {
+  const id = input.series_id;
+  const assetClass = (input.asset_class ?? "").toUpperCase();
+  return MACRO_LEVEL_IDS.includes(id) || ["VOLATILITY", "RATE", "CREDIT", "MACRO"].includes(assetClass);
+}
+
+function unavailableSeries(input: LensSeriesInput): Series {
+  const assetClass = (input.asset_class ?? "EQUITY").toUpperCase();
+  return {
+    id: input.series_id,
+    name: input.display_name ?? input.series_id,
+    assetClass,
+    dates: [],
+    values: [],
+    kind: isLevelInput(input) ? "level" : "price",
+    dataSource: "unavailable",
+  };
+}
+
+async function resolveGoldDbSeries(input: LensSeriesInput): Promise<boolean> {
+  if (!goldEnabled()) return false;
+  const id = input.series_id;
+  if (SERIES_CACHE.has(id)) return true;
+  const store = goldStore();
+
+  if (isLevelInput(input)) {
+    const econId = ECON_ID[id] ?? id;
+    const rows = await store.history<GoldObsRow>("fred_latest_observation", { series_id: econId }, nForFreq(econMeta(econId)?.freq ?? "D"));
+    const clean = rows
+      .map((r) => {
+        const value = finiteNumber(r.value);
+        return { date: r.date ?? r.observation_date, value: SPREAD_BPS.has(id) && value !== null ? value / 100 : value };
+      })
+      .filter((r): r is { date: string; value: number } => Boolean(r.date) && r.value !== null);
+    if (!clean.length) return false;
+    SERIES_CACHE.set(id, {
+      id,
+      name: input.display_name ?? econMeta(econId)?.label ?? id,
+      assetClass: (input.asset_class ?? "").toUpperCase(),
+      dates: clean.map((r) => r.date),
+      values: clean.map((r) => r.value),
+      kind: "level",
+      dataSource: "gold-db",
+    });
+    return true;
+  }
+
+  const rows = await store.history<GoldEquityRow>("equity_total_return_index", { ticker: id });
+  const clean = rows
+    .map((r) => ({ date: r.date ?? r.observation_date, value: finiteNumber(r.close ?? r.total_return_index ?? r.price_return_index) }))
+    .filter((r): r is { date: string; value: number } => Boolean(r.date) && r.value !== null);
+  if (!clean.length) return false;
+  SERIES_CACHE.set(id, {
+    id,
+    name: input.display_name ?? id,
+    assetClass: (input.asset_class ?? "EQUITY").toUpperCase(),
+    dates: clean.map((r) => r.date),
+    values: clean.map((r) => r.value),
+    kind: "price",
+    dataSource: "gold-db",
+  });
+  return true;
+}
+
+function buildSeries(input: LensSeriesInput, options: LensRunOptions = DEFAULT_RUN_OPTIONS): Series {
   const id = input.series_id;
   const cached = SERIES_CACHE.get(id);
   if (cached) return cached;
@@ -315,16 +404,18 @@ function buildSeries(input: LensSeriesInput): Series {
     values = levelSeries(rng, dates, 4, 0.04, 0.1, 10);
     kind = "level";
   } else {
-    // Price series — prefer real committed return snapshots, else synthesize.
+    // Price series — prefer committed return snapshots only when explicitly allowed, else synthesize only when SIM is enabled.
     const monthly = indexMonthlyAnchors(id);
     const anchors = monthly ?? bilelloYearlyAnchors(id);
-    if (anchors) {
+    if (options.allowSnapshotFallback && anchors) {
       const real = realDailySeries(id, anchors, SNAP_PRICE[id] ?? null);
       values = real.values;
       outDates = real.dates;
       dataSource = monthly ? "index-monthly" : "bilello-yearly";
-    } else {
+    } else if (options.allowSimFallback) {
       values = priceSeries(rng, dates, assetClass);
+    } else {
+      return unavailableSeries(input);
     }
     kind = "price";
   }
@@ -348,12 +439,17 @@ function nForFreq(freq: "D" | "W" | "M" | "Q"): number {
   return freq === "D" ? 2600 : freq === "W" ? 520 : freq === "M" ? 130 : 44;
 }
 
-async function resolveLevelSeries(input: LensSeriesInput): Promise<void> {
+async function resolveLevelSeries(input: LensSeriesInput, options: LensRunOptions = DEFAULT_RUN_OPTIONS): Promise<void> {
   const id = input.series_id;
   if (SERIES_CACHE.has(id)) return;
+  try {
+    if (await resolveGoldDbSeries(input)) return;
+  } catch {
+    // Gold DB miss/error falls through to live FRED or explicit fallback tiers.
+  }
   const econId = ECON_ID[id] ?? id;
   const meta = econMeta(econId);
-  if (!meta) return; // unknown macro id — leave to synthetic buildSeries
+  if (!meta) return; // unknown macro id — leave to synthetic buildSeries when SIM is allowed
   const n = nForFreq(meta.freq);
 
   let obs: { date: string; value: number }[] = [];
@@ -368,7 +464,10 @@ async function resolveLevelSeries(input: LensSeriesInput): Promise<void> {
       }
     } catch { /* fall through to the deterministic econ model */ }
   }
-  if (!obs.length) obs = econHistory(econId, n);
+  if (!obs.length && options.allowSimFallback) obs = econHistory(econId, n);
+  if (!obs.length) {
+    return;
+  }
 
   let dates = obs.map((o) => o.date);
   let values = obs.map((o) => o.value);
@@ -376,7 +475,7 @@ async function resolveLevelSeries(input: LensSeriesInput): Promise<void> {
 
   // CPI: the builders need an index level. FRED `lin` returns the index; the
   // econ model returns YoY %, so synthesize a deterministic index in that case.
-  if (id === "CPIAUCSL" && dataSource !== "fred") {
+  if (id === "CPIAUCSL" && dataSource !== "fred" && options.allowSimFallback) {
     dates = businessDates(N, new Date());
     values = macroIndex(new Rng(`lens:${id}`), dates);
     dataSource = "synthetic";
@@ -508,7 +607,7 @@ function drawdownEvents(s: Series, thresholdPct: number): DrawdownEvent[] {
 
 // ── View builders ───────────────────────────────────────────────────────────
 
-type Builder = (ctx: { series: Series[]; windows: string[]; vix: Series }) => Omit<AnalysisResult, "view_id" | "series_used" | "warnings" | "metadata">;
+type Builder = (ctx: { series: Series[]; windows: string[]; vix: Series; options: LensRunOptions }) => Omit<AnalysisResult, "view_id" | "series_used" | "warnings" | "metadata">;
 
 function statsRow(st: Record<string, Stat>, windows: string[]): Record<string, number | null> {
   const row: Record<string, number | null> = {};
@@ -723,9 +822,9 @@ const BUILDERS: Record<string, Builder> = {
     };
   },
 
-  yield_curve_analysis: ({ series }) => {
-    const two = buildSeries({ series_id: "DGS2", asset_class: "RATE" });
-    const ten = buildSeries({ series_id: "DGS10", asset_class: "RATE" });
+  yield_curve_analysis: ({ series, options }) => {
+    const two = buildSeries({ series_id: "DGS2", asset_class: "RATE" }, options);
+    const ten = buildSeries({ series_id: "DGS10", asset_class: "RATE" }, options);
     const tenA = alignLevel(ten, two.dates);
     const slope = two.values.map((v, i) => Number(((tenA[i] - v) * 100).toFixed(1)));
     const lastTwo = two.values[two.values.length - 1], lastTen = tenA[tenA.length - 1];
@@ -748,9 +847,9 @@ const BUILDERS: Record<string, Builder> = {
     };
   },
 
-  credit_spread_stress: ({ series }) => {
-    const hy = buildSeries({ series_id: "BAMLH0A0HYM2", asset_class: "CREDIT" });
-    const ig = buildSeries({ series_id: "BAMLC0A0CM", asset_class: "CREDIT" });
+  credit_spread_stress: ({ series, options }) => {
+    const hy = buildSeries({ series_id: "BAMLH0A0HYM2", asset_class: "CREDIT" }, options);
+    const ig = buildSeries({ series_id: "BAMLC0A0CM", asset_class: "CREDIT" }, options);
     const cur = hy.values[hy.values.length - 1];
     const p = percentileOf(hy.values, cur);
     const mean = hy.values.reduce((a, b) => a + b, 0) / hy.values.length;
@@ -771,9 +870,9 @@ const BUILDERS: Record<string, Builder> = {
     };
   },
 
-  purchasing_power: ({ series }) => {
+  purchasing_power: ({ series, options }) => {
     const asset = series.find((s) => s.kind === "price") ?? series[0];
-    const cpi = buildSeries({ series_id: "CPIAUCSL", asset_class: "MACRO" });
+    const cpi = buildSeries({ series_id: "CPIAUCSL", asset_class: "MACRO" }, options);
     const c = alignLevel(cpi, asset.dates);
     const a0 = asset.values[0], c0 = c[0] || 1;
     const real = asset.values.map((v, i) => Number((v / a0 / ((c[i] || c0) / c0) * 100).toFixed(2)));
@@ -835,9 +934,9 @@ const BUILDERS: Record<string, Builder> = {
     };
   },
 
-  rate_cycle_analysis: ({ series }) => {
+  rate_cycle_analysis: ({ series, options }) => {
     const asset = series.find((s) => s.kind === "price") ?? series[0];
-    const ff = buildSeries({ series_id: "FEDFUNDS", asset_class: "RATE" });
+    const ff = buildSeries({ series_id: "FEDFUNDS", asset_class: "RATE" }, options);
     const fV = alignLevel(ff, asset.dates);
     const aV = asset.values;
     const n = aV.length;
@@ -937,9 +1036,9 @@ const BUILDERS: Record<string, Builder> = {
     };
   },
 
-  inflation_surprise: ({ series, windows }) => {
+  inflation_surprise: ({ series, windows, options }) => {
     const asset = series.find((s) => s.kind === "price") ?? series[0];
-    const cpi = buildSeries({ series_id: "CPIAUCSL", asset_class: "MACRO" });
+    const cpi = buildSeries({ series_id: "CPIAUCSL", asset_class: "MACRO" }, options);
     // "surprises" = months where CPI MoM deviates strongly from trailing average
     const idx: number[] = [];
     for (let i = 252; i < cpi.values.length; i++) {
@@ -1034,21 +1133,33 @@ function buildVixChange(series: Series[], windows: string[], vix: Series, increa
 
 export async function runMarketLens(req: LensRunRequest): Promise<AnalysisResult> {
   const inputs = (req.series ?? []).length ? req.series! : [{ series_id: "SPY", asset_class: "EQUITY" }];
+  const options: LensRunOptions = {
+    allowSnapshotFallback: req.allow_snapshot_fallback === true,
+    allowSimFallback: req.allow_sim_fallback === true,
+  };
 
-  // Resolve macro level series (VIX/rates/credit/CPI) from the existing
-  // econ/FRED data layer before the sync builders read them from the cache.
+  // Resolve all selected series plus macro helper levels before the sync
+  // builders read them from the cache. Gold DB is always attempted first;
+  // snapshots/SIM are used only when the caller explicitly allows them.
   const LEVEL_ASSET_CLASSES = ["VOLATILITY", "RATE", "CREDIT", "MACRO"];
   const userLevels = inputs.filter(
     (i) => MACRO_LEVEL_IDS.includes(i.series_id) || LEVEL_ASSET_CLASSES.includes((i.asset_class ?? "").toUpperCase())
   );
   await Promise.all([
-    ...MACRO_LEVEL_IDS.map((id) => resolveLevelSeries({ series_id: id })),
-    ...userLevels.map(resolveLevelSeries),
+    ...inputs.map(async (input) => {
+      try {
+        await resolveGoldDbSeries(input);
+      } catch {
+        // The fallback decision is handled by buildSeries/resolveLevelSeries below.
+      }
+    }),
+    ...MACRO_LEVEL_IDS.map((id) => resolveLevelSeries({ series_id: id }, options)),
+    ...userLevels.map((input) => resolveLevelSeries(input, options)),
   ]);
 
-  const series = inputs.map(buildSeries);
+  const series = inputs.map((input) => buildSeries(input, options));
   const windows = (req.forward_windows ?? ["1W", "1M", "3M", "6M", "1Y"]).filter((w) => w in WINDOW_DAYS);
-  const vix = buildSeries({ series_id: "^VIX", asset_class: "VOLATILITY" });
+  const vix = buildSeries({ series_id: "^VIX", asset_class: "VOLATILITY" }, options);
 
   const builder = BUILDERS[req.view_id];
   const proxyNotes = inputs
@@ -1056,19 +1167,36 @@ export async function runMarketLens(req: LensRunRequest): Promise<AnalysisResult
     .filter((x): x is string => x !== null);
 
   const SOURCE_LABEL: Record<DataSource, string> = {
+    "gold-db": "Gold DB",
     "index-monthly": "committed monthly returns (index_returns)",
     "bilello-yearly": "committed yearly returns (bilello)",
     fred: "FRED (live)",
     "econ-sim": "econ model (deterministic)",
     synthetic: "synthetic",
+    unavailable: "unavailable",
   };
-  const provenance = series.map((s) => ({ series_id: s.id, basis: SOURCE_LABEL[s.dataSource] }));
-  const committed = series.every((s) => s.dataSource !== "synthetic");
-  const macroBasis = fredEnabled() ? "live FRED" : "the deterministic econ model";
-  const warnings = committed
-    ? [`Computed from the terminal's existing data layer — committed return snapshots for prices and ${macroBasis} for macro series (VIX/rates/credit/CPI). Set MARKET_LENS_URL for the full live engine.`]
-    : [`Computed from the terminal's existing data layer; some selected series fall back to synthetic (no committed history). Macro series use ${macroBasis}. Set MARKET_LENS_URL for the full live engine.`];
+  const provenance = series.map((s) => ({ series_id: s.id, basis: SOURCE_LABEL[s.dataSource], source: s.dataSource, points: s.values.length }));
+  const macroBasis = goldEnabled() ? "Gold DB" : fredEnabled() ? "live FRED" : options.allowSimFallback ? "the deterministic econ model" : "unavailable";
+  const warnings = [
+    `Computed by the local Market Lens engine. Gold DB is preferred; snapshot fallback is ${options.allowSnapshotFallback ? "ON" : "OFF"} and SIM fallback is ${options.allowSimFallback ? "ON" : "OFF"}. Macro series use ${macroBasis}.`,
+  ];
   const meta = { proxy_notes: proxyNotes, engine: "local-ts", series_provenance: provenance };
+
+  const unavailable = series.filter((s) => s.dataSource === "unavailable" || s.values.length === 0);
+  if (unavailable.length) {
+    return {
+      view_id: req.view_id,
+      series_used: series.map((x) => x.id),
+      warnings: [
+        ...warnings,
+        `Unavailable series: ${unavailable.map((s) => s.id).join(", ")}. Enable Snapshot Fallback or SIM from the top ribbon only if you want non-Gold fallback data.`,
+      ],
+      sample_size: 0,
+      narrative: `Market Lens could not run ${req.view_id} because one or more selected series have no Gold DB/live data and fallback tiers are disabled.`,
+      metadata: meta,
+      tiles: [],
+    };
+  }
 
   if (!builder) {
     // Generic fallback: forward-return study on the first series.
@@ -1089,7 +1217,7 @@ export async function runMarketLens(req: LensRunRequest): Promise<AnalysisResult
     };
   }
 
-  const built = builder({ series, windows, vix });
+  const built = builder({ series, windows, vix, options });
   return {
     view_id: req.view_id,
     series_used: series.map((x) => x.id),

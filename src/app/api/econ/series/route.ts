@@ -4,6 +4,7 @@ import { getSeriesHistory, getSeriesHistoryRaw, seriesById, resolveFred } from "
 import { getSnapshotObservations, getSnapshotRawObservations } from "@/data/econSnapshot"; // MIGRATION FALLBACK — remove in Phase 6
 import { getEtlInflationObservations } from "@/data/globalMacro";
 import { goldEnabled, goldStore } from "@/lib/server/goldStore";
+import { simFallbackEnabled, snapshotFallbackEnabled } from "@/lib/server/fallbacks";
 
 interface GoldObsRow {
   series_id: string;
@@ -39,6 +40,8 @@ export async function GET(req: Request) {
   const resolved = resolveFred(id);
   const units = reqUnits ?? resolved.units;
   const label = meta?.label ?? id;
+  const allowSim = simFallbackEnabled(req);
+  const allowSnapshot = snapshotFallbackEnabled(req);
 
   // 1. Gold DB
   if (goldEnabled()) {
@@ -80,11 +83,13 @@ export async function GET(req: Request) {
   }
 
   // 3. Snapshot
-  const snap = units === "lin"
-    ? getSnapshotRawObservations(id, n) ?? getSnapshotObservations(id, n) // MIGRATION FALLBACK — remove in Phase 6
-    : getSnapshotObservations(id, n); // MIGRATION FALLBACK — remove in Phase 6
-  if (snap) {
-    return json({ source: "SNAPSHOT", id, label, units, observations: snap });
+  if (allowSnapshot) {
+    const snap = units === "lin"
+      ? getSnapshotRawObservations(id, n) ?? getSnapshotObservations(id, n) // MIGRATION FALLBACK — remove in Phase 6
+      : getSnapshotObservations(id, n); // MIGRATION FALLBACK — remove in Phase 6
+    if (snap) {
+      return json({ source: "SNAPSHOT", id, label, units, observations: snap });
+    }
   }
 
   // 4. ETL
@@ -94,6 +99,9 @@ export async function GET(req: Request) {
   }
 
   // 5. SIM
+  if (!allowSim) {
+    return json({ source: "ERR", id, label, units, observations: [], error: "No DB/FRED/snapshot/ETL data available; enable SIM in the ribbon to use generated fallback data." });
+  }
   const wantsRaw = reqUnits === "lin" && resolved.units !== "lin";
   if (wantsRaw) {
     const rawSim = getSeriesHistoryRaw(id, n); // MIGRATION FALLBACK — remove in Phase 6

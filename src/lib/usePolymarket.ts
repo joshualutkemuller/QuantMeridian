@@ -10,11 +10,12 @@ import {
 } from "@/data/polymarket";
 import { useSimMode } from "@/lib/simMode";
 
-export type PolySource = "POLY" | "SNAPSHOT" | "SIM" | "LOADING";
+export type PolySource = "POLY" | "SNAPSHOT" | "SIM" | "LOADING" | "ERR";
 
 function mapSource(raw?: string): PolySource {
   if (raw === "POLY" || raw === "LIVE") return "POLY";
   if (raw === "SNAPSHOT") return "SNAPSHOT";
+  if (raw === "ERR") return "ERR";
   return "SIM";
 }
 
@@ -28,7 +29,7 @@ export function usePolymarkets(opts?: { limit?: number; category?: string }): {
   const sim = getPolymarkets().slice(0, limit);
   const filtered = category ? sim.filter((m) => m.category === category) : sim;
 
-  const url = `/api/polymarket/markets?limit=${limit}${category ? `&category=${category}` : ""}`;
+  const url = `/api/polymarket/markets?limit=${limit}${category ? `&category=${category}` : ""}${simEnabled ? "&sim=1" : ""}`;
   const cached = peekFresh<any>(url);
   const [data, setData] = useState<PolyMarket[]>(cached?.data ?? filtered);
   const [source, setSource] = useState<PolySource>(cached ? mapSource(cached.source) : "SIM");
@@ -51,15 +52,15 @@ export function usePolymarkets(opts?: { limit?: number; category?: string }): {
       })
       .catch(() => {
         if (!alive) return;
-        setData(filtered);
-        setSource("SIM");
+        setData(simEnabled ? filtered : []);
+        setSource(simEnabled ? "SIM" : "ERR");
       });
 
     return () => { alive = false; };
-  }, [limit, category]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [limit, category, simEnabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!simEnabled && source === "SIM") {
-    return { data: [], source };
+    return { data: [], source: "ERR" };
   }
   return { data, source };
 }
@@ -70,7 +71,7 @@ export function usePolyEvents(): {
 } {
   const { simEnabled } = useSimMode();
   const sim = getPolyEvents();
-  const url = "/api/polymarket/events";
+  const url = `/api/polymarket/events${simEnabled ? "?sim=1" : ""}`;
   const cached = peekFresh<any>(url);
   const [data, setData] = useState<PolyEvent[]>(cached?.data ?? sim);
   const [source, setSource] = useState<PolySource>(cached ? mapSource(cached.source) : "SIM");
@@ -93,15 +94,15 @@ export function usePolyEvents(): {
       })
       .catch(() => {
         if (!alive) return;
-        setData(sim);
-        setSource("SIM");
+        setData(simEnabled ? sim : []);
+        setSource(simEnabled ? "SIM" : "ERR");
       });
 
     return () => { alive = false; };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [simEnabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!simEnabled && source === "SIM") {
-    return { data: [], source };
+    return { data: [], source: "ERR" };
   }
   return { data, source };
 }
@@ -118,18 +119,18 @@ export function usePolyHistory(marketId: string | null, days = 90): {
   useEffect(() => {
     if (!marketId) {
       setData([]);
-      setSource("SIM");
+      setSource("ERR");
       return;
     }
 
     let alive = true;
-    const url = `/api/polymarket/history?id=${marketId}&days=${days}`;
+    const url = `/api/polymarket/history?id=${marketId}&days=${days}${simEnabled ? "&sim=1" : ""}`;
     const seed = peekFresh<any>(url);
     if (seed) {
       setData(seed.data ?? sim);
       setSource(mapSource(seed.source));
     } else {
-      setData(getPolyPriceHistory(marketId, days));
+      setData(simEnabled ? getPolyPriceHistory(marketId, days) : []);
       setSource("LOADING");
     }
 
@@ -141,15 +142,15 @@ export function usePolyHistory(marketId: string | null, days = 90): {
       })
       .catch(() => {
         if (!alive) return;
-        setData(getPolyPriceHistory(marketId, days));
-        setSource("SIM");
+        setData(simEnabled ? getPolyPriceHistory(marketId, days) : []);
+        setSource(simEnabled ? "SIM" : "ERR");
       });
 
     return () => { alive = false; };
-  }, [marketId, days]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [marketId, days, simEnabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!simEnabled && source === "SIM") {
-    return { data: [], source };
+    return { data: [], source: "ERR" };
   }
   return { data, source };
 }

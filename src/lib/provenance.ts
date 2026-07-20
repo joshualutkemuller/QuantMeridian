@@ -136,7 +136,7 @@ export function classifyDbStaleness(
  * If sources are mixed across live/non-live, returns the worst one present.
  */
 const SOURCE_TIER: Record<string, number> = {
-  FRED: 0, LIVE: 1, POLY: 2, DB: 3, FILE: 4, ETL: 5, SNAPSHOT: 6, ECON: 7, SIM: 8,
+  FRED: 0, LIVE: 1, POLY: 2, DB: 3, FILE: 4, ETL: 5, SNAPSHOT: 6, ECON: 7, SIM: 8, ERR: 9,
 };
 
 export function worstSource<T extends string>(sources: T[]): T {

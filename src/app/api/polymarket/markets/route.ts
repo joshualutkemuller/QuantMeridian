@@ -2,6 +2,7 @@
 import { json } from "@/lib/server/http";
 import { fetchLiveMarkets } from "@/lib/server/polymarket";
 import { getPolymarkets } from "@/data/polymarket";
+import { simFallbackEnabled } from "@/lib/server/fallbacks";
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -19,6 +20,7 @@ export async function GET(req: Request) {
   }
 
   // 2. SIM — deterministic fallback
+  if (!simFallbackEnabled(req)) return json({ source: "ERR", data: [] });
   let markets = getPolymarkets();
   if (category) markets = markets.filter((m) => m.category === category);
   if (limit) markets = markets.slice(0, limit);
