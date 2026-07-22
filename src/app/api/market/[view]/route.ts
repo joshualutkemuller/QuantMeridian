@@ -603,7 +603,7 @@ export async function GET(req: Request, { params }: { params: { view: string } }
   const viewKey = dbView(view, basis);
 
   // 0. Gold DB (MACRO_DB_URL) — equity tables
-  if (goldEnabled() && ["market", "cross-asset", "index-returns"].includes(view)) {
+  if (goldEnabled() && ["market", "cross-asset", "bilello", "index-returns"].includes(view)) {
     try {
       const store = goldStore();
       const [priceRows, totalRows] = await Promise.all([
