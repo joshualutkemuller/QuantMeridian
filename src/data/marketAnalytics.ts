@@ -51,6 +51,7 @@ export interface IndexReturnMatrix {
 }
 
 export const QUILT_ASSETS: QuiltAsset[] = ["US Large Cap", "US Small Cap", "Intl Developed", "Emerging Markets", "US Bonds", "High Yield", "Commodities", "Gold", "REITs", "Cash"];
+const QUILT_FALLBACK_AS_OF = "2026-06-30";
 
 const QUILT_BASE: Record<string, { drift: number; vol: number; color: string }> = {
   "US Large Cap": { drift: 9.2, vol: 15, color: "#3B9DFF" },
@@ -63,6 +64,19 @@ const QUILT_BASE: Record<string, { drift: number; vol: number; color: string }> 
   Gold: { drift: 5.2, vol: 18, color: "#EAB308" },
   REITs: { drift: 7.0, vol: 20, color: "#EF4444" },
   Cash: { drift: 2.1, vol: 1.2, color: "#9CA3AF" },
+};
+
+const QUILT_PROXY: Record<string, { ticker: string; name: string; assetClass: string }> = {
+  "US Large Cap": { ticker: "SPY", name: "S&P 500 ETF (SPY)", assetClass: "EQUITY" },
+  "US Small Cap": { ticker: "IWM", name: "Russell 2000 ETF (IWM)", assetClass: "EQUITY" },
+  "Intl Developed": { ticker: "EFA", name: "Developed ex-US ETF (EFA)", assetClass: "EQUITY" },
+  "Emerging Markets": { ticker: "EEM", name: "Emerging Markets ETF (EEM)", assetClass: "EQUITY" },
+  "US Bonds": { ticker: "AGG", name: "US Aggregate Bond ETF (AGG)", assetClass: "BOND" },
+  "High Yield": { ticker: "HYG", name: "High Yield Corporate Bond ETF (HYG)", assetClass: "CREDIT" },
+  Commodities: { ticker: "DBC", name: "Broad Commodities ETF (DBC)", assetClass: "COMMODITY" },
+  Gold: { ticker: "GLD", name: "Gold ETF (GLD)", assetClass: "COMMODITY" },
+  REITs: { ticker: "VNQ", name: "US REIT ETF (VNQ)", assetClass: "EQUITY" },
+  Cash: { ticker: "BIL", name: "1-3 Month T-Bill ETF (BIL)", assetClass: "BOND" },
 };
 
 export function quiltColor(asset: QuiltAsset): string {
@@ -89,20 +103,32 @@ function colorForTicker(ticker: string): string {
 
 export function getAssetQuilt(): QuiltYear[] {
   const rng = new Rng("asset-quilt");
+  const currentYear = Number(QUILT_FALLBACK_AS_OF.slice(0, 4));
   const years = Array.from({ length: 11 }, (_, i) => 2016 + i);
   return years.map((year, yi) => {
+    const yearAsOf = year === currentYear ? QUILT_FALLBACK_AS_OF : `${year}-12-31`;
     const cycle = Math.sin((yi + 1) * 0.9) * 5;
     const cells = QUILT_ASSETS.map((asset, ai) => {
       const b = QUILT_BASE[asset];
+      const proxy = QUILT_PROXY[asset];
       const shock = rng.normal(0, 1) * b.vol + cycle * Math.cos(ai * 0.8);
       const crisis = year === 2022 && ["US Bonds", "US Large Cap", "REITs"].includes(asset) ? -12 : 0;
       const rebound = year === 2023 && ["US Large Cap", "US Small Cap", "High Yield"].includes(asset) ? 9 : 0;
       const ytdPenalty = year === 2026 && asset === "US Bonds" ? -4 : 0;
-      return { year, asset, returnPct: Number((b.drift + shock + crisis + rebound + ytdPenalty).toFixed(1)), rank: 0 };
+      return {
+        year,
+        asset,
+        proxyTicker: proxy?.ticker,
+        displayName: proxy?.name,
+        assetClass: proxy?.assetClass,
+        asOf: yearAsOf,
+        returnPct: Number((b.drift + shock + crisis + rebound + ytdPenalty).toFixed(1)),
+        rank: 0,
+      };
     })
       .sort((a, b) => b.returnPct - a.returnPct)
       .map((c, i) => ({ ...c, rank: i + 1 }));
-    return { year, cells };
+    return { year, asOf: yearAsOf, cells };
   });
 }
 

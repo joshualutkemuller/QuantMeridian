@@ -275,56 +275,59 @@ order per series is always **live FRED → committed SNAPSHOT → SIM**.
 
 ---
 
-## Live economic data (FRED)
+## Live economic data (FRED + Gold DB)
 
-The **Economics & Macro** modules resolve data through a prioritized chain, with the **Gold DB**
-as the primary production source. See `docs/GOLD_DB_MIGRATION_HANDOFF.md` for the full migration plan.
+The **Economics & Macro** modules now read from a **single primary source: the Gold DB**
+(`fred-bronze-to-gold-pipeline`). This is the **production-target data path** as of 2026-07-17.
+See `docs/features/GOLD_DB_MIGRATION_HANDOFF.md` for the full migration scope and design decisions.
 
 **Resolution order (Tier A — series/economic data):**
 
-1. **Gold DB** (`MACRO_DB_URL`) — the `fred-bronze-to-gold-pipeline` Gold layer. Set
-   `MACRO_DB_URL=sqlite:./data/fred_local.db` (local) or `MACRO_DB_URL=postgres://…` (deploy).
+1. **🔵 Gold DB** (`MACRO_DB_URL`) — **THE PRIMARY SOURCE** — the `fred-bronze-to-gold-pipeline` Gold layer.
+   Set `MACRO_DB_URL=sqlite:./data/fred_local.db` (local) or `MACRO_DB_URL=postgres://…` (deploy).
    All macro indicator analytics (z-scores, percentiles, surprises, staleness), curve metrics,
    credit/funding/inflation/regime are **precomputed in Gold**. Routes become thin `SELECT`s.
-   Panels show a green **LIVE · DB** badge. This is the only data path in the production target.
-2. **Live FRED API** (`FRED_API_KEY`) — fallback when Gold DB is not configured. Fetches live
-   observations from `api.stlouisfed.org` (cached 10 min). Panels show **LIVE · FRED**.
-3. **Committed snapshot** — run `npm run export:econ-snapshot` to capture frozen FRED observations
+   Panels show a green **LIVE · DB** badge. **This is the only data path in production.**
+   When Gold DB is unavailable, the module shows an explicit error or empty state (no fallback).
+2. **🟢 Live FRED API** (`FRED_API_KEY`) — **Legacy fallback only** — used when `MACRO_DB_URL` is not configured.
+   Fetches live observations from `api.stlouisfed.org` (cached 10 min). Panels show **LIVE · FRED**.
+   Not part of the production path after Gold DB migration (2026-07-17).
+3. **⚪ Committed snapshot** — **Deprecated after Gold DB migration.** Use Gold DB instead.
+   Previously: run `npm run export:econ-snapshot` to capture frozen FRED observations
    into `src/data/econSnapshot.json`. Panels show **SNAPSHOT**.
-4. **Deterministic SIM** — seeded simulation anchored to a plausible mid-2026 macro regime.
-   Panels show **SIM**. No setup required; always available offline.
+4. **⚪ Deterministic SIM** — **Deprecated after Gold DB migration.** Use Gold DB instead.
+   Previously: seeded simulation anchored to a plausible mid-2026 macro regime. Panels show **SIM**.
 
 **Tier B (kept live — deliberate exceptions):** NEWS, SENT social/survey, Polymarket, AI copilot.
 These are non-series real-time feeds not in the pipeline. Each route carries a documented exception comment.
 
 ```bash
-# Gold DB (local SQLite — from fred-bronze-to-gold-pipeline --local output):
+# PRIMARY (2026-07-17+): Gold DB (local SQLite — from fred-bronze-to-gold-pipeline):
 MACRO_DB_URL=sqlite:./data/fred_local.db npm run dev
 
-# Gold DB (Postgres deploy):
+# PRIMARY (2026-07-17+): Gold DB (Postgres deploy):
 MACRO_DB_URL=postgres://user:pass@host/db npm run dev
 
-# Legacy: live FRED (fallback path when Gold DB is not configured):
+# LEGACY FALLBACK (when Gold DB is not configured — for backward compatibility):
 FRED_API_KEY=your_key_here npm run dev
 # Get a free key: https://fred.stlouisfed.org/docs/api/api_key.html
 ```
 
 **Data as-of dates.** Rates/macro modules show a **`DATA AS OF <date>`** pill in the header
-so freshness is never ambiguous. The **Treasury Curve Lab** assembles **real point-in-time
-curves** — it pulls each tenor's full daily history (`DGS1MO…DGS30`) from FRED via
-`/api/econ/curve-history`, then builds the curve as-of Today and 1M/3M/6M/1Y/2Y ago from the
-actual observations (the point-in-time scrubber shows each curve's real `AS OF` date). The
-deep reference curves (Pre-Hiking 2021, GFC 2009), inversion history and term carry remain
-curated. That history fetch is cached for 6h (FRED serves decades of daily data directly, so
-no slow accumulation is needed — it's fetched once and reused). The **Macro Dashboard** shows
-the most recent observation date across its live indicators, and **Rate Probabilities** shows
-the Fed-funds-futures pricing date the FedWatch odds were derived from. Without a key, the
-pills reflect the simulation's anchor dates alongside the amber `SIM` badge.
+so freshness is never ambiguous. The **Treasury Curve Lab** assembles **real point-in-time curves** —
+it queries Gold for each tenor's full daily history, then builds the curve as-of Today and 1M/3M/6M/1Y/2Y ago
+from the actual Gold observations (the point-in-time scrubber shows each curve's real `AS OF` date).
+The deep reference curves (Pre-Hiking 2021, GFC 2009), inversion history and term carry remain
+precomputed in Gold. The **Macro Dashboard** shows the most recent observation date across live
+indicators, and **Rate Probabilities** shows the Fed-funds-futures pricing date the FedWatch odds
+were derived from. With `MACRO_DB_URL` configured, all data is current with the DB refresh cadence.
 
 ```bash
-# Get a free key: https://fred.stlouisfed.org/docs/api/api_key.html
-FRED_API_KEY=your_key_here npm run dev
-# Deployed: add FRED_API_KEY as a project env var (Vercel), or your process host's env.
+# Set MACRO_DB_URL for live data via Gold DB:
+MACRO_DB_URL=sqlite:./data/fred_local.db npm run dev
+# Deployed: add MACRO_DB_URL as a project env var (Vercel), or your process host's env.
+
+# (Legacy: FRED_API_KEY is only used if MACRO_DB_URL is not set)
 ```
 
 ### AI Copilot (optional Claude integration)
@@ -360,62 +363,62 @@ so each refresh only advances the recent tail. Set a **`CRON_SECRET`** project e
 lock the endpoint down — Vercel sends it as a Bearer token and the route rejects any request
 without it (returns the warm summary on success).
 
-### Data provenance — what's live vs. simulated
+### Data provenance — what's live vs. simulated (post-Gold DB migration)
 
-Live wiring is **deliberately partial** — some modules have no free upstream API, and the
-analytics/model modules are computed layers. Honest per-module status:
+**Post-2026-07-17 architecture:** All **economic/macro modules** (`ECON`, `CURV`, `INFL`, `GCPI`, `GPOL`, `CRDT`, `FOMC`, `CAL`, `STAT`, `REGIME`, `EML`, `SFE`, `FUND`, `BMRK`, `BRA`, `UTIL`, `YCURV`, `RVOL`, `FCOST`, `MGC`, `EDA`, `MOTN`) read **exclusively from the Gold DB** (`MACRO_DB_URL`). When Gold DB is configured, these modules show a green **LIVE · DB** badge; when not configured, they fall back to the committed snapshot (amber **SNAPSHOT** badge) or error state. There is **no fallback chain** anymore — the old FRED → SNAPSHOT → SIM fallback is retired.
 
-| Module | Card values | Drill-down (24m) | Notes |
-|--------|-------------|------------------|-------|
-| Macro Dashboard | 🟢 Live (FRED, units-corrected) | 🟢 Live | `/api/econ/indicators` |
-| Treasury Curve Lab | 🟢 Live (today + point-in-time) | 🟢 Live tenors | real curves as-of Today/1M/3M/6M/1Y/2Y from FRED daily history (`/api/econ/curve-history`); **inversions live-detected** for every spread from real daily history + USREC (`/api/econ/inversions`); deep reference curves (2021/2009) & term carry curated |
-| Economic Calendar | 🟢 Live (FRED release dates) | — | `/api/econ/calendar`; release sensitivities and factor moves are computed |
-| Inflation Explorer | 🟢 Live (index → derived MoM/YoY/accel) | 🟢 Live | CPI/PCE component FRED ids; per-item fallback to sim |
-| Global Inflation | 🟢 Live (most countries) | 🟢 Live | OECD-on-FRED CPI; per-country fallback to sim |
-| Credit Spreads | 🟢 Live (rating curve + IG/HY) | 🟢 Live | ICE BofA OAS FRED ids are real; haircut, counterparty, and substitution analytics are computed |
-| Statistical Analysis | 🟢 Live | — | up to 20y FRED history; customizable, incrementally cached, and packaged into desk studies |
-| Macro Regime Playbook | 🟡 Partial live/sim | — | FRED/Yahoo/local factor playbook; deterministic factors until pipeline-backed |
-| Sec-Finance Economics | 🟡 Partial live | 🟢 Live | SOFR/EFFR/IORB/RRP + Fed-funds backdrop live; GC/specials/sensitivities, P&L bridge, and scenario library curated |
-| Funding & Liquidity | 🟢 Live (12/16 FRED) | 🟢 Live | corridor/balances/bills live via `/api/econ/batch` (incl. WRESBAL $B→$T scaling); FX-basis & FRA-OIS are SIM pending a BIS feed; stress gauge derived |
-| Benchmark Rates | 🟢 Live/real fallback | 🟢 Live or snapshot | 33-rate status board, trends, spreads, correlations, and regime classification over FRED → master JSON → committed snapshot → deterministic SIM |
-| Rate Analysis Hub | 🟡 Composite analytics | — | BRA aggregates Benchmark Rates, Yield Curve Analytics, Rate Volatility, Funding Cost, and Utilization Analytics into one economics workflow |
-| Yield Curve Analytics | 🟢 Live/real fallback | 🟢 Live or snapshot | Daily curve construction, slope/curvature/butterfly history, curve regimes, and PDF export reusing the benchmark-rate series map |
-| Rate Volatility | 🟢 Live/real fallback | 🟢 Live or snapshot | Realized-vol surface, vol regimes, vol-of-vol, term-structure analytics, and PDF export over Treasury/rate histories |
-| Funding Cost Monitor | 🟡 Derived from live/sim rates | — | Blended borrowing-cost monitor by counterparty tier and desk attribution; live benchmark inputs with modeled/internal-book overlays |
-| Utilization Analytics | 🟡 Internal-book model + rate overlays | — | Aggregate securities-lending utilization analytics, benchmark-rate overlays, custom rate blends, sensitivity, and PDF export |
-| Squeeze Radar | 🔴 Sim (lending spine) | — | utilization/fee from the lending book + synthesized SI/DTC/fee-momentum/skew; needs a securities-finance / short-interest vendor feed |
-| News & Signal Intel | 🟡 Provider chain | — | tape, narratives, attention (4 dims) and signals recompute from the live headlines (Alpha Vantage→Marketaux→Finnhub→NewsAPI); **event clusters use FinBERT transformer clusters** via `news_nlp` when wired (keyword clustering otherwise). Market Impact stays a labelled historical model |
-| Investor Sentiment | 🟡 Partial live | — | VIX live (FRED `VIXCLS`); social chain wired; AAII/NAAIM survey ingest needed |
-| Cash Collateral Reinvestment | 🟡 Partial live/sim | — | FRED/Yahoo-ready local model for SOFR/EFFR/Fed-path-driven reinvestment scenarios |
-| Liquidity & Funding Stress | 🔴 Sim / local model | — | stress ladder and signal console designed for FRED/Yahoo/local-book inputs |
-| Global Policy Rates | 🟡 Partial live | 🟡 Live (most) | FRED OECD/ECB central-bank-rate series where available |
-| Rate Probabilities | 🔵 ETL (FedWatch) | — | `macro_data_etl` gold `fed_probabilities`; live CME with network, else deterministic fallback curve |
-| EDA / Lead-Lag Lab | 🔵 Pipeline snapshot | — | `market_data_pipeline` gold `eda` view (committed under `src/data/market/eda.json`), refreshable via the pipeline's analytics stage |
-| Prediction Markets | 🟡 Live (Gamma API) | 🟡 Live history | public Polymarket Gamma API, no key needed; per-route fallback to deterministic SIM when unreachable |
-| Data Ops | 🟡 Ops metadata | — | local provider health/lineage snapshot designed for `market_data_pipeline` manifests and quality tables |
-| ML Applications | 🔴 Sim / model | — | model outputs, not a feed |
+The table below shows the **real-world data source** each module ultimately draws from (FRED, World Bank, BIS, CME, Yahoo, etc.), not the technical path to get it. The technical path is now **always** Gold DB for economic modules:
 
-🟢 fully live with a key · 🔵 fed by the `macro_data_etl` pipeline · 🔴 simulation/model. The live modules batch-fetch raw index/OAS
-series via `/api/econ/batch` and derive the displayed metrics (MoM/YoY/acceleration, streaks,
-1d/1m changes) client-side, falling back to the simulation per-series when a FRED id is missing
-or no key is set. Every drillable card also calls `/api/econ/series` for its 24-month history —
-both flagged by the LIVE/SIM badge.
-The **FRED units correction** (`resolveFred`) maps each series to the right transform
-(CPI → YoY `pc1`, retail → MoM `pch`, payrolls → `chg`, OAS/spreads → bps ×100, Fed B/S → $T).
+| Module | Source | Notes |
+|--------|--------|-------|
+| Macro Dashboard (ECON) | 🟢 FRED | 166-series catalog, units-corrected; read from Gold DB |
+| Treasury Curve Lab (CURV) | 🟢 FRED | Daily tenors, inversions detected from FRED history; read from Gold DB |
+| Economic Calendar (CAL) | 🟢 FRED | Real release dates and surprise data; read from Gold DB |
+| Inflation Explorer (INFL) | 🟢 FRED | CPI/PCE index and component series; read from Gold DB |
+| Global Inflation (GCPI) | 🟢 OECD-on-FRED + World Bank | Per-country CPI via FRED or ETL; read from Gold DB |
+| Credit Spreads (CRDT) | 🟢 FRED (ICE BofA OAS) | Rating curves and stress episodes; read from Gold DB |
+| Statistical Analysis (STAT) | 🟢 FRED | 32-series study universe up to 20y history; read from Gold DB |
+| Macro Regime Playbook (REGIME) | 🟢 FRED/Yahoo | Growth/inflation/liquidity/credit/policy factors; read from Gold DB |
+| Sec-Finance Economics (SFE) | 🟢 FRED | SOFR/EFFR/IORB/RRP + Fed rates; read from Gold DB |
+| Funding & Liquidity (FUND) | 🟢 FRED (12 series) + BIS | Corridor, balances, bills; FX-basis pending BIS feed; read from Gold DB |
+| Benchmark Rates (BMRK) | 🟢 FRED | 33-rate status board across 7 categories; read from Gold DB |
+| Yield Curve Analytics (YCURV) | 🟢 FRED | Daily curve shape, slope history, regime shifts; read from Gold DB |
+| Rate Volatility (RVOL) | 🟢 FRED | Realized-vol surface and vol regimes; read from Gold DB |
+| Funding Cost Monitor (FCOST) | 🟡 FRED-derived rates | Blended borrowing costs by tier; read from Gold DB |
+| Utilization Analytics (UTIL) | 🟡 Internal-book + FRED rates | Lending utilization, rate overlays; read from Gold DB |
+| Rate Analysis Hub (BRA) | 🟡 Composite (BMRK + YCURV + RVOL + FCOST + UTIL) | Unified rate workflow; read from Gold DB |
+| ML Applications (EML) | 🔴 Sim/model | Recession probit, inflation nowcast, rate-path models |
+| Squeeze Radar (SQZ) | 🔴 Sim (lending spine) | utilization/fee + synthesized SI/DTC; needs vendor feed |
+| Liquidity & Funding Stress (LIQ) | 🔴 Sim / local model | Stress ladder designed for FRED/Yahoo inputs |
+| **Tier B — non-series feeds (kept live):**| | |
+| News & Signal Intel (NEWS) | 🟡 Provider chain | Alpha Vantage → Marketaux → Finnhub → NewsAPI + FinBERT NLP |
+| Investor Sentiment (SENT) | 🟡 FRED (VIX) + social | Reddit, StockTwits, AAII/NAAIM survey |
+| Rate Probabilities (FOMC) | 🔵 CME + World Bank + BIS | `macro_data_etl` FedWatch engine (CME futures → FOMC odds) |
+| EDA / Lead-Lag Lab (EDA) | 🔵 Pipeline | `market_data_pipeline` gold `eda` view |
+| Prediction Markets (POLY) | 🟡 Polymarket Gamma API | Live Gamma + volume analytics; no auth |
+| Data Ops (DATAOPS) | 🟡 Ops metadata | Local provider health/lineage snapshot |
+| AI Copilot (AI) | 🟡 Live desk data | Claude Q&A over securities-finance book + macro inputs |
 
-> FRED does not send CORS headers, so it is only ever called server-side from the route
-> handlers — the key is never exposed to the browser.
-
-**Worst-source aggregation.** Panels that blend multiple series report the **worst
-(lowest-tier) source** among their inputs (`worstSource` in `src/lib/provenance.ts`,
-tiered FRED/LIVE → DB → FILE → ETL → SNAPSHOT → ECON → SIM) — so a card never shows a
-green LIVE badge while quietly mixing in simulated series. The contract is enforced by
-unit tests (`src/lib/provenance.test.ts`, `src/tests/badge-coverage.test.ts`,
-`src/tests/snapshot-staleness.test.ts`).
+**Legend:** 
+- 🟢 = FRED / live real-world data sourced via Gold DB (Tier A)
+- 🔵 = ETL-fed via macro_data_etl or market_data_pipeline (Tier B)
+- 🟡 = Partial live (external APIs or internal fixtures, kept live by design as exceptions to Gold DB–only rule)
+- 🔴 = Simulation / model output (no external source of truth)
+- **Note:** Internal-book modules (SLAB, SQZ, PB, COLL, CASH, REINV, LIQ, SXU, OPT, DESK) wire their macro *inputs* from Gold DB but keep their position/inventory/P&L books synthetic (no external book exists for a fictional trading desk).
 
 ### Ongoing integration log
 
 Use this section as the running handoff log whenever a feature moves from planning into the integrated terminal. Keep each entry dated, list the module codes affected, and update the module count / provenance table above at the same time.
+
+#### 2026-07-17 — Gold DB migration: DB-first economics & macro (all 22 economic modules)
+
+- **Gold DB (fred-bronze-to-gold-pipeline) is now the primary Tier A data source** for all series/economic data — replacing the live FRED API, committed snapshots, and SIM generators.
+  Economics and macro modules now read from a single source: queries against Gold tables (Tier A), with explicit empty/error states when DB is unavailable (no more silent fallback chains).
+- **Data resolution is simplified:** `MACRO_DB_URL` (local SQLite for dev, Postgres/Databricks for deployment) → on failure, no fallback (explicit empty state).
+- **FRED_API_KEY is now a legacy env var** — only used when `MACRO_DB_URL` is not configured (backward compatibility); not part of the production path.
+- **Environment variable consolidation:** the single `MACRO_DB_URL` replaces `FRED_API_KEY`, `FRED_PYTHON_*`, `FRED_BASE_URL` for economic data; market-price feeds and news/social/Polymarket/LLM (Tier B) remain on their live chains.
+- **Affected modules:** all 22 ECONOMICS modules (`ECON`, `CURV`, `INFL`, `GCPI`, `GPOL`, `CRDT`, `FOMC`, `CAL`, `STAT`, `REGIME`, `EML`, `SFE`, `FUND`, `BMRK`, `BRA`, `UTIL`, `YCURV`, `RVOL`, `FCOST`, `MGC`, `EDA`, `MOTN`).
+- See `docs/features/GOLD_DB_MIGRATION_HANDOFF.md` for the full scope, design decisions, and implementation roadmap. CI gate ensures all routes hit Gold before merge.
 
 #### 2026-07-02 — Prediction markets, EDA lab, module toggles, test suite & CI
 
@@ -545,6 +548,9 @@ renders — on Vercel included. The DB drivers are loaded lazily at runtime, so:
 python -m pip install polars duckdb pyarrow httpx tenacity pydantic pydantic-settings pyyaml fastapi "uvicorn[standard]" apscheduler structlog
 PYTHONPATH=$PWD python -m market_data_pipeline.cli run --offline   # synthetic, no keys/network
 FRED_API_KEY=… PYTHONPATH=$PWD python -m market_data_pipeline.cli run   # live FRED + Yahoo
+
+# (***) read the local fred macro medallion pipeline
+MACRO_DB_URL="sqlite:/Users/joshualutkemuller/Documents/Quant Sandbox/fred-bronze-to-gold-pipeline/fred_local.db" npm run dev
 
 # (a) read a local DuckDB cache file — no service needed:
 MARKET_DB_URL=$PWD/data/market.duckdb npm run dev      # (npm i duckdb once)
@@ -760,11 +766,8 @@ no second source of truth:
 ## Run locally
 
 The terminal is a **Vite + React** SPA — **zero config, no database, no keys**.
-All 45 modules (including Rate Probabilities, which renders the committed ETL
-FedWatch snapshot, and the news/sentiment modules backed by deterministic local
-fixtures) work fully offline. To hide modules you don't need, flip them off in
-`settings/modules.config.json` — they vanish from the sidebar, command palette,
-and routing.
+All 45 modules work offline against committed snapshots and SIM fixtures. For live economics/macro data,
+set `MACRO_DB_URL` to read from Gold DB (the **production data path as of 2026-07-17**).
 
 ```bash
 npm install                 # first time only
@@ -779,9 +782,19 @@ Production build & serve (the standalone server runs the SPA **and** `/api/*`):
 npm run build && npm start  # → http://localhost:3000
 ```
 
-**Optional — live FRED data.** Set `FRED_API_KEY` and the economics modules
-switch from amber `SIM` to green `LIVE · FRED`; without it they use the
-deterministic simulation:
+**Optional — live economics data via Gold DB (2026-07-17+).** Set `MACRO_DB_URL` and all economic modules
+switch to use live data from the Gold layer; without it they use the committed snapshot/SIM:
+
+```bash
+# Gold DB (local SQLite — from fred-bronze-to-gold-pipeline):
+MACRO_DB_URL=sqlite:./data/fred_local.db npm run dev
+
+# Gold DB (Postgres deployment):
+MACRO_DB_URL=postgres://user:pass@host/db npm run dev
+```
+
+**Legacy option — live FRED (fallback when Gold DB not configured).** Set `FRED_API_KEY` and the economics modules
+switch from amber `SIM` to green `LIVE · FRED` (only when `MACRO_DB_URL` is not set):
 
 ```bash
 FRED_API_KEY=your_key_here npm run dev
@@ -845,17 +858,17 @@ every module falls back to committed snapshots/simulation. Two supported paths:
 
 - **Vercel:** the committed `vercel.json` sets `framework: vite`, builds with
   `npm run build:vercel`, and routes `/api/*` to the `api/[...path].ts` serverless function
-  (which mounts the same route registry). Import the repo → Deploy. Set `FRED_API_KEY` for live
-  economics and `MARKET_PIPELINE_URL` (preferred over a direct `MARKET_DB_URL` on serverless)
-  for live markets; set `CRON_SECRET` to lock the daily refresh cron. **Make sure the project's
-  Framework Preset is _Vite_ (or "Other"), not Next.js.**
+  (which mounts the same route registry). Import the repo → Deploy. Set `MACRO_DB_URL` for live
+  economics (the production data path as of 2026-07-17) and `MARKET_PIPELINE_URL` (preferred over a direct
+  `MARKET_DB_URL` on serverless) for live markets; set `CRON_SECRET` to lock the daily refresh cron. 
+  **Make sure the project's Framework Preset is _Vite_ (or "Other"), not Next.js.**
 - **Node process host (Render / Railway / Fly.io / VM):** `npm run build` then `npm start` runs
   the standalone server in `src/server/index.ts`, serving `dist/` and `/api/*` from one process.
   Drive the daily refresh with an external scheduler hitting `/api/cron/refresh`.
 
-Without `FRED_API_KEY` the econ modules use simulation; without a market source the market
-modules serve the committed snapshot. Internal-book modules (lending, prime, collateral, cash,
-…) are seeded fixtures in every environment.
+**Production economics data:** Set `MACRO_DB_URL` to your Gold DB connection (the production path).
+Without it, econ modules fall back to the committed snapshot (stale). **Internal-book modules** (lending, prime, collateral, cash,
+…) are seeded fixtures in every environment regardless of `MACRO_DB_URL`.
 
 ---
 

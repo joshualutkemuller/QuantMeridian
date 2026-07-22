@@ -22,8 +22,9 @@ export default function AssetQuiltPage() {
   const [asof, setAsOf] = useState("");
   const { data: bilello, source, earliestAsOf } = useMarketView<BilelloView>("bilello", basis, asof);
   const quilt = useMemo(() => quiltFromBilello(bilello, asof) ?? getAssetQuilt(), [bilello, asof]);
-  const effectiveAsOf = asof || bilello?.asof || null;
   const latest = quilt[quilt.length - 1];
+  const latestDataAsOf = latestBilelloDataDate(bilello);
+  const effectiveAsOf = asof || latestDataAsOf || latest.asOf || null;
   const bestLatest = latest.cells[0];
   const worstLatest = latest.cells[latest.cells.length - 1];
   const leaders = quilt.reduce<Record<string, number>>((acc, y) => {
@@ -52,14 +53,15 @@ export default function AssetQuiltPage() {
         title="Asset Quilt"
         desc="Annual ETF/index proxy return rank quilt"
         asOf={effectiveAsOf}
-        right={<span className="flex items-center gap-2"><MarketDataControls basis={basis} onBasisChange={setBasis} asof={asof} onAsOfChange={setAsOf} latestAsOf={bilello?.asof} earliestAsOf={earliestAsOf} /><PipelineTag source={source} asOf={bilello?.asof} /></span>}
+        showStreaming={false}
+        right={<span className="flex items-center gap-2"><MarketDataControls basis={basis} onBasisChange={setBasis} asof={asof} onAsOfChange={setAsOf} latestAsOf={bilello?.asof ?? latest.asOf} earliestAsOf={earliestAsOf} /><PipelineTag source={source} asOf={effectiveAsOf} /></span>}
       />
 
       <StalenessBar asOf={effectiveAsOf} />
 
       <KpiStrip>
-        <Stat label="Latest Leader" value={bestLatest.proxyTicker ?? bestLatest.asset} sub={`${fmtSignedPct(bestLatest.returnPct, 1)} · ${bestLatest.asOf ?? latest.asOf ?? "as of n/a"}`} tone={tone(bestLatest.returnPct)} />
-        <Stat label="Latest Laggard" value={worstLatest.proxyTicker ?? worstLatest.asset} sub={`${fmtSignedPct(worstLatest.returnPct, 1)} · ${worstLatest.asOf ?? latest.asOf ?? "as of n/a"}`} tone={tone(worstLatest.returnPct)} />
+        <Stat label="Latest Leader" value={bestLatest.proxyTicker ?? bestLatest.asset} sub={`${fmtSignedPct(bestLatest.returnPct, 1)} · ${bestLatest.asOf ?? latest.asOf ?? effectiveAsOf ?? "—"}`} tone={tone(bestLatest.returnPct)} />
+        <Stat label="Latest Laggard" value={worstLatest.proxyTicker ?? worstLatest.asset} sub={`${fmtSignedPct(worstLatest.returnPct, 1)} · ${worstLatest.asOf ?? latest.asOf ?? effectiveAsOf ?? "—"}`} tone={tone(worstLatest.returnPct)} />
         <Stat label="Dispersion" value={`${fmtNum(dispersion, 1)} pts`} sub={`${latest.year} high-low`} tone="amber" />
         <Stat label="Most #1 Finishes" value={leader?.[0] ?? "—"} sub={`${leader?.[1] ?? 0} years`} />
         <Stat label="Years" value={`${quilt[0].year}-${latest.year}`} sub={`${quilt.length} years${latest.year === new Date().getFullYear() ? " + current YTD" : ""}`} />
@@ -80,7 +82,7 @@ export default function AssetQuiltPage() {
               {quilt.map((y) => (
                 <div key={y.year} className="border-b border-r border-term-border bg-term-panel-2 px-2 py-1 text-center">
                   <div className="text-2xs font-semibold text-term-text-dim">{y.year === latest.year && y.year === new Date().getFullYear() ? `${y.year} YTD` : y.year}</div>
-                  <div className="tnum mt-0.5 text-[9px] font-medium text-term-text-mute">{y.asOf ?? "as of n/a"}</div>
+                  <div className="tnum mt-0.5 text-[9px] font-medium text-term-text-mute">{y.asOf ?? effectiveAsOf ?? "—"}</div>
                 </div>
               ))}
 
@@ -95,14 +97,14 @@ export default function AssetQuiltPage() {
                       return <div key={`${year.year}-empty-${rank}`} className="min-h-[64px] border-b border-r border-black/40 bg-term-panel" />;
                     }
                     return (
-                      <div key={`${year.year}-${cell.asset}`} className="min-h-[74px] border-b border-r border-black/40 p-1.5" style={{ background: quiltColor(cell.asset) }} title={`${cell.proxyTicker ?? cell.asset} · ${cell.displayName ?? cell.assetClass ?? ""} · return as of ${cell.asOf ?? year.asOf ?? "n/a"}`}>
+                      <div key={`${year.year}-${cell.asset}`} className="min-h-[74px] border-b border-r border-black/40 p-1.5" style={{ background: quiltColor(cell.asset) }} title={`${cell.proxyTicker ?? cell.asset} · ${cell.displayName ?? cell.assetClass ?? ""} · return as of ${cell.asOf ?? year.asOf ?? effectiveAsOf ?? "unavailable"}`}>
                         <div className="flex items-start justify-between gap-1">
                           <div className="min-w-0 truncate text-2xs font-semibold uppercase leading-tight text-black/85">{cell.proxyTicker ?? cell.asset}</div>
                           {cell.assetClass && <div className="shrink-0 rounded-sm bg-black/15 px-1 text-[8px] font-bold leading-4 text-black/70">{cell.assetClass}</div>}
                         </div>
-                        <div className="mt-0.5 truncate text-[9px] font-semibold leading-tight text-black/65" title={cell.displayName}>{cell.displayName ?? cell.asset}</div>
+                        <div className="mt-0.5 truncate text-[9px] font-semibold uppercase leading-tight text-black/65">{cell.assetClass ?? cell.asset}</div>
                         <div className="tnum mt-1 text-lg font-bold leading-none text-black">{fmtSignedPct(cell.returnPct, 1)}</div>
-                        <div className="tnum mt-1 text-[9px] font-semibold leading-tight text-black/60">as of {cell.asOf ?? year.asOf ?? "n/a"}</div>
+                        <div className="tnum mt-1 text-[9px] font-semibold leading-tight text-black/60">as of {cell.asOf ?? year.asOf ?? effectiveAsOf ?? "—"}</div>
                       </div>
                     );
                   })}
@@ -130,7 +132,7 @@ export default function AssetQuiltPage() {
                 </div>
                 <div className="mt-1 truncate text-xs font-semibold text-term-text" title={c.displayName}>{c.proxyTicker ?? c.asset}</div>
                 <div className="truncate text-2xs text-term-text-dim" title={c.displayName}>{c.displayName ?? c.assetClass}</div>
-                <div className="tnum mt-1 text-[10px] text-term-text-mute">as of {c.asOf ?? latest.asOf ?? "n/a"}</div>
+                <div className="tnum mt-1 text-[10px] text-term-text-mute">as of {c.asOf ?? latest.asOf ?? effectiveAsOf ?? "—"}</div>
               </div>
             ))}
           </div>
@@ -171,6 +173,26 @@ function returnAsOfForYear(year: number, effectiveAsOf: string | null): string {
   return `${year}-12-31`;
 }
 
+function monthEndIso(year: number, month: number): string | null {
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return null;
+  return new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+}
+
+function latestBilelloDataDate(bilello: BilelloView | null | undefined): string | null {
+  if (!bilello) return null;
+  if (bilello.asof) return bilello.asof;
+  const dailyDates = (bilello.asset_daily_prices ?? []).map((r) => r.date).filter(Boolean).sort();
+  if (dailyDates.length) return dailyDates[dailyDates.length - 1];
+  const monthlyDates = (bilello.asset_monthly_returns ?? [])
+    .map((r) => monthEndIso(r.year, r.month))
+    .filter((d): d is string => d !== null)
+    .sort();
+  if (monthlyDates.length) return monthlyDates[monthlyDates.length - 1];
+  const years = (bilello.asset_class_returns_by_year ?? []).map((r) => r.year).filter((y) => Number.isFinite(y));
+  if (years.length) return `${Math.max(...years)}-12-31`;
+  return null;
+}
+
 function returnFromDaily(daily: BilelloDailyPrice[], seriesId: string, yearStart: number, asof: string): number | null {
   const priorYearEnd = `${yearStart - 1}-12-31`;
   const seriesPrices = daily.filter((r) => r.series_id === seriesId);
@@ -195,7 +217,7 @@ function quiltFromBilello(bilello: BilelloView | null | undefined, asof: string)
   const monthly = bilello?.asset_monthly_returns ?? [];
   const hasDaily = daily.length > 0;
   const hasMonthly = monthly.length > 0;
-  const effectiveAsOf = asof || bilello?.asof || null;
+  const effectiveAsOf = asof || latestBilelloDataDate(bilello);
 
   const maxYear = asof ? parseInt(asof.slice(0, 4), 10) : 9999;
   const maxMonth = asof ? parseInt(asof.slice(5, 7), 10) : 12;

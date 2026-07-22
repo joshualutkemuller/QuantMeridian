@@ -4,7 +4,21 @@ import { useTick } from "@/lib/hooks";
 import { Tag } from "./Panel";
 
 /** Consistent module header: code, title, live badge, right-aligned actions. */
-export function PageHeader({ code, title, desc, right, asOf }: { code: string; title: string; desc?: string; right?: ReactNode; asOf?: string | null }) {
+export function PageHeader({
+  code,
+  title,
+  desc,
+  right,
+  asOf,
+  showStreaming = true,
+}: {
+  code: string;
+  title: string;
+  desc?: string;
+  right?: ReactNode;
+  asOf?: string | null;
+  showStreaming?: boolean;
+}) {
   const tick = useTick(3000);
   return (
     <div className="flex min-w-0 flex-wrap items-center justify-between gap-2 border-b border-term-border bg-term-panel px-3 py-2">
@@ -23,10 +37,12 @@ export function PageHeader({ code, title, desc, right, asOf }: { code: string; t
           </span>
         )}
         {right}
-        <Tag tone="up">
-          <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-term-up animate-blink align-middle" />
-          STREAMING
-        </Tag>
+        {showStreaming && (
+          <Tag tone="up">
+            <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-term-up animate-blink align-middle" />
+            STREAMING
+          </Tag>
+        )}
         <span className="tnum hidden text-3xs text-term-text-mute lg:inline" suppressHydrationWarning>
           TICK {String(tick).padStart(5, "0")}
         </span>
