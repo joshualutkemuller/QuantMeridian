@@ -151,7 +151,25 @@ The corresponding pages — `economics/inflation`, `/credit`, `/funding`, `/regi
 
 This is the single largest live-path gap in the codebase: the Gold aggregates already exist, are already tested, and are simply not connected. It also means the client is duplicating analytics that the Gold layer has already computed, so the two can drift.
 
-**Fix**: add a `useGoldView(route)` hook mirroring `useMarketView`'s gating contract, then migrate each page to consume its aggregate route, keeping the `@/data/*` shape only as a type source.
+### Approach (in progress)
+
+**Hook created**: `src/lib/useGoldView.ts` implements the pattern:
+```ts
+const { data, source } = useGoldView<T>("inflation", emptyValue);
+// source: "DB" (Gold resolved) | "LOADING" | "ERR"
+```
+
+Mirrors `useMarketView`'s contract: fetch from `/api/econ/{route}`, extract payload from `{ source: "DB", ok: true, ...payload }`, return data + source. No snapshot/SIM fallback — Gold-only.
+
+**Refactoring each page** requires custom merge logic:
+- **Inflation**: merge Gold explorer/contribution with live FRED series overlay
+- **Credit**: merge Gold daily/rolling spreads with live OAS futures
+- **Funding**: merge Gold tape/stress with live SOFR/EFFR rates
+- **Regime**: use Gold pre-computed regime scores *or* compute live from FRED factors (needs decision)
+- **ML**: map Gold model outputs to page schema (payload TBD)
+- **Benchmark**: passthrough or live FRED merge (depends on schema)
+
+Complexity: 2-4 hours per page once data mapping is understood. Leaving pages 2-6 for follow-up; hook provides the foundation.
 
 ---
 
