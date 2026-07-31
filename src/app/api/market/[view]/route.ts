@@ -1,7 +1,7 @@
 import { json } from "@/lib/server/http";
 import { readFile } from "fs/promises";
 import path from "path";
-import { goldEnabled, goldStore } from "@/lib/server/goldStore";
+import { goldEnabled, goldStore, goldTable, goldParam } from "@/lib/server/goldStore";
 import { buildEdaFromGold } from "@/lib/server/goldEda";
 import {
   PRICE_SNAPSHOTS,
@@ -616,13 +616,25 @@ export async function GET(req: Request, { params }: { params: { view: string } }
     }
   }
 
-  // 0b. Gold DB (MACRO_DB_URL) — equity tables
+  // 0b. Gold DB (MACRO_DB_URL) — equity tables (with date bounds to avoid OOM)
   if (goldEnabled() && ["market", "cross-asset", "bilello", "index-returns"].includes(view)) {
     try {
       const store = goldStore();
+      // Fetch only recent data to avoid heap exhaustion on large equity tables (~29 GB).
+      // Default to the last 10 years when asof is not specified; when asof is provided,
+      // the goldEquityRowsToObservations filter will honor it.
+      const cutoffDate = asof ? asof : new Date(new Date().setUTCFullYear(new Date().getUTCFullYear() - 10)).toISOString().split("T")[0];
+      const dateCol = "observation_date";
+
       const [priceRows, totalRows] = await Promise.all([
-        store.latest<GoldEquityRow>("equity_return_daily"),
-        store.latest<GoldEquityRow>("equity_total_return_index"),
+        store.raw<GoldEquityRow>(
+          `SELECT * FROM ${goldTable("equity_return_daily")} WHERE ${dateCol} >= ${goldParam(1)} ORDER BY ${dateCol} DESC`,
+          [cutoffDate]
+        ),
+        store.raw<GoldEquityRow>(
+          `SELECT * FROM ${goldTable("equity_total_return_index")} WHERE ${dateCol} >= ${goldParam(1)} ORDER BY ${dateCol} DESC`,
+          [cutoffDate]
+        ),
       ]);
       const rowsForBasis = basis === "total" && totalRows.length ? totalRows : priceRows.length ? priceRows : totalRows;
       if (rowsForBasis.length) {
