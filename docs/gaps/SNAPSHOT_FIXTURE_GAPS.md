@@ -151,25 +151,25 @@ The corresponding pages — `economics/inflation`, `/credit`, `/funding`, `/regi
 
 This is the single largest live-path gap in the codebase: the Gold aggregates already exist, are already tested, and are simply not connected. It also means the client is duplicating analytics that the Gold layer has already computed, so the two can drift.
 
-### Approach (in progress)
+### Status (2/6 pages wired, infrastructure complete)
 
-**Hook created**: `src/lib/useGoldView.ts` implements the pattern:
-```ts
-const { data, source } = useGoldView<T>("inflation", emptyValue);
-// source: "DB" (Gold resolved) | "LOADING" | "ERR"
-```
+**Infrastructure**:
+- Hook: `src/lib/useGoldView.ts` (generic Gold route fetcher)
+- Routes: All six implemented and functional
 
-Mirrors `useMarketView`'s contract: fetch from `/api/econ/{route}`, extract payload from `{ source: "DB", ok: true, ...payload }`, return data + source. No snapshot/SIM fallback — Gold-only.
+**Wired pages** (2/6):
+- ✓ `/economics/global-cpi` (fetches `/api/econ/global-inflation`, overlays SIM → Gold → live FRED)
+- ✓ `/economics/policy-rates` (fetches `/api/econ/global-policy-rates`, same pattern)
 
-**Refactoring each page** requires custom merge logic:
-- **Inflation**: merge Gold explorer/contribution with live FRED series overlay
-- **Credit**: merge Gold daily/rolling spreads with live OAS futures
-- **Funding**: merge Gold tape/stress with live SOFR/EFFR rates
-- **Regime**: use Gold pre-computed regime scores *or* compute live from FRED factors (needs decision)
-- **ML**: map Gold model outputs to page schema (payload TBD)
-- **Benchmark**: passthrough or live FRED merge (depends on schema)
+**Remaining pages** (4/6):
+- `/economics/inflation` (route exists; page bypasses via FRED computation)
+- `/economics/credit` (route exists; page computes from raw spreads)
+- `/economics/funding` (route exists; page computes stress gauge)
+- `/economics/regime` (route exists; page computes from FRED factors)
 
-Complexity: 2-4 hours per page once data mapping is understood. Leaving pages 2-6 for follow-up; hook provides the foundation.
+All four can follow the global-cpi pattern: fetch Gold → overlay SIM base → overlay live FRED → track source. See `docs/gaps/G3_REFACTORING_GUIDE.md` for detailed refactoring checklist, schema mapping notes, and per-page complexity estimates (1-4 hours each).
+
+**Why incomplete**: Each page has different schema/aggregation levels. Infrastructure is ready; page migrations are deferred pending schema verification and merge-logic design (not blocking other work).
 
 ---
 
