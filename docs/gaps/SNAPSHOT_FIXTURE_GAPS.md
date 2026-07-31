@@ -1,7 +1,7 @@
 # Snapshot & Fixture Gaps
 
 **Generated**: 2026-07-28
-**Updated**: 2026-07-31 — G1, G8, G2 fixed; G9, G10, G11 documented; ETL tier now fully gated
+**Updated**: 2026-07-31 — G1, G2, G5, G8, G9, G10 completed; ETL tier fully gated; equity OOM fixed; nav/route test added
 **Scope**: Every read path in the terminal that still resolves committed snapshot, ETL fixture, or seeded-`Rng` data instead of the Gold DB / FRED live chain.
 **Related**: `docs/features/GOLD_DB_MIGRATION_HANDOFF.md`, `docs/validation/MODULE_DATA_AUDIT.md`, `docs/validation/LIVE_DATA_READINESS_ASSESSMENT.md`
 
@@ -19,12 +19,12 @@ Findings G2, G5 and G8 are the cases where synthetic or committed data reaches t
 | G2 | ETL tier ungated and marked `live: true` | **High** | **Yes** | **Fixed 2026-07-31** |
 | G3 | Six Gold-backed routes have zero UI callers | **High** | No | Open |
 | G4 | `global-cpi` / `policy-rates` build from a synthetic base | Medium | Partial | Open |
-| G5 | `useInversions` merges SIM stats into live responses | **High** | **Yes** | Open |
+| G5 | `useInversions` merges SIM stats into live responses | **High** | **Yes** | **Fixed 2026-07-31** |
 | G6 | dataops merges fixtures under a "LIVE MANIFEST" tag | Low | Partial | Open |
 | G7 | Seven securities-finance pages have no live path at all | Informational | No | By design |
 | G8 | `asset-quilt` renders the seeded quilt under a live badge | **High** | **Yes** | **Fixed 2026-07-30** |
-| G9 | Gold equity reads OOM the server (whole-table `latest()`) | **High** | No | Open |
-| G10 | Nav advertises modules the router never registers | Medium | No | Partially fixed |
+| G9 | Gold equity reads OOM the server (whole-table `latest()`) | **High** | No | **Fixed 2026-07-31** |
+| G10 | Nav advertises modules the router never registers | Medium | No | **Fixed 2026-07-31** (nav/route consistency test) |
 | G11 | macro ETL frozen since 2026-06-24 but still load-bearing | **High** | **Yes** (via G2) | Open |
 
 ---
@@ -356,17 +356,14 @@ That is pipeline-side work in a different repo, and it is the true blocker on re
 
 ## Suggested order of work
 
-**Done**: G1 (EDA on Gold + route registered), G8 (asset-quilt false-live).
+**Done** (2026-07-31): G1 (EDA on Gold + route registered), G2 (ETL tier gated), G5 (stats guarded), G8 (asset-quilt false-live), G9 (equity OOM fixed), G10 (nav/route consistency test).
 
-**Next** (reordered 2026-07-30 — the G11 measurements moved G2 to the front):
+**Remaining**:
 
-1. **G2 + G11's FOMC cutover** — together. Gating the ETL tier stops ~19-month-old CPI claiming to be live, and the FOMC path can be repointed at `gold.fomc_probability` in the same pass with no coverage loss. Same two files.
-2. **G9** — blocks all four equity views from Gold and crashes the server. Also gates G3, since more Gold routes on an unbounded accessor risks the same crash.
-3. **G5** — one line; removes a false-live badge.
-4. **G10** — the nav/route consistency test; cheap, and prevents silent recurrence.
-5. **G3** — wire the remaining orphaned Gold routes.
-6. **G4** — needs a per-row provenance decision first.
-7. **G6** — cosmetic once G3 lands.
+1. **G3** — wire the remaining orphaned Gold routes. Requires adding a `useGoldView()` hook mirroring `useMarketView`'s gating contract, then migrating six pages to consume their aggregate routes. High complexity but high value.
+2. **G4** — make row set come from live source instead of SIM seed. Requires a per-row provenance decision / UI change. Blocks g-cpi and policy-rates from being fully Gold-backed.
+3. **G6** — tag merged rows individually in dataops so fixture rows read `FIXTURE` even inside live-manifest table. Cosmetic but improves transparency.
+4. **G11** — retire the frozen macro ETL. Blocked by BIS connector port to gold pipeline (pipeline-side work, not here).
 
 ### Pipeline-side backlog (`fred-bronze-to-gold-pipeline`, separate repo)
 
