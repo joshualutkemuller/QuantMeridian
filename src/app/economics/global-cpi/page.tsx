@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PageHeader, KpiStrip } from "@/components/ui/PageHeader";
 import { Panel, Stat, Tag } from "@/components/ui/Panel";
 import { DataGrid, type Column } from "@/components/ui/DataGrid";
@@ -9,7 +9,7 @@ import { useDrill } from "@/components/econ/DrillProvider";
 import { SourceBadge } from "@/components/econ/SourceBadge";
 import { isRealEconSource, useLiveSeriesSet, type DataSource } from "@/lib/useEcon";
 import { worstSource } from "@/lib/provenance";
-import { etlCountryCPI, getGlobalCPI, getGlobalSummary, liveCountryCPI, type CountryInflation, type Region } from "@/data/globalMacro";
+import { getGlobalCPI, getGlobalSummary, liveCountryCPI, type CountryInflation, type Region } from "@/data/globalMacro";
 import { fmtNum, fmtSigned, pnlClass } from "@/lib/format";
 
 const REGIONS: Array<"ALL" | Region> = ["ALL", "AMER", "EMEA", "APAC"];
@@ -33,11 +33,45 @@ function heatBg(yoy: number): string {
 export default function GlobalInflation() {
   const { open } = useDrill();
   const [region, setRegion] = useState<"ALL" | Region>("ALL");
+  const [goldData, setGoldData] = useState<Record<string, Partial<CountryInflation>> | null>(null);
 
-  // Source order: live FRED raw levels -> committed FRED snapshot raw levels -> macro ETL gold snapshot -> deterministic SIM.
-  const baseAll = getGlobalCPI().map(etlCountryCPI);
-  const { data: liveMap, source } = useLiveSeriesSet(baseAll.map((c) => c.fredId), "lin", 26);
-  const all = baseAll.map((c) => {
+  // Fetch Gold inflation data
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/econ/global-inflation")
+      .then((r) => r.json())
+      .then((data) => {
+        if (alive && data.rows) {
+          const byIso: Record<string, Partial<CountryInflation>> = {};
+          for (const row of data.rows) {
+            byIso[row.iso3] = {
+              yoy: row.cpi_yoy_pct ?? undefined,
+              priorYoy: row.change_pp ? row.cpi_yoy_pct - row.change_pp : undefined,
+              yoyDelta: row.change_pp ?? undefined,
+              trend: (row.trend === "RISING" || row.trend === "FALLING" ? row.trend : "FLAT") as any,
+              streak: row.streak ?? undefined,
+              vsTarget: row.vs_target_pp ?? undefined,
+              target: row.target_pct ?? undefined,
+              source: "DB" as const,
+              asOf: row.observation_date,
+            };
+          }
+          setGoldData(byIso);
+        }
+      })
+      .catch(() => setGoldData({})); // Empty object signals no Gold data
+    return () => { alive = false; };
+  }, []);
+
+  // Source order: live FRED raw levels → Gold DB → deterministic SIM.
+  const baseAll = getGlobalCPI();
+  const baseWithGold = baseAll.map((c) => {
+    const gold = goldData?.[c.fredId?.split(":")[0] ?? ""] || goldData?.[c.country];
+    return gold ? { ...c, ...gold } : c;
+  });
+
+  const { data: liveMap, source } = useLiveSeriesSet(baseWithGold.map((c) => c.fredId), "lin", 26);
+  const all = baseWithGold.map((c) => {
     const L = liveMap[c.fredId];
     return L && isRealEconSource(L.source) && L.observations.length
       ? { ...liveCountryCPI(c, L.observations), source: L.source }
@@ -252,9 +286,7 @@ export default function GlobalInflation() {
       </div>
 
       <div className="border-t border-term-border bg-term-panel px-3 py-1.5 text-3xs text-term-text-mute">
-        Source order: live FRED raw levels → committed FRED raw snapshot → macro ETL gold snapshot → SIM. MoM / ΔMoM are shown only when
-        raw monthly index levels are available; ETL-only World Bank rows show YoY / ΔYoY without fabricating monthly prints. Click any country
-        to drill into raw index-level history where available.
+        Source order: live FRED raw levels → Gold DB (fred-bronze-to-gold-pipeline) → deterministic SIM. MoM / ΔMoM are shown only when raw monthly index levels are available; Gold-sourced World Bank rows (annual updates) show YoY / ΔYoY without monthly interpolation. Click any country to drill into raw index-level history where available.
       </div>
     </div>
   );

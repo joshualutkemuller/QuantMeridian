@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PageHeader, KpiStrip } from "@/components/ui/PageHeader";
 import { Panel, Stat, Tag } from "@/components/ui/Panel";
 import { DataGrid, type Column } from "@/components/ui/DataGrid";
@@ -11,7 +11,7 @@ import { useDrill } from "@/components/econ/DrillProvider";
 import { SourceBadge } from "@/components/econ/SourceBadge";
 import { isRealEconSource, useLiveSeriesSet, type DataSource } from "@/lib/useEcon";
 import { worstSource } from "@/lib/provenance";
-import { etlPolicyRate, getGlobalPolicyRates, getGlobalSummary, livePolicyRate, type PolicyRate, type Region } from "@/data/globalMacro";
+import { getGlobalPolicyRates, getGlobalSummary, livePolicyRate, type PolicyRate, type Region } from "@/data/globalMacro";
 import { fmtNum, fmtSigned, pnlClass } from "@/lib/format";
 
 const REGIONS: ("All" | Region)[] = ["All", "AMER", "EMEA", "APAC"];
@@ -27,13 +27,46 @@ const cycleHex = (c: PolicyRate["cycle"]) => (c === "CUTTING" ? "#2ECC71" : c ==
 export default function GlobalPolicyRates() {
   const { open } = useDrill();
   const [region, setRegion] = useState<"All" | Region>("All");
+  const [goldData, setGoldData] = useState<Record<string, Partial<PolicyRate>> | null>(null);
 
-  // Source order: live FRED/OECD snapshots -> committed macro ETL gold snapshot -> deterministic SIM.
-  const baseAll = getGlobalPolicyRates().map(etlPolicyRate);
+  // Fetch Gold policy rate data
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/econ/global-policy-rates")
+      .then((r) => r.json())
+      .then((data) => {
+        if (alive && data.rows) {
+          const byIso: Record<string, Partial<PolicyRate>> = {};
+          for (const row of data.rows) {
+            byIso[row.iso3] = {
+              rate: row.policy_rate_pct ?? undefined,
+              priorRate: row.change_bps ? row.policy_rate_pct - row.change_bps / 100 : undefined,
+              lastMoveBps: row.last_move_bps ?? undefined,
+              cycle: (row.stance === "hiking" ? "HIKING" : row.stance === "cutting" ? "CUTTING" : "HOLD") as any,
+              realRate: row.real_rate_pct ?? undefined,
+              bias: (row.real_rate_pct ? (row.real_rate_pct > 1.5 ? "HAWKISH" : row.real_rate_pct < 0 ? "DOVISH" : "NEUTRAL") : undefined) as any,
+              source: "DB" as const,
+              asOf: row.observation_date,
+            };
+          }
+          setGoldData(byIso);
+        }
+      })
+      .catch(() => setGoldData({})); // Empty object signals no Gold data
+    return () => { alive = false; };
+  }, []);
+
+  // Source order: live FRED/OECD snapshots → Gold DB → deterministic SIM.
+  const baseAll = getGlobalPolicyRates();
+  const baseWithGold = baseAll.map((r) => {
+    const gold = goldData?.[r.country] || goldData?.[r.iso3];
+    return gold ? { ...r, ...gold } : r;
+  });
+
   const base = getGlobalSummary();
   // Live FRED for central banks with an OECD / ECB rate series.
-  const { data: liveMap, source } = useLiveSeriesSet(baseAll.map((r) => r.fredId).filter(Boolean) as string[], "lin", 36);
-  const all = baseAll.map((r) => {
+  const { data: liveMap, source } = useLiveSeriesSet(baseWithGold.map((r) => r.fredId).filter(Boolean) as string[], "lin", 36);
+  const all = baseWithGold.map((r) => {
     const L = r.fredId ? liveMap[r.fredId] : undefined;
     return L && isRealEconSource(L.source) && L.observations.length ? { ...livePolicyRate(r, L.observations), source: L.source } : r;
   }).sort((a, b) => b.rate - a.rate);

@@ -203,7 +203,12 @@ export interface GrangerResult {
 export interface PearsonHeatmap {
   labels: string[];
   display_names: string[];
-  matrix: number[][];
+  /**
+   * `null` marks a pair the source never measured. Gold computes correlations
+   * for a curated pair list, not a full clique, so the matrix is sparse; a 0
+   * would misread as "measured, uncorrelated".
+   */
+  matrix: (number | null)[][];
 }
 export interface CusumResult {
   series_id: string; display_name: string;
@@ -216,6 +221,14 @@ export interface PeltResult {
   changepoints: string[];
   segments: PeltSegment[];
 }
+/**
+ * Per-panel availability. `true` means the serving tier supplied the panel;
+ * a string explains why it could not, so the UI can state the reason instead of
+ * rendering an ambiguous empty table. Absent for tiers that serve every panel
+ * (the committed snapshot and the FastAPI pipeline).
+ */
+export type EdaCoverage = Partial<Record<keyof Omit<EdaView, "asof" | "coverage">, true | string>>;
+
 export interface EdaView {
   asof?: string;
   cross_correlation: CrossCorrelationResult[];
@@ -224,6 +237,7 @@ export interface EdaView {
   pearson_heatmap: PearsonHeatmap;
   cusum: CusumResult[];
   pelt: PeltResult[];
+  coverage?: EdaCoverage;
 }
 
 export const marketSnapshot = (marketSnapshotRaw as { cards: SnapshotCard[] }).cards;

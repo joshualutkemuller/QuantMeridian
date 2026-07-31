@@ -39,6 +39,7 @@ import EconCredit from "./app/economics/credit/page";
 import EconRates from "./app/economics/rates/page";
 import EconCalendar from "./app/economics/calendar/page";
 import EconStats from "./app/economics/stats/page";
+import EconEda from "./app/economics/eda/page";
 import EconRegime from "./app/economics/regime/page";
 import EconMl from "./app/economics/ml/page";
 import EconSecFinance from "./app/economics/sec-finance/page";
@@ -79,6 +80,7 @@ export function App() {
     on("RVOL") && <Route key="rvol" path="rate-vol" element={<EconRateVol />} />,
     on("FCOST") && <Route key="fcost" path="funding-cost" element={<EconFundingCost />} />,
     on("BRA") && <Route key="bra" path="rate-analysis" element={<EconRateAnalysis />} />,
+    on("EDA") && <Route key="eda" path="eda" element={<EconEda />} />,
   ].filter(Boolean);
 
   const showEcon = econChildren.length > 0;

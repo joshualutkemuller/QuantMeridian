@@ -2,6 +2,7 @@ import { json } from "@/lib/server/http";
 import { readFile } from "fs/promises";
 import path from "path";
 import { goldEnabled, goldStore } from "@/lib/server/goldStore";
+import { buildEdaFromGold } from "@/lib/server/goldEda";
 import {
   PRICE_SNAPSHOTS,
   SNAPSHOTS,
@@ -602,7 +603,20 @@ export async function GET(req: Request, { params }: { params: { view: string } }
   const asof = asOfDate(req);
   const viewKey = dbView(view, basis);
 
-  // 0. Gold DB (MACRO_DB_URL) — equity tables
+  // 0a. Gold DB (MACRO_DB_URL) — EDA analytics tables
+  if (goldEnabled() && view === "eda") {
+    try {
+      const data = await buildEdaFromGold(goldStore());
+      if (data) {
+        return json({ source: "DB", view, basis, ...(asof ? { asof } : {}), earliestAsOf: null, data });
+      }
+      console.warn("[market] Gold DB holds no series_lead_lag/correlation/structural_breaks rows for view 'eda'");
+    } catch (err) {
+      console.warn(`[market] Gold DB read failed for view 'eda': ${(err as Error).message}`);
+    }
+  }
+
+  // 0b. Gold DB (MACRO_DB_URL) — equity tables
   if (goldEnabled() && ["market", "cross-asset", "bilello", "index-returns"].includes(view)) {
     try {
       const store = goldStore();

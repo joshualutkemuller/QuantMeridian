@@ -53,7 +53,7 @@ export const PROVENANCE_META: Record<ProvenanceSource, ProvenanceMeta> = {
   POLY: { label: "LIVE · POLY", live: true, tone: "live", title: "Live from Polymarket CLOB + Gamma APIs (public, no auth)" },
   DB: { label: "LIVE · DB", live: true, tone: "live", title: "Gold macro database — fred-bronze-to-gold-pipeline (MACRO_DB_URL)" },
   FILE: { label: "LIVE · FILE", live: true, tone: "live", title: "Local exported-file cache (MARKET_DATA_DIR — `mdp export-views`)" },
-  ETL: { label: "ETL · MACRO", live: true, tone: "etl", title: "macro_data_etl gold tables (World Bank · BIS · CME FedWatch). Run the ETL with network access for live values." },
+  ETL: { label: "ETL · MACRO", live: false, tone: "etl", title: "macro_data_etl gold tables (frozen 2026-06-24). Committed JSON snapshot — not live. Enable SIM or configure a live source (GOLD_DB_URL, FRED_API_KEY) for fresh data." },
   SNAPSHOT: { label: "SNAPSHOT", live: false, tone: "snapshot", title: "Committed gold snapshot (FRED · Yahoo). Configure a live source for fresh data." },
   ECON: { label: "ECON MODEL", live: false, tone: "model", title: "Deterministic econ model standing in for this macro level (set FRED_API_KEY for live data)." },
   SIM: { label: "SIM", live: false, tone: "model", title: "Deterministic simulation — no real data available for this series." },
