@@ -71,9 +71,14 @@ export default function GlobalPolicyRates() {
     return L && isRealEconSource(L.source) && L.observations.length ? { ...livePolicyRate(r, L.observations), source: L.source } : r;
   }).sort((a, b) => b.rate - a.rate);
   const allSources = all.map((r) => r.source).filter((s) => s && s !== "LOADING");
+  const realSources = allSources.filter((s) => s === "DB" || s === "FRED");
+  const isRealMajority = realSources.length > allSources.length / 2;
   const pageSource: DataSource = source === "LOADING" && !allSources.length
     ? "LOADING"
-    : worstSource(allSources.length ? allSources : ["SIM" as DataSource]) as DataSource;
+    : isRealMajority
+    ? (worstSource(realSources) as DataSource)
+    : ("SIM" as DataSource);
+  const realCovered = all.filter((r) => r.source === "DB" || r.source === "FRED");
   const summary = {
     ...base,
     avgPolicyRate: Number((all.reduce((a, r) => a + r.rate, 0) / all.length).toFixed(2)),
@@ -217,7 +222,7 @@ export default function GlobalPolicyRates() {
 
   return (
     <div className="flex min-h-full flex-col">
-      <PageHeader code="GPOL" title="Global Policy Rates" desc="Central-bank rates, cycles & streaks" right={<span className="flex items-center gap-2"><ChartLink refs={[{ source: "econ", id: "FEDFUNDS" }, { source: "econ", id: "DGS2" }]} range="5Y" /><SourceBadge source={pageSource} /></span>} />
+      <PageHeader code="GPOL" title="Global Policy Rates" desc="Central-bank rates, cycles & streaks" right={<span className="flex items-center gap-2"><ChartLink refs={[{ source: "econ", id: "FEDFUNDS" }, { source: "econ", id: "DGS2" }]} range="5Y" /><SourceBadge source={pageSource} /><Tag tone="amber">{realCovered.length}/{all.length}</Tag><span className="text-2xs text-term-text-mute">real/tracked</span></span>} />
 
       <KpiStrip>
         <Stat label="Global Avg Policy Rate" value={`${fmtNum(summary.avgPolicyRate, 2)}%`} sub={`${total} central banks`} tone="amber" />

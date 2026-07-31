@@ -78,9 +78,13 @@ export default function GlobalInflation() {
       : c;
   });
   const allSources = all.map((c) => c.source).filter((s) => s && s !== "LOADING");
+  const realSources = allSources.filter((s) => s === "DB" || s === "FRED");
+  const isRealMajority = realSources.length > allSources.length / 2;
   const pageSource = source === "LOADING" && !allSources.length
     ? ("LOADING" as const)
-    : worstSource(allSources.length ? allSources : ["SIM" as DataSource]);
+    : isRealMajority
+    ? worstSource(realSources)
+    : ("SIM" as DataSource);
   const base = getGlobalSummary();
   const ys = all.map((c) => c.yoy).sort((a, b) => a - b);
   const summary = {
@@ -190,6 +194,7 @@ export default function GlobalInflation() {
     },
   ];
 
+  const realCovered = all.filter((c) => c.source === "DB" || c.source === "FRED");
   const falling = [...all].filter((c) => c.trend === "FALLING").sort((a, b) => b.streak - a.streak).slice(0, 6);
   const rising = [...all].filter((c) => c.trend === "RISING").sort((a, b) => b.streak - a.streak).slice(0, 6);
 
@@ -205,7 +210,7 @@ export default function GlobalInflation() {
         code="GCPI"
         title="Global Inflation"
         desc="CPI YoY & MoM by country — trend & streaks"
-        right={<div className="flex items-center gap-2"><SourceBadge source={pageSource} /><Tag tone="amber">{all.length} TRACKED</Tag></div>}
+        right={<div className="flex items-center gap-2"><SourceBadge source={pageSource} /><Tag tone="amber">{realCovered.length}/{all.length}</Tag><span className="text-2xs text-term-text-mute">real/tracked</span></div>}
       />
 
       <KpiStrip>
