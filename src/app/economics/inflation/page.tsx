@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { PageHeader, KpiStrip } from "@/components/ui/PageHeader";
 import { Panel, Stat, Tag } from "@/components/ui/Panel";
 import { DataGrid, type Column } from "@/components/ui/DataGrid";
@@ -8,7 +8,8 @@ import { BarChart } from "@/components/charts/BarChart";
 import { useDrill } from "@/components/econ/DrillProvider";
 import { SourceBadge } from "@/components/econ/SourceBadge";
 import { TermToggleGroup } from "@/components/ui/TermToggleGroup";
-import { isRealEconSource, useLiveSeriesSet } from "@/lib/useEcon";
+import { isRealEconSource, useLiveSeriesSet, type DataSource } from "@/lib/useEcon";
+import { worstSource } from "@/lib/provenance";
 import {
   getInflationHeadlines,
   getInflationComponents,
@@ -41,6 +42,21 @@ export default function InflationExplorer() {
 
   const [metric, setMetric] = useState<Metric>("yoy");
   const [basket, setBasket] = useState<Basket>("CPI");
+  const [goldData, setGoldData] = useState<any>(null);
+
+  // Fetch Gold inflation data
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/econ/inflation")
+      .then((r) => r.json())
+      .then((data) => {
+        if (alive && data.ok) {
+          setGoldData(data);
+        }
+      })
+      .catch(() => setGoldData(null));
+    return () => { alive = false; };
+  }, []);
 
   // Take headline + component face values fully live from FRED index series.
   const cpiComps = getInflationComponents("CPI");
@@ -57,6 +73,10 @@ export default function InflationExplorer() {
   const cpiMerged = cpiComps.map(merge);
   const components = (basket === "CPI" ? cpiMerged : pceComps.map(merge));
   const head = (g: string) => headlines.find((h) => h.group === g)!;
+
+  // Determine page source: prefer Gold if available, otherwise FRED/SIM
+  const pageSource: DataSource = goldData?.ok ? "DB" : source === "LOADING" ? "LOADING" : source === "ERR" ? "ERR" : source || "SIM";
+
   const summary = {
     cpiYoY: head("CPI").yoy,
     coreCpiYoY: head("CORE_CPI").yoy,
@@ -219,7 +239,7 @@ export default function InflationExplorer() {
         code="INFL"
         title="Inflation Explorer"
         desc="CPI · Core CPI · PCE · Core PCE to item level"
-        right={<span className="flex items-center gap-2"><ChartLink refs={[{ source: "econ", id: "CPIAUCSL" }, { source: "econ", id: "PCEPI" }]} range="5Y" transform="yoy" /><SourceBadge source={source} /></span>}
+        right={<span className="flex items-center gap-2"><ChartLink refs={[{ source: "econ", id: "CPIAUCSL" }, { source: "econ", id: "PCEPI" }]} range="5Y" transform="yoy" /><SourceBadge source={pageSource} /></span>}
       />
 
       <KpiStrip>
