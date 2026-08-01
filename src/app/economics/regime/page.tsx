@@ -1,5 +1,5 @@
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { PageHeader, KpiStrip } from "@/components/ui/PageHeader";
 import { Panel, Stat, Tag } from "@/components/ui/Panel";
 import { DataGrid, type Column } from "@/components/ui/DataGrid";
@@ -28,7 +28,7 @@ import {
   type ImpulseScore,
   type CrossDeskPlaybook,
 } from "@/data/macroRegime";
-import { isRealEconSource, useLiveSeriesSet } from "@/lib/useEcon";
+import { isRealEconSource, useLiveSeriesSet, type DataSource } from "@/lib/useEcon";
 import { fmtBps, fmtNum, fmtPct, fmtUsdAbbr, pnlClass } from "@/lib/format";
 
 const SIGNAL_TONE: Record<RegimeFactor["signal"], "up" | "amber" | "neutral"> = {
@@ -62,8 +62,25 @@ function factorValue(f: RegimeFactor): string {
 }
 
 export default function RegimePage() {
+  const [goldData, setGoldData] = useState<any>(null);
+
+  // Fetch Gold regime data
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/econ/regime")
+      .then((r) => r.json())
+      .then((data) => {
+        if (alive && data.ok) {
+          setGoldData(data);
+        }
+      })
+      .catch(() => setGoldData(null));
+    return () => { alive = false; };
+  }, []);
+
   const { data: regimeFred, source } = useLiveSeriesSet([...REGIME_FRED_IDS], "lin", 60);
   const anyReal = REGIME_FRED_IDS.some((id) => isRealEconSource(regimeFred[id]?.source));
+  const pageSource: DataSource = goldData?.ok ? "DB" : anyReal && isRealEconSource(source) ? source : "SIM";
   const simFactors = getRegimeFactors();
   const factors = useMemo(() => mergeLiveRegimeFactors(simFactors, regimeFred), [simFactors, regimeFred]);
   const summary = useMemo(() => anyReal ? computeLiveRegimeSummary(factors) : getRegimeSummary(), [anyReal, factors]);
@@ -126,7 +143,7 @@ export default function RegimePage() {
 
   return (
     <div className="flex min-h-full flex-col">
-      <PageHeader code="REGIME" title="Macro Regime Playbook" desc="Impulse scores · named regimes · cross-desk actions" right={<span className="flex items-center gap-2"><ChartLink refs={[{ source: "econ", id: "UNRATE" }, { source: "econ", id: "T10Y2Y" }, { source: "econ", id: "VIXCLS" }]} range="5Y" /><ProvenanceBadge source={anyReal && isRealEconSource(source) ? source : "SIM"} /></span>} />
+      <PageHeader code="REGIME" title="Macro Regime Playbook" desc="Impulse scores · named regimes · cross-desk actions" right={<span className="flex items-center gap-2"><ChartLink refs={[{ source: "econ", id: "UNRATE" }, { source: "econ", id: "T10Y2Y" }, { source: "econ", id: "VIXCLS" }]} range="5Y" /><ProvenanceBadge source={pageSource} /></span>} />
 
       <KpiStrip>
         <Stat label="Named Regime" value={namedRegime.regime} sub={`${fmtPct(namedRegime.probability, 0)} prob`} tone="amber" />
