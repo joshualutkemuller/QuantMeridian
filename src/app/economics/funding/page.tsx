@@ -1,5 +1,5 @@
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import clsx from "clsx";
 import { PageHeader, KpiStrip } from "@/components/ui/PageHeader";
 import { Panel, Stat, Tag } from "@/components/ui/Panel";
@@ -50,6 +50,22 @@ const REGIME_TONE = { Calm: "up", Watch: "amber", Stressed: "down" } as const;
 const DESK_TONE: Record<DeskSignalTone, "up" | "amber" | "down"> = { Calm: "up", Watch: "amber", Stress: "down" };
 
 export default function FundingPulse() {
+  const [goldData, setGoldData] = useState<any>(null);
+
+  // Fetch Gold funding data
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/econ/funding")
+      .then((r) => r.json())
+      .then((data) => {
+        if (alive && data.ok) {
+          setGoldData(data);
+        }
+      })
+      .catch(() => setGoldData(null));
+    return () => { alive = false; };
+  }, []);
+
   const { data: macroInputs } = useMacroInputs();
   const fallback = useMemo<SeriesMap>(() => {
     if (!macroInputs) return {};
@@ -72,6 +88,7 @@ export default function FundingPulse() {
   const [groupFilter, setGroupFilter] = useState<string>("ALL");
 
   const anyReal = FUNDING_FRED_IDS.some((id) => isRealEconSource(live[id]?.source));
+  const pageSource: DataSource = goldData?.ok ? "DB" : anyReal ? "FRED" : "SIM";
   const liveIds = useMemo(() => new Set(FUNDING_FRED_IDS.filter((id) => isRealEconSource(live[id]?.source))), [live]);
   const spreads = useMemo(() => computeSpreads(map), [map]);
   const gauge = useMemo(() => computeGauge(map), [map]);
@@ -86,7 +103,7 @@ export default function FundingPulse() {
         code="FUND"
         title="Funding & Liquidity Pulse"
         desc="Repo, the corridor, balances & funding stress"
-        right={<ProvenanceBadge source={anyReal && isRealEconSource(source) ? source : "SIM"} />}
+        right={<ProvenanceBadge source={pageSource} />}
       />
 
       <KpiStrip>
