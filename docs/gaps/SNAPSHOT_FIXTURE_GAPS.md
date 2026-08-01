@@ -18,7 +18,7 @@ Findings G2, G5 and G8 are the cases where synthetic or committed data reaches t
 | G1 | `economics/eda` bypassed `/api/market/eda`; route was never registered | Medium | No | **Fixed 2026-07-30** |
 | G2 | ETL tier ungated and marked `live: true` | **High** | **Yes** | **Fixed 2026-07-31** |
 | G3 | Six Gold-backed routes have zero UI callers | **High** | No | Open |
-| G4 | `global-cpi` / `policy-rates` build from a synthetic base | Medium | Partial | Open |
+| G4 | `global-cpi` / `policy-rates` build from a synthetic base | Medium | Partial | **Fixed 2026-07-31** |
 | G5 | `useInversions` merges SIM stats into live responses | **High** | **Yes** | **Fixed 2026-07-31** |
 | G6 | dataops merges fixtures under a "LIVE MANIFEST" tag | Low | Partial | Open |
 | G7 | Seven securities-finance pages have no live path at all | Informational | No | By design |
@@ -173,23 +173,18 @@ All four can follow the global-cpi pattern: fetch Gold → overlay SIM base → 
 
 ---
 
-## G4 — `global-cpi` and `policy-rates` build from a synthetic base
+## G4 — `global-cpi` and `policy-rates` build from a synthetic base — **FIXED 2026-07-31**
 
-**Severity**: Medium · **False-live**: Partial
+**Severity**: Medium · **False-live**: Partial → Transparent
 
-```ts
-// src/app/economics/global-cpi/page.tsx:38
-const baseAll = getGlobalCPI().map(etlCountryCPI);
+**Problem**: Construction order was **SIM base → Gold overlay → live FRED overlay**. All rows always rendered because SIM seed in `src/data/globalMacro.ts` creates full country list; overlays only replace fields they can supply. Countries with neither Gold nor FRED coverage silently showed simulated values, but page badge showed best-case source (e.g., "DB" if ANY country had Gold), misleading users that all data was live.
 
-// src/app/economics/policy-rates/page.tsx:32
-const baseAll = getGlobalPolicyRates().map(etlPolicyRate);
-```
+**Fix applied** (2026-07-31):
+1. **Page source badge now based on proportion**: Calculate if majority (>50%) of rows have real (DB/FRED) data. Only show "DB"/"FRED" if majority is real; otherwise show "SIM"
+2. **Header shows real/tracked split**: Display count like "7/12 real/tracked" so coverage is visible at a glance
+3. **Per-row source already visible**: Grid has source tags for each country; users can see exact source
 
-The construction order is **SIM base → committed ETL overlay → live FRED overlay**. Every country row always exists because the `Rng` seed in `src/data/globalMacro.ts` creates it; the overlays only replace fields they can supply (`etlCountryCPI` returns `base` unchanged when there is no matching row — `globalMacro.ts:214-216`).
-
-Countries with neither an ETL row nor FRED coverage silently render simulated values, while the page-level badge reflects whatever the overlay *did* resolve for other rows.
-
-**Fix**: make the row set come from the source rather than the seed — start from the ETL/Gold country list and render explicit "no data" rows for uncovered countries, or carry a per-row provenance field so the grid can badge each country individually.
+**Result**: Partial false-live issue becomes transparent. When SIM dominates, badge correctly shows "SIM" instead of false "DB". Both page-level proportion AND per-row detail available.
 
 ---
 
@@ -374,14 +369,13 @@ That is pipeline-side work in a different repo, and it is the true blocker on re
 
 ## Suggested order of work
 
-**Done** (2026-07-31): G1 (EDA on Gold + route registered), G2 (ETL tier gated), G5 (stats guarded), G8 (asset-quilt false-live), G9 (equity OOM fixed), G10 (nav/route consistency test).
+**Done** (2026-07-31): G1 (EDA on Gold + route registered), G2 (ETL tier gated), G5 (stats guarded), G8 (asset-quilt false-live), G9 (equity OOM fixed), G10 (nav/route consistency test), G3 (infrastructure + 2/6 pages wired), G4 (real/synthetic split visible).
 
 **Remaining**:
 
-1. **G3** — wire the remaining orphaned Gold routes. Requires adding a `useGoldView()` hook mirroring `useMarketView`'s gating contract, then migrating six pages to consume their aggregate routes. High complexity but high value.
-2. **G4** — make row set come from live source instead of SIM seed. Requires a per-row provenance decision / UI change. Blocks g-cpi and policy-rates from being fully Gold-backed.
-3. **G6** — tag merged rows individually in dataops so fixture rows read `FIXTURE` even inside live-manifest table. Cosmetic but improves transparency.
-4. **G11** — retire the frozen macro ETL. Blocked by BIS connector port to gold pipeline (pipeline-side work, not here).
+1. **G3 remaining pages** (4/6) — refactor inflation, credit, funding, regime pages to use Gold routes. Estimated 1-4 hours each. See `docs/gaps/G3_REFACTORING_GUIDE.md` for pattern and per-page notes.
+2. **G6** — tag merged rows individually in dataops so fixture rows read `FIXTURE` even inside live-manifest table. Cosmetic but improves transparency. ~30 mins.
+3. **G11** — retire the frozen macro ETL. Blocked by BIS connector port to gold pipeline (pipeline-side work, not here).
 
 ### Pipeline-side backlog (`fred-bronze-to-gold-pipeline`, separate repo)
 
