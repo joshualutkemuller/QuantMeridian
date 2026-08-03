@@ -133,7 +133,7 @@ export default function TreasuryCurveLab() {
   const { data: invData, source: invSource } = useInversions(spreadId);
   const spreadHist = invData?.timeline ?? [];
   const inversions = invData?.inversions ?? [];
-  const stats = invData?.stats ?? getInversionStats(spreadId);
+  const stats = invData?.stats;
   // Condense recession months into distinct period ranges for the footnote.
   const recessionPeriods = (() => {
     const out: string[] = [];
@@ -392,12 +392,16 @@ export default function TreasuryCurveLab() {
 
         {/* HISTORICAL INVERSIONS */}
         <Panel title={`Historical Inversions — ${def.label}`} code="INVT" accent className="xl:col-span-2">
-          <div className="grid grid-cols-2 divide-x divide-term-border border-b border-term-border sm:grid-cols-4">
-            <Stat label="Recession Hit-Rate" value={`${fmtNum(stats.recessionRate, 0)}%`} sub={`${stats.total} inversions`} tone="down" />
-            <Stat label="Avg Lead" value={`${fmtNum(stats.avgLeadMonths, 1)} mo`} sub={`${stats.minLeadMonths}–${stats.maxLeadMonths} mo range`} tone="amber" />
-            <Stat label="Deepest" value={fmtBps(stats.deepestBps, 0)} sub={`avg ${fmtBps(stats.avgDepthBps, 0)}`} tone="down" />
-            <Stat label="Longest" value={`${stats.longestMonths} mo`} sub="duration" />
-          </div>
+          {stats ? (
+            <div className="grid grid-cols-2 divide-x divide-term-border border-b border-term-border sm:grid-cols-4">
+              <Stat label="Recession Hit-Rate" value={`${fmtNum(stats.recessionRate, 0)}%`} sub={`${stats.total} inversions`} tone="down" />
+              <Stat label="Avg Lead" value={`${fmtNum(stats.avgLeadMonths, 1)} mo`} sub={`${stats.minLeadMonths}–${stats.maxLeadMonths} mo range`} tone="amber" />
+              <Stat label="Deepest" value={fmtBps(stats.deepestBps, 0)} sub={`avg ${fmtBps(stats.avgDepthBps, 0)}`} tone="down" />
+              <Stat label="Longest" value={`${stats.longestMonths} mo`} sub="duration" />
+            </div>
+          ) : (
+            <div className="px-3 py-3 text-2xs text-term-text-mute">No statistical data available from the configured source.</div>
+          )}
           <DataGrid columns={invCols} rows={inversions} rowKey={(r) => r.id} maxHeight="260px" initialSort={{ key: "inv", dir: "asc" }} />
           <div className="grid grid-cols-1 gap-px border-t border-term-border bg-term-border sm:grid-cols-2">
             <div className="bg-term-panel px-2 py-2">
@@ -414,14 +418,16 @@ export default function TreasuryCurveLab() {
         {/* PLAYBOOK */}
         <Panel title="Curve Inversion Playbook" code="PLAY">
           <ul className="space-y-2 px-3 py-2 text-2xs text-term-text-dim">
-            <li className="flex gap-2">
-              <span className="text-term-amber">▸</span>
-              <span>
-                Since the mid-1970s, <span className="text-term-amber">{fmtNum(stats.recessionRate, 0)}%</span> of <span className="text-term-amber">{def.label}</span> inversions
-                preceded an NBER recession, with an average lead of <span className="text-term-amber">{fmtNum(stats.avgLeadMonths, 1)} months</span>{" "}
-                (range {stats.minLeadMonths}–{stats.maxLeadMonths}mo) — a slow, not immediate, signal.
-              </span>
-            </li>
+            {stats && (
+              <li className="flex gap-2">
+                <span className="text-term-amber">▸</span>
+                <span>
+                  Since the mid-1970s, <span className="text-term-amber">{fmtNum(stats.recessionRate, 0)}%</span> of <span className="text-term-amber">{def.label}</span> inversions
+                  preceded an NBER recession, with an average lead of <span className="text-term-amber">{fmtNum(stats.avgLeadMonths, 1)} months</span>{" "}
+                  (range {stats.minLeadMonths}–{stats.maxLeadMonths}mo) — a slow, not immediate, signal.
+                </span>
+              </li>
+            )}
             <li className="flex gap-2">
               <span className="text-term-amber">▸</span>
               <span>
@@ -432,13 +438,15 @@ export default function TreasuryCurveLab() {
                 {liveMetrics.inverted2s10 ? " — still flashing the classic warning." : " — having re-steepened out of inversion."}
               </span>
             </li>
-            <li className="flex gap-2">
-              <span className="text-term-amber">▸</span>
-              <span>
-                Depth & duration matter: the deepest inversion ran <span className="text-term-down">{fmtBps(stats.deepestBps, 0)}</span> and the
-                longest lasted <span className="text-term-amber">{stats.longestMonths}mo</span> (2022–24, which has so far avoided a recession — the lone soft-landing case).
-              </span>
-            </li>
+            {stats && (
+              <li className="flex gap-2">
+                <span className="text-term-amber">▸</span>
+                <span>
+                  Depth & duration matter: the deepest inversion ran <span className="text-term-down">{fmtBps(stats.deepestBps, 0)}</span> and the
+                  longest lasted <span className="text-term-amber">{stats.longestMonths}mo</span> (2022–24, which has so far avoided a recession — the lone soft-landing case).
+                </span>
+              </li>
+            )}
             <li className="flex gap-2">
               <span className="text-term-amber">▸</span>
               <span>

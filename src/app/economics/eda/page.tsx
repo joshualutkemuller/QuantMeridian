@@ -5,13 +5,14 @@ import { DataGrid, type Column } from "@/components/ui/DataGrid";
 import { CorrelationMatrix } from "@/components/charts/Matrix";
 import { ProvenanceBadge } from "@/components/ui/ProvenanceBadge";
 import { fmtNum, fmtSignedPct, pnlClass } from "@/lib/format";
+import { useMarketView } from "@/lib/useMarket";
 import {
-  edaView,
   type CrossCorrelationResult,
   type GrangerResult,
   type LaggedOlsResult,
   type CusumResult,
   type PeltResult,
+  type EdaCoverage,
   type EdaView,
 } from "@/data/marketPipeline";
 
@@ -28,24 +29,30 @@ function pvalTone(p: number): "up" | "amber" | "neutral" {
   return "neutral";
 }
 
+/** Reason a panel is blank: an explicit coverage note, else a generic no-data line. */
+function panelNote(coverage: EdaCoverage | undefined, key: keyof EdaCoverage): string {
+  const c = coverage?.[key];
+  return typeof c === "string" ? c : "No data from the configured source.";
+}
+
+function PanelEmpty({ note }: { note: string }) {
+  return <div className="p-3 text-2xs text-term-text-mute">{note}</div>;
+}
+
 export default function EdaPage() {
-  const data: EdaView = edaView;
+  const { data, source } = useMarketView<EdaView>("eda");
   const [ccfIdx, setCcfIdx] = useState(0);
 
   const strongestLead = useMemo(() => {
-    let best = data.cross_correlation[0];
-    for (const p of data.cross_correlation) {
-      if (Math.abs(p.best_corr) > Math.abs(best.best_corr)) best = p;
-    }
-    return best;
+    if (!data.cross_correlation.length) return null;
+    return data.cross_correlation.reduce((best, p) =>
+      Math.abs(p.best_corr) > Math.abs(best.best_corr) ? p : best,
+    );
   }, [data]);
 
   const bestGranger = useMemo(() => {
-    let best = data.granger_causality[0];
-    for (const g of data.granger_causality) {
-      if (g.p_value < best.p_value) best = g;
-    }
-    return best;
+    if (!data.granger_causality.length) return null;
+    return data.granger_causality.reduce((best, g) => (g.p_value < best.p_value ? g : best));
   }, [data]);
 
   const recentChangepoints = useMemo(() => {
@@ -58,7 +65,7 @@ export default function EdaPage() {
 
   const avgAbsCorr = useMemo(() => {
     const vals = data.cross_correlation.map((p) => Math.abs(p.best_corr));
-    return vals.reduce((a, b) => a + b, 0) / vals.length;
+    return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
   }, [data]);
 
   const grangerSorted = useMemo(
@@ -71,8 +78,39 @@ export default function EdaPage() {
     [data],
   );
 
-  const selectedCcf = data.cross_correlation[ccfIdx];
+  // The pair set is source-dependent (the snapshot and Gold curate different
+  // lists), so a stored index can outlive the array it points into.
+  const safeCcfIdx = Math.min(ccfIdx, Math.max(0, data.cross_correlation.length - 1));
+  const selectedCcf = data.cross_correlation[safeCcfIdx];
   const heatmap = data.pearson_heatmap;
+
+  // Every hook above runs unconditionally, so bailing out here keeps hook order
+  // stable across the loading → data transition.
+  const isEmpty =
+    !data.cross_correlation.length &&
+    !data.granger_causality.length &&
+    !data.lagged_ols.length &&
+    !data.cusum.length &&
+    !data.pelt.length &&
+    !heatmap.labels.length;
+
+  if (isEmpty) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <PageHeader
+          code="EDA"
+          title="Exploratory Data Analysis"
+          desc="Cross-correlation, Granger causality & structural breaks"
+          right={<ProvenanceBadge source={source} />}
+        />
+        <div className="p-3 text-2xs text-term-text-mute">
+          {source === "LOADING"
+            ? "Loading EDA analytics…"
+            : "No EDA analytics available. Configure MACRO_DB_URL (gold.series_lead_lag · series_correlation · series_structural_breaks), or enable Snapshot Fallback in the ribbon."}
+        </div>
+      </div>
+    );
+  }
 
   const grangerCols: Column<GrangerResult>[] = [
     {
@@ -195,9 +233,10 @@ export default function EdaPage() {
       align: "right",
       render: (r) => {
         const s = r.segments[r.segments.length - 1];
+        if (!s) return "—";
         return <span className={pnlClass(s.mean_return)}>{fmtSignedPct(s.mean_return * 100, 2)}</span>;
       },
-      sortVal: (r) => r.segments[r.segments.length - 1].mean_return,
+      sortVal: (r) => r.segments[r.segments.length - 1]?.mean_return ?? 0,
     },
     {
       key: "latestVol",
@@ -205,9 +244,9 @@ export default function EdaPage() {
       align: "right",
       render: (r) => {
         const s = r.segments[r.segments.length - 1];
-        return fmtSignedPct(s.volatility * 100, 2);
+        return s ? fmtSignedPct(s.volatility * 100, 2) : "—";
       },
-      sortVal: (r) => r.segments[r.segments.length - 1].volatility,
+      sortVal: (r) => r.segments[r.segments.length - 1]?.volatility ?? 0,
     },
     {
       key: "breaks",
@@ -222,10 +261,11 @@ export default function EdaPage() {
     },
   ];
 
-  const ccfMax = Math.max(...selectedCcf.ccf.map((p) => Math.abs(p.corr)), 0.01);
+  const ccfPoints = selectedCcf?.ccf ?? [];
+  const ccfMax = Math.max(...ccfPoints.map((p) => Math.abs(p.corr)), 0.01);
   const barW = 32;
   const barGap = 4;
-  const chartW = selectedCcf.ccf.length * (barW + barGap) + 60;
+  const chartW = ccfPoints.length * (barW + barGap) + 60;
   const chartH = 200;
   const axisY = chartH / 2;
 
@@ -236,21 +276,21 @@ export default function EdaPage() {
         title="Exploratory Data Analysis"
         desc="Cross-correlation, Granger causality & structural breaks"
         asOf={data.asof}
-        right={<ProvenanceBadge source="SIM" />}
+        right={<ProvenanceBadge source={source} asOf={data.asof} />}
       />
 
       <KpiStrip>
         <Stat
           label="Strongest Lead"
-          value={`${strongestLead.leader_name} → ${strongestLead.follower_name}`}
-          sub={`${fmtNum(strongestLead.best_corr, 2)} at lag ${strongestLead.best_lag}`}
-          tone={strongestLead.best_corr < 0 ? "down" : "up"}
+          value={strongestLead ? `${strongestLead.leader_name} → ${strongestLead.follower_name}` : "—"}
+          sub={strongestLead ? `${fmtNum(strongestLead.best_corr, 2)} at lag ${strongestLead.best_lag}` : undefined}
+          tone={strongestLead ? (strongestLead.best_corr < 0 ? "down" : "up") : "neutral"}
         />
         <Stat
           label="Best Granger"
-          value={`${bestGranger.leader_name} → ${bestGranger.follower_name}`}
-          sub={`p=${bestGranger.p_value.toFixed(4)}`}
-          tone="up"
+          value={bestGranger ? `${bestGranger.leader_name} → ${bestGranger.follower_name}` : "—"}
+          sub={bestGranger ? `p=${bestGranger.p_value.toFixed(4)}` : undefined}
+          tone={bestGranger ? "up" : "neutral"}
         />
         <Stat
           label="Active Changepoints"
@@ -260,7 +300,7 @@ export default function EdaPage() {
         />
         <Stat
           label="Avg |Cross-Corr|"
-          value={fmtNum(avgAbsCorr, 2)}
+          value={avgAbsCorr === null ? "—" : fmtNum(avgAbsCorr, 2)}
           tone="neutral"
         />
         <Stat
@@ -272,29 +312,40 @@ export default function EdaPage() {
 
       <div className="analytics-grid flex-1 grid auto-rows-[minmax(20rem,auto)] grid-cols-12 gap-px bg-term-border">
         <Panel title="Granger Causality Tests" code="GRNR" className="col-span-12 xl:col-span-6">
-          <DataGrid
-            columns={grangerCols}
-            rows={grangerSorted}
-            rowKey={(r) => `${r.leader}-${r.follower}`}
-            initialSort={{ key: "pval", dir: "asc" }}
-          />
+          {grangerSorted.length ? (
+            <DataGrid
+              columns={grangerCols}
+              rows={grangerSorted}
+              rowKey={(r) => `${r.leader}-${r.follower}`}
+              initialSort={{ key: "pval", dir: "asc" }}
+            />
+          ) : (
+            <PanelEmpty note={panelNote(data.coverage, "granger_causality")} />
+          )}
         </Panel>
 
         <Panel title="Lagged OLS Regression" code="OLS" className="col-span-12 xl:col-span-6">
-          <DataGrid
-            columns={olsCols}
-            rows={olsSorted}
-            rowKey={(r) => `${r.leader}-${r.follower}`}
-            initialSort={{ key: "r2", dir: "desc" }}
-          />
+          {olsSorted.length ? (
+            <DataGrid
+              columns={olsCols}
+              rows={olsSorted}
+              rowKey={(r) => `${r.leader}-${r.follower}`}
+              initialSort={{ key: "r2", dir: "desc" }}
+            />
+          ) : (
+            <PanelEmpty note={panelNote(data.coverage, "lagged_ols")} />
+          )}
         </Panel>
 
         <Panel
           title="Cross-Correlation Function"
           code="CCF"
-          subtitle={`${selectedCcf.leader_name} → ${selectedCcf.follower_name}`}
+          subtitle={selectedCcf ? `${selectedCcf.leader_name} → ${selectedCcf.follower_name}` : undefined}
           className="col-span-12 xl:col-span-8"
         >
+          {!selectedCcf ? (
+            <PanelEmpty note={panelNote(data.coverage, "cross_correlation")} />
+          ) : (
           <div className="flex flex-col gap-2 p-2">
             <div className="flex flex-wrap gap-1">
               {data.cross_correlation.map((p, i) => (
@@ -302,7 +353,7 @@ export default function EdaPage() {
                   key={`${p.leader}-${p.follower}`}
                   onClick={() => setCcfIdx(i)}
                   className={`rounded-sm border px-1.5 py-px text-3xs font-semibold uppercase tracking-wide transition-colors ${
-                    i === ccfIdx
+                    i === safeCcfIdx
                       ? "border-term-amber/60 bg-term-amber/15 text-term-amber"
                       : "border-term-border bg-term-panel-2 text-term-text-dim hover:text-term-text"
                   }`}
@@ -359,28 +410,41 @@ export default function EdaPage() {
               </svg>
             </div>
           </div>
+          )}
         </Panel>
 
         <Panel title="Pearson Correlation Heatmap" code="CORR" className="col-span-12 xl:col-span-4" scroll>
-          <div className="p-2">
-            <CorrelationMatrix labels={heatmap.labels} values={heatmap.matrix} height={420} />
-          </div>
+          {heatmap.labels.length ? (
+            <div className="p-2">
+              <CorrelationMatrix labels={heatmap.labels} values={heatmap.matrix} height={420} />
+            </div>
+          ) : (
+            <PanelEmpty note={panelNote(data.coverage, "pearson_heatmap")} />
+          )}
         </Panel>
 
         <Panel title="CUSUM Changepoints" code="CUSUM" className="col-span-12 xl:col-span-6">
-          <DataGrid
-            columns={cusumCols}
-            rows={data.cusum}
-            rowKey={(r) => r.series_id}
-          />
+          {data.cusum.length ? (
+            <DataGrid
+              columns={cusumCols}
+              rows={data.cusum}
+              rowKey={(r) => r.series_id}
+            />
+          ) : (
+            <PanelEmpty note={panelNote(data.coverage, "cusum")} />
+          )}
         </Panel>
 
         <Panel title="PELT Regime Segments" code="PELT" className="col-span-12 xl:col-span-6">
-          <DataGrid
-            columns={peltCols}
-            rows={data.pelt}
-            rowKey={(r) => r.series_id}
-          />
+          {data.pelt.length ? (
+            <DataGrid
+              columns={peltCols}
+              rows={data.pelt}
+              rowKey={(r) => r.series_id}
+            />
+          ) : (
+            <PanelEmpty note={panelNote(data.coverage, "pelt")} />
+          )}
         </Panel>
       </div>
     </div>

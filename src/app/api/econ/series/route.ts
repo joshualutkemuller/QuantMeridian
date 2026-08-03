@@ -27,9 +27,9 @@ function transformColumn(units: string | undefined): string {
  * Resolution order:
  *   1. Gold DB — gold.fred_latest_observation (levels) or fred_feature_transforms (transformed)
  *   2. Live FRED API
- *   3. Committed snapshot
- *   4. ETL inflation observations
- *   5. Deterministic SIM
+ *   3. Committed snapshot (gated by snapshotFallbackEnabled)
+ *   4. ETL inflation observations (gated by snapshotFallbackEnabled — committed fixture, not live)
+ *   5. Deterministic SIM (gated by simFallbackEnabled)
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -92,15 +92,17 @@ export async function GET(req: Request) {
     }
   }
 
-  // 4. ETL
-  const etl = getEtlInflationObservations(id, n);
-  if (etl) {
-    return json({ source: "ETL", id, label, units: "yoy", observations: etl });
+  // 4. ETL (gated like snapshot — it is a committed fixture, not live)
+  if (allowSnapshot) {
+    const etl = getEtlInflationObservations(id, n);
+    if (etl) {
+      return json({ source: "ETL", id, label, units: "yoy", observations: etl });
+    }
   }
 
   // 5. SIM
   if (!allowSim) {
-    return json({ source: "ERR", id, label, units, observations: [], error: "No DB/FRED/snapshot/ETL data available; enable SIM in the ribbon to use generated fallback data." });
+    return json({ source: "ERR", id, label, units, observations: [], error: "No DB/FRED/snapshot data available; enable SIM in the ribbon to use generated fallback data." });
   }
   const wantsRaw = reqUnits === "lin" && resolved.units !== "lin";
   if (wantsRaw) {

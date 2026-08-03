@@ -1,5 +1,5 @@
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { PageHeader, KpiStrip } from "@/components/ui/PageHeader";
 import { Panel, Stat, Tag } from "@/components/ui/Panel";
 import { DataGrid, type Column } from "@/components/ui/DataGrid";
@@ -9,7 +9,7 @@ import { BarChart } from "@/components/charts/BarChart";
 import { ProgressBar } from "@/components/charts/Radial";
 import { useDrill } from "@/components/econ/DrillProvider";
 import { SourceBadge } from "@/components/econ/SourceBadge";
-import { isRealEconSource, useLiveSeriesSet } from "@/lib/useEcon";
+import { isRealEconSource, useLiveSeriesSet, type DataSource } from "@/lib/useEcon";
 import { Sparkline } from "@/components/charts/Sparkline";
 import {
   getCreditCurve, getCreditSummary, getSpreadHistory, getSectorSpreads, getStressEpisodes, getCreditLinkages, liveRung,
@@ -34,11 +34,28 @@ const REGIME_TONE: Record<string, "up" | "down" | "amber" | "blue"> = { TIGHT: "
 const MASTER_IDS = ["BAMLC0A0CM", "BAMLH0A0HYM2"];
 
 export default function CreditSpreadsPage() {
+  const [goldData, setGoldData] = useState<any>(null);
+
+  // Fetch Gold credit spread data
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/econ/credit")
+      .then((r) => r.json())
+      .then((data) => {
+        if (alive && data.ok) {
+          setGoldData(data);
+        }
+      })
+      .catch(() => setGoldData(null));
+    return () => { alive = false; };
+  }, []);
+
   const baseCurve = getCreditCurve();
   const sum = getCreditSummary();
 
   // Take rating-curve OAS and IG/HY masters fully live (units default -> bps).
   const { data: liveMap, source } = useLiveSeriesSet([...baseCurve.map((r) => r.fredId), ...MASTER_IDS], undefined, 24);
+  const pageSource: DataSource = goldData?.ok ? "DB" : source === "LOADING" ? "LOADING" : source === "ERR" ? "ERR" : source || "SIM";
   const curve = baseCurve.map((r) => {
     const L = liveMap[r.fredId];
     return L && isRealEconSource(L.source) && L.observations.length ? liveRung(r, L.observations) : r;
@@ -184,7 +201,7 @@ export default function CreditSpreadsPage() {
         code="CRDT"
         title="Credit Spreads"
         desc="IG / HY OAS deep dive · curve · stress · sec-finance linkage"
-        right={<div className="flex items-center gap-2"><ChartLink refs={[{ source: "econ", id: "BAMLH0A0HYM2" }, { source: "econ", id: "BAMLC0A0CM" }]} range="5Y" /><SourceBadge source={source} /><Tag tone={REGIME_TONE[sum.regime]}>{sum.regime} REGIME</Tag></div>}
+        right={<div className="flex items-center gap-2"><ChartLink refs={[{ source: "econ", id: "BAMLH0A0HYM2" }, { source: "econ", id: "BAMLC0A0CM" }]} range="5Y" /><SourceBadge source={pageSource} /><Tag tone={REGIME_TONE[sum.regime]}>{sum.regime} REGIME</Tag></div>}
       />
 
       <KpiStrip>

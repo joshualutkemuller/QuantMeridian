@@ -1,24 +1,26 @@
 import { json } from "@/lib/server/http";
+import { goldStore } from "@/lib/server/goldStore";
+import { buildFomcFromGold } from "@/lib/server/goldFomc";
 import { getMacroInputs } from "@/data/macroInputs";
-import {
-  fomcFromEtl,
-  impliedPathFromEtl,
-  hasEtlFedData,
-  etlFedSource,
-  etlFedAsOf,
-  etlFedSourceDetail,
-  etlFedModelInputs,
-} from "@/data/etlMacro";
 import { CURRENT_TARGET } from "@/data/econRates";
 import { simFallbackEnabled } from "@/lib/server/fallbacks";
 
 export const runtime = "nodejs";
 
 export async function GET(req: Request) {
-  if (!hasEtlFedData()) {
-    return simFallbackEnabled(req)
-      ? json({ source: "SIM", meetings: [], path: [], currentTarget: CURRENT_TARGET })
-      : json({ source: "ERR", meetings: [], path: [], currentTarget: CURRENT_TARGET, error: "No ETL/Fed data available; enable SIM in the ribbon to use generated fallback data." });
+  // Attempt to read FOMC probability data from Gold
+  const store = goldStore();
+  const goldFomc = store ? await buildFomcFromGold(store) : null;
+
+  // If no Gold data and SIM is not enabled, fail gracefully
+  if (!goldFomc && !simFallbackEnabled(req)) {
+    return json({
+      source: "ERR",
+      meetings: [],
+      path: [],
+      currentTarget: CURRENT_TARGET,
+      error: "No FOMC data available from Gold DB; enable SIM in the ribbon to use generated fallback data.",
+    });
   }
 
   // Pull live effective rate from Gold DB benchmarks — SOFR is the primary
@@ -27,26 +29,22 @@ export async function GET(req: Request) {
   const spotEffectiveRate: number | undefined =
     macroInputs?.benchmarks?.["SOFR"] ?? macroInputs?.benchmarks?.["EFFR"] ?? undefined;
 
-  const meetings = fomcFromEtl(spotEffectiveRate);
-  const path = impliedPathFromEtl(spotEffectiveRate);
+  // Use Gold data if available; fall back to empty data
+  const meetings = goldFomc?.meetings ?? [];
+  const path = goldFomc?.path ?? [{ label: "Now", rate: CURRENT_TARGET.mid }];
 
-  const fedPriceSource = etlFedSource();
   const currentTarget =
     spotEffectiveRate != null
       ? { low: spotEffectiveRate - 0.125, high: spotEffectiveRate + 0.125, mid: spotEffectiveRate - 0.08 }
       : CURRENT_TARGET;
 
-  const modelInputs = fedPriceSource === "fred_model" ? etlFedModelInputs() : null;
-
   return json({
-    source: macroInputs?.source ?? "SIM",
-    fedPriceSource,
-    asOf: etlFedAsOf(),
-    sourceDetail: etlFedSourceDetail(),
+    source: goldFomc ? "DB" : "SIM",
+    asOf: goldFomc ? (await store!.asOf()).slice(-1)[0]?.observation_date ?? null : null,
+    sourceDetail: goldFomc ? "FOMC probabilities from Gold pipeline" : null,
     spotEffectiveRate: spotEffectiveRate ?? null,
     goldAnchored: spotEffectiveRate != null,
     currentTarget,
-    modelInputs,
     meetings,
     path,
   });

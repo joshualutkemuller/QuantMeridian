@@ -5,6 +5,7 @@ import { Panel, Stat, Tag } from "@/components/ui/Panel";
 import { MarketDataControls } from "@/components/market/MarketDataControls";
 import { getAssetQuilt, quiltColor, type QuiltYear } from "@/data/marketAnalytics";
 import { useMarketView, type MarketSource } from "@/lib/useMarket";
+import { useSimMode } from "@/lib/simMode";
 import { ProvenanceBadge } from "@/components/ui/ProvenanceBadge";
 import type { BilelloView, BilelloMonthlyReturn, BilelloDailyPrice, ReturnBasis } from "@/data/marketPipeline";
 import { fmtNum, fmtSignedPct } from "@/lib/format";
@@ -20,19 +21,28 @@ function tone(v: number): "up" | "down" | "amber" | "neutral" {
 export default function AssetQuiltPage() {
   const [basis, setBasis] = useState<ReturnBasis>("total");
   const [asof, setAsOf] = useState("");
+  const { simEnabled } = useSimMode();
   const { data: bilello, source, earliestAsOf } = useMarketView<BilelloView>("bilello", basis, asof);
-  const quilt = useMemo(() => quiltFromBilello(bilello, asof) ?? getAssetQuilt(), [bilello, asof]);
+  // The generated quilt is a SIM artefact, so it is gated on the ribbon toggle
+  // like every other synthetic fallback. Without it an empty live view renders
+  // an explicit empty state rather than seeded data under the live badge.
+  const quilt = useMemo(
+    () => quiltFromBilello(bilello, asof) ?? (simEnabled ? getAssetQuilt() : []),
+    [bilello, asof, simEnabled],
+  );
+  const isSim = quilt.length > 0 && !quiltFromBilello(bilello, asof);
   const latest = quilt[quilt.length - 1];
   const latestDataAsOf = latestBilelloDataDate(bilello);
-  const effectiveAsOf = asof || latestDataAsOf || latest.asOf || null;
-  const bestLatest = latest.cells[0];
-  const worstLatest = latest.cells[latest.cells.length - 1];
+  const effectiveAsOf = asof || latestDataAsOf || latest?.asOf || null;
+  const bestLatest = latest?.cells[0];
+  const worstLatest = latest?.cells[latest.cells.length - 1];
   const leaders = quilt.reduce<Record<string, number>>((acc, y) => {
-    acc[y.cells[0].asset] = (acc[y.cells[0].asset] ?? 0) + 1;
+    const top = y.cells[0];
+    if (top) acc[top.asset] = (acc[top.asset] ?? 0) + 1;
     return acc;
   }, {});
   const leader = Object.entries(leaders).sort((a, b) => b[1] - a[1])[0];
-  const dispersion = latest.cells[0].returnPct - latest.cells[latest.cells.length - 1].returnPct;
+  const dispersion = bestLatest && worstLatest ? bestLatest.returnPct - worstLatest.returnPct : 0;
   const proxyRows = useMemo(() => {
     const seen = new Map<string, NonNullable<QuiltYear["cells"][number]>>();
     for (const year of quilt) {
@@ -44,7 +54,27 @@ export default function AssetQuiltPage() {
     return [...seen.values()].sort((a, b) => (a.proxyTicker ?? a.asset).localeCompare(b.proxyTicker ?? b.asset));
   }, [quilt]);
 
-  const maxRank = Math.max(...quilt.map((y) => y.cells.length));
+  const maxRank = Math.max(...quilt.map((y) => y.cells.length), 0);
+
+  // All hooks above run unconditionally — safe to bail out here.
+  if (!latest || !bestLatest || !worstLatest) {
+    return (
+      <div className="flex min-h-full flex-col">
+        <PageHeader
+          code="QUILT"
+          title="Asset Quilt"
+          desc="Annual ETF/index proxy return rank quilt"
+          showStreaming={false}
+          right={<PipelineTag source={source} />}
+        />
+        <div className="p-3 text-2xs text-term-text-mute">
+          {source === "LOADING"
+            ? "Loading asset quilt…"
+            : "No asset quilt available. Configure MACRO_DB_URL or MARKET_DB_URL, or enable Snapshot Fallback / SIM in the ribbon."}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-full flex-col">
@@ -54,7 +84,7 @@ export default function AssetQuiltPage() {
         desc="Annual ETF/index proxy return rank quilt"
         asOf={effectiveAsOf}
         showStreaming={false}
-        right={<span className="flex items-center gap-2"><MarketDataControls basis={basis} onBasisChange={setBasis} asof={asof} onAsOfChange={setAsOf} latestAsOf={bilello?.asof ?? latest.asOf} earliestAsOf={earliestAsOf} /><PipelineTag source={source} asOf={effectiveAsOf} /></span>}
+        right={<span className="flex items-center gap-2"><MarketDataControls basis={basis} onBasisChange={setBasis} asof={asof} onAsOfChange={setAsOf} latestAsOf={bilello?.asof ?? latest.asOf} earliestAsOf={earliestAsOf} /><PipelineTag source={isSim ? "SIM" : source} asOf={effectiveAsOf} /></span>}
       />
 
       <StalenessBar asOf={effectiveAsOf} />
@@ -74,7 +104,7 @@ export default function AssetQuiltPage() {
           code="RANK"
           className="xl:col-span-12"
           accent
-          right={<span className="text-3xs text-term-text-mute">{source} · {basis === "total" ? "adjusted close total return" : "raw close price return"} · returns as of {effectiveAsOf ?? "latest"}</span>}
+          right={<span className="text-3xs text-term-text-mute">{isSim ? "SIM" : source} · {basis === "total" ? "adjusted close total return" : "raw close price return"} · returns as of {effectiveAsOf ?? "latest"}</span>}
         >
           <div className="overflow-auto">
             <div className="grid min-w-[1080px]" style={{ gridTemplateColumns: `76px repeat(${quilt.length}, minmax(88px, 1fr))` }}>
@@ -271,6 +301,6 @@ function prettyAssetClass(assetClass: string): string {
   return map[assetClass] ?? assetClass;
 }
 
-function PipelineTag({ source, asOf }: { source: MarketSource; asOf?: string | null }) {
+function PipelineTag({ source, asOf }: { source: MarketSource | "SIM"; asOf?: string | null }) {
   return <ProvenanceBadge source={source} asOf={asOf} />;
 }

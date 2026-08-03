@@ -17,7 +17,6 @@ import {
   type FomcMeeting,
 } from "@/data/econRates";
 import { getPolicyTransmission, type PolicyTransmission } from "@/data/econEnhancements";
-import { fomcFromEtl, impliedPathFromEtl, hasEtlFedData, etlFedSource, etlFedAsOf, etlFedSourceDetail, etlFedModelInputs } from "@/data/etlMacro";
 import { useFomc } from "@/lib/useEcon";
 import { SourceBadge } from "@/components/econ/SourceBadge";
 import { fmtNum, fmtSigned, fmtUsdAbbr, pnlClass } from "@/lib/format";
@@ -50,35 +49,16 @@ function probOf(m: FomcMeeting, move: number): number {
 }
 
 export default function RateProbabilitiesPage() {
-  // Prefer the Gold-anchored /api/econ/fomc route (which grounds the
-  // probability ladder in the live SOFR/EFFR from Gold DB); fall back to
-  // the static ETL snapshot; finally fall back to the deterministic SIM path.
+  // FOMC probabilities from Gold DB (see src/lib/server/goldFomc.ts) or fall back to SIM.
   const { data: fomcData } = useFomc();
-  const useEtl = hasEtlFedData();
   const meetings = fomcData?.meetings?.length
     ? (fomcData.meetings as import("@/data/econRates").FomcMeeting[])
-    : useEtl ? fomcFromEtl() : getFomcMeetings();
-  const path = fomcData?.path?.length
-    ? fomcData.path
-    : useEtl ? impliedPathFromEtl() : getImpliedPath();
-  const fedSource: "ETL" | "SIM" = useEtl ? "ETL" : "SIM";
-  const fedPriceSource = fomcData?.fedPriceSource ?? etlFedSource();
-  const fedIsLiveCme = useEtl && fedPriceSource === "cme";
-  const fedIsFredModel = useEtl && fedPriceSource === "fred_model";
-  const fedModelInputs = fomcData?.modelInputs ?? (fedIsFredModel ? etlFedModelInputs() : null);
-  const fedSourceDetail = fomcData?.sourceDetail ?? etlFedSourceDetail();
-  const currentTarget = fomcData?.currentTarget ??
-    (fedModelInputs != null && "target_low" in fedModelInputs && fedModelInputs.target_low != null && "target_high" in fedModelInputs && fedModelInputs.target_high != null
-      ? {
-          low: fedModelInputs.target_low as number,
-          high: fedModelInputs.target_high as number,
-          mid: ((fedModelInputs.target_low as number) + (fedModelInputs.target_high as number)) / 2,
-        }
-      : CURRENT_TARGET);
-  const displayPath =
-    fedIsFredModel && path.length
-      ? [{ ...path[0], rate: currentTarget.mid }, ...path.slice(1)]
-      : path;
+    : getFomcMeetings();
+  const path = fomcData?.path?.length ? fomcData.path : getImpliedPath();
+  const fedSource: "DB" | "SIM" = fomcData?.source === "DB" ? "DB" : "SIM";
+  const fedSourceDetail = fomcData?.sourceDetail ?? null;
+  const currentTarget = fomcData?.currentTarget ?? CURRENT_TARGET;
+  const displayPath = path;
   const dot = getDotPlot();
   const pathHistory = getPolicyPathHistory();
   const transmissions = getPolicyTransmission();
@@ -131,7 +111,7 @@ export default function RateProbabilitiesPage() {
 
   return (
     <div className="flex min-h-full flex-col">
-      <PageHeader code="FOMC" title="Rate Probabilities" desc="Fed path & hike/cut odds" asOf={useEtl ? etlFedAsOf() : null} right={<span className="flex items-center gap-2"><ChartLink refs={[{ source: "econ", id: "FEDFUNDS" }, { source: "econ", id: "DGS3MO" }]} range="5Y" /><SourceBadge source={fedSource} /></span>} />
+      <PageHeader code="FOMC" title="Rate Probabilities" desc="Fed path & hike/cut odds" asOf={fomcData?.asOf} right={<span className="flex items-center gap-2"><ChartLink refs={[{ source: "econ", id: "FEDFUNDS" }, { source: "econ", id: "DGS3MO" }]} range="5Y" /><SourceBadge source={fedSource} /></span>} />
 
       <KpiStrip>
         <Stat label="Current Target" value={targetStr} sub={`mid ${fmtNum(currentTarget.mid, 3)}%`} tone="amber" />
@@ -143,31 +123,15 @@ export default function RateProbabilitiesPage() {
       </KpiStrip>
 
       <div className="px-3 pt-1.5 text-3xs text-term-text-mute">
-        Probabilities use CME FedWatch methodology — implied from 30-day fed funds futures (CME: ZQ).{" "}
-        {useEtl ? (
-          <span className="text-sky-300">
-            Computed by the macro_data_etl FedProbabilityEngine
-            {fedIsLiveCme
-              ? " from live CME settlements."
-              : fedIsFredModel
-                ? " from a FRED short-rate model fallback because CME blocked automated access."
-                : " from a deterministic fallback futures curve because CME data was unavailable."}
-          </span>
-        ) : null}
+        {fedSource === "DB"
+          ? "FOMC probabilities from the Gold pipeline (fred-bronze-to-gold-pipeline). Outcomes computed from the Treasury short-rate zero-coupon curve, bootstrapped for incremental forward rates between meeting horizons."
+          : "Fallback to deterministic SIM probabilities when Gold DB is unavailable."}
       </div>
-
-      {fedIsFredModel ? (
-        <div className="border-y border-term-border-soft bg-term-panel-2 px-3 py-1.5 text-3xs text-term-text-mute">
-          <span className="font-semibold uppercase text-term-amber">FRED MODEL</span>{" "}
-          {fedSourceDetail || "EFFR/FEDFUNDS anchors spot policy; DGS3MO, DGS6MO, and DGS1 proxy the short-rate path."}{" "}
-          The ETL applies a <span className="tnum text-term-text-dim">{Math.round((fedModelInputs?.pass_through ?? 0.65) * 100)}%</span> pass-through from the Treasury short-rate gap to the expected effective fed funds path, day-weights that path into synthetic 30-day fed funds futures prices, then runs the same probability ladder as CME FedWatch. This is not CME market data.
-        </div>
-      ) : null}
 
       <div className="grid flex-1 grid-cols-1 gap-2 p-2 xl:grid-cols-3">
         {/* Left + middle: FedWatch grid + path */}
         <div className="flex flex-col gap-2 xl:col-span-2">
-          <Panel title="FOMC Meeting Probabilities" code="FEDWATCH" accent right={<Tag tone={useEtl ? "neutral" : "amber"}>{useEtl ? "ETL · FEDWATCH" : "CME ZQ IMPLIED"}</Tag>}>
+          <Panel title="FOMC Meeting Probabilities" code="FEDWATCH" accent right={<Tag tone={fedSource === "DB" ? "neutral" : "amber"}>{fedSource === "DB" ? "GOLD · FEDWATCH" : "SIM · FEDWATCH"}</Tag>}>
             <div className="divide-y divide-term-border-soft">
               {meetings.map((m) => {
                 const segs = [...m.outcomes].sort((a, b) => a.move - b.move);

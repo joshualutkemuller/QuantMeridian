@@ -127,6 +127,21 @@ function physicalTable(table: string, backend: Backend): string {
   return `gold.${table}`;
 }
 
+/**
+ * Physical name for a Gold table under the configured backend, for callers that
+ * need `store.raw` (joins, aggregates) rather than `latest`/`history`. Use this
+ * instead of hand-rolling `MACRO_DB_URL.startsWith("sqlite") ? … : …`, which
+ * silently produces a wrong name under the Databricks backend.
+ */
+export function goldTable(table: string): string {
+  return physicalTable(table, detectBackend());
+}
+
+/** Positional placeholder for the configured backend (`$1…` on pg, `?` elsewhere). */
+export function goldParam(index: number): string {
+  return detectBackend() === "postgres" ? `$${index}` : "?";
+}
+
 function historyDateColumn(table: string): string {
   if (
     table === "equity_return_daily" ||
