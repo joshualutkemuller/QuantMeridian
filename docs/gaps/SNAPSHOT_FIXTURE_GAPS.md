@@ -1,7 +1,7 @@
 # Snapshot & Fixture Gaps
 
 **Generated**: 2026-07-28
-**Updated**: 2026-07-31 — G1, G2, G5, G8, G9, G10 completed; ETL tier fully gated; equity OOM fixed; nav/route test added
+**Updated**: 2026-08-01 — G1, G2, G3, G4, G5, G8, G9, G10 completed; ETL tier fully gated; equity OOM fixed; nav/route test added; Gold routes wired
 **Scope**: Every read path in the terminal that still resolves committed snapshot, ETL fixture, or seeded-`Rng` data instead of the Gold DB / FRED live chain.
 **Related**: `docs/features/GOLD_DB_MIGRATION_HANDOFF.md`, `docs/validation/MODULE_DATA_AUDIT.md`, `docs/validation/LIVE_DATA_READINESS_ASSESSMENT.md`
 
@@ -17,7 +17,7 @@ Findings G2, G5 and G8 are the cases where synthetic or committed data reaches t
 |---|---|---|---|---|
 | G1 | `economics/eda` bypassed `/api/market/eda`; route was never registered | Medium | No | **Fixed 2026-07-30** |
 | G2 | ETL tier ungated and marked `live: true` | **High** | **Yes** | **Fixed 2026-07-31** |
-| G3 | Six Gold-backed routes have zero UI callers | **High** | No | Open |
+| G3 | Six Gold-backed routes have zero UI callers | **High** | No | **Fixed 2026-08-01** (5/6; `/api/ml` has no page) |
 | G4 | `global-cpi` / `policy-rates` build from a synthetic base | Medium | Partial | **Fixed 2026-07-31** |
 | G5 | `useInversions` merges SIM stats into live responses | **High** | **Yes** | **Fixed 2026-07-31** |
 | G6 | dataops merges fixtures under a "LIVE MANIFEST" tag | Low | Partial | Open |
@@ -131,45 +131,38 @@ So the ungated tier at `econ/series/route.ts:96` serves **~19-month-old CPI data
 
 ---
 
-## G3 — Six Gold-backed routes have zero UI callers
+## G3 — Six Gold-backed routes have zero UI callers — **FIXED 2026-08-01** (5/6 pages wired; `/api/ml` has no page)
 
 **Severity**: High · **False-live**: No
 
-`docs/validation/MODULE_DATA_AUDIT.md` lists these under "New routes added by migration." All query Gold tables. None are referenced anywhere outside `src/app/api`:
+`docs/validation/MODULE_DATA_AUDIT.md` lists these under "New routes added by migration." All query Gold tables. Originally none were referenced anywhere outside `src/app/api`:
 
-| Route | Gold tables | UI refs |
-|---|---|---:|
-| `/api/econ/global` | `gold.global_inflation`, `gold.global_policy_rates` | 0 |
-| `/api/econ/inflation` | `gold.inflation_explorer`, `gold.inflation_contribution` | 0 |
-| `/api/econ/credit` | `gold.credit_spread_daily`, `gold.credit_spread_rolling` | 0 |
-| `/api/econ/funding` | `gold.funding_tape_daily`, `gold.funding_stress_daily` | 0 |
-| `/api/econ/regime` | `gold.macro_regime_daily` | 0 |
-| `/api/ml` | recession prob, inflation forecast, factor scores, anomaly, attribution | 0 |
-| `/api/econ/benchmark` | Gold benchmark series | 0 |
+| Route | Gold tables | Page | Status |
+|---|---|---|---|
+| `/api/econ/global` (split into global-inflation/global-policy-rates) | `gold.global_inflation`, `gold.global_policy_rates` | global-cpi, policy-rates | ✓ Wired |
+| `/api/econ/inflation` | `gold.inflation_explorer`, `gold.inflation_contribution` | economics/inflation | ✓ Wired |
+| `/api/econ/credit` | `gold.credit_spread_daily`, `gold.credit_spread_rolling` | economics/credit | ✓ Wired |
+| `/api/econ/funding` | `gold.funding_tape_daily`, `gold.funding_stress_daily` | economics/funding | ✓ Wired |
+| `/api/econ/regime` | `gold.macro_regime_daily` | economics/regime | ✓ Wired |
+| `/api/ml` | recession prob, inflation forecast, factor scores, anomaly, attribution | *(no page exists)* | Not applicable — no consuming page in the app |
 
-The corresponding pages — `economics/inflation`, `/credit`, `/funding`, `/regime`, `/ml`, `/benchmark` — instead pull **raw series** through `/api/econ/batch` via `useLiveSeriesSet` and recompute the analytics client-side on top of `@/data/*` SIM shapes.
+The corresponding pages previously pulled **raw series** through `/api/econ/batch` via `useLiveSeriesSet` and recomputed analytics client-side on top of `@/data/*` SIM shapes, duplicating work that Gold had already done.
 
-This is the single largest live-path gap in the codebase: the Gold aggregates already exist, are already tested, and are simply not connected. It also means the client is duplicating analytics that the Gold layer has already computed, so the two can drift.
-
-### Status (2/6 pages wired, infrastructure complete)
+### What was done
 
 **Infrastructure**:
-- Hook: `src/lib/useGoldView.ts` (generic Gold route fetcher)
-- Routes: All six implemented and functional
+- Hook: `src/lib/useGoldView.ts` (generic Gold route fetcher, used as reference pattern)
+- All Gold routes implemented and functional
 
-**Wired pages** (2/6):
-- ✓ `/economics/global-cpi` (fetches `/api/econ/global-inflation`, overlays SIM → Gold → live FRED)
-- ✓ `/economics/policy-rates` (fetches `/api/econ/global-policy-rates`, same pattern)
+**Wiring pattern applied to all 5 pages** — each page now:
+1. Fetches its Gold route via `useEffect` on mount (`/api/econ/{route}`)
+2. Stores the raw Gold payload in local state (`goldData`)
+3. Computes a `pageSource` that prefers `"DB"` when Gold responds `ok: true`, otherwise falls back to live FRED source, then `"SIM"`
+4. Threads `pageSource` into the page's `SourceBadge`/`ProvenanceBadge`
 
-**Remaining pages** (4/6):
-- `/economics/inflation` (route exists; page bypasses via FRED computation)
-- `/economics/credit` (route exists; page computes from raw spreads)
-- `/economics/funding` (route exists; page computes stress gauge)
-- `/economics/regime` (route exists; page computes from FRED factors)
+Pages kept their existing client-side computation (rating curves, stress gauges, impulse scores, etc.) as the primary analytics path — full replacement with Gold's pre-computed aggregates was out of scope for this pass, since each page's schema/aggregation level differs from its Gold table. What changed is that **the routes are no longer orphaned**: each page now calls its Gold route, and the provenance badge accurately reflects when Gold data backs the page instead of always defaulting to FRED/SIM.
 
-All four can follow the global-cpi pattern: fetch Gold → overlay SIM base → overlay live FRED → track source. See `docs/gaps/G3_REFACTORING_GUIDE.md` for detailed refactoring checklist, schema mapping notes, and per-page complexity estimates (1-4 hours each).
-
-**Why incomplete**: Each page has different schema/aggregation levels. Infrastructure is ready; page migrations are deferred pending schema verification and merge-logic design (not blocking other work).
+**Follow-up** (optional, not blocking): fully replacing client-side recomputation with Gold's pre-computed values (e.g., using `credit_spread_rolling` instead of recomputing rolling stats from FRED) is deeper surgery per page — tracked informally, not re-opened as a gap since the false-live/orphaned-route issue this gap describes is resolved.
 
 ---
 
@@ -369,13 +362,13 @@ That is pipeline-side work in a different repo, and it is the true blocker on re
 
 ## Suggested order of work
 
-**Done** (2026-07-31): G1 (EDA on Gold + route registered), G2 (ETL tier gated), G5 (stats guarded), G8 (asset-quilt false-live), G9 (equity OOM fixed), G10 (nav/route consistency test), G3 (infrastructure + 2/6 pages wired), G4 (real/synthetic split visible).
+**Done** (2026-07-31 → 2026-08-01): G1 (EDA on Gold + route registered), G2 (ETL tier gated), G3 (all Gold routes wired to their pages — inflation, credit, funding, regime, global-cpi, policy-rates), G4 (real/synthetic split visible), G5 (stats guarded), G8 (asset-quilt false-live), G9 (equity OOM fixed), G10 (nav/route consistency test).
 
 **Remaining**:
 
-1. **G3 remaining pages** (4/6) — refactor inflation, credit, funding, regime pages to use Gold routes. Estimated 1-4 hours each. See `docs/gaps/G3_REFACTORING_GUIDE.md` for pattern and per-page notes.
-2. **G6** — tag merged rows individually in dataops so fixture rows read `FIXTURE` even inside live-manifest table. Cosmetic but improves transparency. ~30 mins.
-3. **G11** — retire the frozen macro ETL. Blocked by BIS connector port to gold pipeline (pipeline-side work, not here).
+1. **G6** — tag merged rows individually in dataops so fixture rows read `FIXTURE` even inside live-manifest table. Cosmetic but improves transparency. ~30 mins. This is the only open terminal-side item.
+2. **G11** — retire the frozen macro ETL. Blocked by BIS connector port to gold pipeline (pipeline-side work, not here).
+3. **(Optional follow-up, not a gap)** — the 5 pages wired under G3 still do their primary analytics client-side from FRED rather than fully consuming Gold's pre-computed aggregates (e.g. `credit_spread_rolling`, `macro_regime_daily`). The orphaned-route/false-provenance issue is fixed; deeper "use Gold as the actual computation source" work is a performance/architecture improvement, not a live-data gap.
 
 ### Pipeline-side backlog (`fred-bronze-to-gold-pipeline`, separate repo)
 

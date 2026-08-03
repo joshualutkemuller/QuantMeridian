@@ -172,7 +172,7 @@ export function useInversions(spreadId: string): { data: InversionData | null; s
     },
     (j) => ({
       inversions: j.inversions ?? [],
-      stats: j.stats ?? getInversionStats(spreadId),
+      stats: j.stats ?? null,
       timeline: j.timeline ?? [],
     }),
     "SIM",

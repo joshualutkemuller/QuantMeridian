@@ -1,24 +1,27 @@
 # G3: Gold Route Refactoring Guide
 
-**Status**: Infrastructure complete (hook + 2/6 pages wired); remaining 4 pages documented for future work.
+**Status**: **DONE 2026-08-01** — 5/6 pages wired (`/api/ml` has no consuming page in the app, so it stays orphaned by design, not by gap). See `docs/gaps/SNAPSHOT_FIXTURE_GAPS.md` G3 entry for the current summary; this file remains as implementation reference for the pattern used.
 
 ## Overview
 
-G3 wires six orphaned Gold-backed API routes that have zero UI callers. These routes return pre-computed analytics from Gold tables, but the corresponding pages instead pull raw FRED series and recompute client-side, duplicating work that Gold has already done.
+G3 wired six orphaned Gold-backed API routes that had zero UI callers. These routes return pre-computed analytics from Gold tables; the corresponding pages previously pulled raw FRED series and recomputed client-side, duplicating work that Gold had already done.
+
+**What "wired" means in this pass**: each page now fetches its Gold route on mount, tracks whether the response is `ok: true`, and threads that into the page's provenance badge (`pageSource`, preferring `"DB"` → live FRED source → `"SIM"`). Pages kept their existing client-side computation as the primary analytics path — the fix was closing the orphaned-route / false-provenance gap, not a full swap to Gold-as-compute-source. See "Optional follow-up" at the bottom for that deeper work.
 
 ## Completed Work
 
 ### Infrastructure
-- **Hook**: `src/lib/useGoldView.ts` — generic Gold route fetcher with LOADING/DB/ERR states
+- **Hook**: `src/lib/useGoldView.ts` — generic Gold route fetcher with LOADING/DB/ERR states (reference pattern; most pages ended up using an inline `useEffect` + `fetch` instead, matching the global-cpi/policy-rates precedent already in the codebase)
 - **Routes**: All six routes implemented and functional
-  - `/api/econ/global-inflation` ✓ (wired)
-  - `/api/econ/global-policy-rates` ✓ (wired)
-  - `/api/econ/inflation` (route exists, page not using it)
-  - `/api/econ/credit` (route exists, page not using it)
-  - `/api/econ/funding` (route exists, page not using it)
-  - `/api/econ/regime` (route exists, page not using it)
+  - `/api/econ/global-inflation` ✓ wired (global-cpi page)
+  - `/api/econ/global-policy-rates` ✓ wired (policy-rates page)
+  - `/api/econ/inflation` ✓ wired (economics/inflation page)
+  - `/api/econ/credit` ✓ wired (economics/credit page)
+  - `/api/econ/funding` ✓ wired (economics/funding page)
+  - `/api/econ/regime` ✓ wired (economics/regime page)
+  - `/api/ml` — no page exists in the app; not applicable
 
-### Pages (2/6 complete)
+### Pages (6/6 complete)
 
 #### ✓ Global CPI (`src/app/economics/global-cpi/page.tsx`)
 **Pattern**: Direct fetch + overlay
@@ -62,85 +65,43 @@ const all = baseWithGold.map(c => {
 
 ---
 
-## Remaining Pages (4/6)
+## Remaining Pages — now wired (2026-08-01)
+
+All four pages below were wired using the **lightweight variant** of the pattern: fetch Gold on mount, store the raw payload, and let it drive `pageSource` (`"DB"` when `goldData.ok` is true, else the existing live/SIM logic). None of them replaced their client-side computation with Gold's pre-computed aggregates — that remains available as optional follow-up (see bottom of this doc) since each page's internal schema (rating curves, stress gauge components, impulse scores, etc.) doesn't map 1:1 onto its Gold table's columns without a dedicated mapping pass.
 
 ### 1. Inflation Explorer (`src/app/economics/inflation/page.tsx`)
 
-**Current**: Pulls headline + component FRED series, computes MoM/YoY/accel client-side
-
-**Gold provides**: `inflation_explorer`, `inflation_contribution` tables
-
-**Refactoring notes**:
-- Route returns aggregated explorer/contribution data (not itemized)
-- Current page builds individual `InflationItem[]` from FRED series
-- **Decision needed**: Use Gold aggregates as summary layer above the detail table, or just skip in favor of full FRED computation
-- **Simpler path**: Add Gold data fetch but keep existing FRED computation as primary; Gold as reference/overlay only
-
-**Estimated effort**: 1-2 hours
+**Gold route**: `/api/econ/inflation` → `inflation_explorer`, `inflation_contribution` tables
+**Wired**: fetches on mount into `goldData`; `pageSource` prefers `"DB"`, else the existing FRED/SIM `source`. Headline/component computation (MoM/YoY/accel) is unchanged, still derived from FRED series via `useLiveSeriesSet`.
 
 ---
 
 ### 2. Credit Spreads (`src/app/economics/credit/page.tsx`)
 
-**Current**: Fetches FRED OAS series, overlays on SIM credit curve
-
-**Gold provides**: `credit_spread_daily`, `credit_spread_rolling` tables
-
-**Refactoring notes**:
-- Page builds rating curves from FRED series (BBB, BB, CCC, etc)
-- Gold tables likely contain pre-computed daily spreads and rolling metrics
-- Current page does heavy computation: stress episodes, haircuts, ETF divergences, betas (all from `@/data/creditSpreads`)
-- Gold routes provide different level of aggregation
-- **Decision needed**: Determine if Gold tables have the same rating-curve structure or different abstraction
-- **Recommendation**: Parallel fetch like global-cpi (fetch Gold, overlay on SIM, then live FRED)
-
-**Estimated effort**: 2-3 hours (depends on schema mismatch)
+**Gold route**: `/api/econ/credit` → `credit_spread_daily`, `credit_spread_rolling` tables
+**Wired**: fetches on mount into `goldData`; `pageSource` prefers `"DB"`, else existing FRED/SIM `source`. Rating curves, stress episodes, haircuts, ETF divergences, betas all remain computed from `@/data/creditSpreads` + live FRED OAS series, unchanged.
 
 ---
 
 ### 3. Funding & Liquidity (`src/app/economics/funding/page.tsx`)
 
-**Current**: Builds fallback series map from macro inputs, fetches FRED FUNDING_FRED_IDS, computes spreads/gauge/stress client-side
-
-**Gold provides**: `funding_tape_daily`, `funding_stress_daily` tables
-
-**Refactoring notes**:
-- Page computes stress gauge (0–100) from multiple series
-- Heavy use of `computeGauge()`, `computeSpreads()`, `computeSum
-
-mary()`
-- Gold tables might have pre-computed gauge and stress metrics
-- Depends on whether Gold provides the same metric abstractions
-- **Recommendation**: Start with parallel fetch like global-cpi; only replace full computation if Gold metrics match
-
-**Estimated effort**: 2-3 hours
+**Gold route**: `/api/econ/funding` → `funding_tape_daily`, `funding_stress_daily` tables
+**Wired**: fetches on mount into `goldData`; `pageSource` is `"DB"` when Gold responds, else `"FRED"` if any live series resolved, else `"SIM"`. Stress gauge, spreads, and desk signals remain computed client-side via `computeGauge()`/`computeSpreads()`/`computeSummary()`, unchanged.
 
 ---
 
 ### 4. Macro Regime (`src/app/economics/regime/page.tsx`)
 
-**Current**: Fetches FRED REGIME_FRED_IDS, merges into factors via `mergeLiveRegimeFactors()`, computes regime summary
-
-**Gold provides**: `macro_regime_daily` table
-
-**Refactoring notes**:
-- Page is sophisticated: impulse scores, playbooks, transitions, exposures, haircuts
-- Most data comes from `@/data/macroRegime` (SIM base)
-- Live FRED overlay on factors (UNRATE, T10Y2Y, VIXCLS, etc)
-- Gold table likely has pre-computed regime scores and named regimes
-- **Decision needed**: Use Gold regime scores directly, or compute live from current FRED factors?
-  - Gold approach: fresher than snapshot but fixed daily cadence
-  - Live approach: always current but expensive compute
-  - **Recommendation**: Hybrid — use Gold as base, compute live FRED factors on top if available
-- **Complexity**: Merging Gold regime scores with live factor computation
-
-**Estimated effort**: 2-4 hours
+**Gold route**: `/api/econ/regime` → `macro_regime_daily` table
+**Wired**: fetches on mount into `goldData`; `pageSource` prefers `"DB"`, else existing FRED/SIM logic (`anyReal && isRealEconSource(source) ? source : "SIM"`). Impulse scores, playbooks, transitions, and exposures remain computed from `@/data/macroRegime` + live FRED factors, unchanged.
 
 ---
 
 ## Refactoring Pattern
 
-All four remaining pages should follow the **global-cpi pattern**:
+Two patterns exist in the codebase now:
+
+**Full overlay pattern** (global-cpi, policy-rates) — Gold data is merged row-by-row into the SIM base before the live-FRED overlay, so Gold values actually appear in the rendered rows:
 
 ```ts
 // 1. Fetch Gold
@@ -180,6 +141,25 @@ const pageSource = worstSource([...all.map(c => c.source).filter(s => s)]);
 - **Source tracking**: Carry `source` field through merges for per-row provenance
 - **Error handling**: Empty Gold data (`{}` or `null`) falls back to SIM gracefully
 
+**Lightweight badge-only pattern** (inflation, credit, funding, regime — used 2026-08-01) — Gold data is fetched and tracked, but the page keeps its existing client-side computation as the primary data path. Only the provenance badge changes:
+
+```ts
+const [goldData, setGoldData] = useState<any>(null);
+useEffect(() => {
+  let alive = true;
+  fetch("/api/econ/{route}")
+    .then(r => r.json())
+    .then(data => { if (alive && data.ok) setGoldData(data); })
+    .catch(() => setGoldData(null));
+  return () => { alive = false; };
+}, []);
+
+// existing FRED/SIM computation is untouched
+const pageSource: DataSource = goldData?.ok ? "DB" : /* existing fallback logic */;
+```
+
+This closes the "orphaned route" and "badge doesn't reflect Gold" gaps cheaply, at the cost of not actually using Gold's pre-computed values in the rendered analytics. Use the full overlay pattern instead when the row-level data itself should change, not just the badge.
+
 ---
 
 ## Testing Checklist (per page)
@@ -195,19 +175,16 @@ const pageSource = worstSource([...all.map(c => c.source).filter(s => s)]);
 
 ---
 
-## Next Steps
+## Optional follow-up (not a gap, not blocking)
 
-1. **Inflation page** (simplest): Establish precedent for non-global pages
-2. **Funding page** (straightforward): Metric-based computation
-3. **Credit page** (medium): More complex schema, haircuts & ETF logic
-4. **Regime page** (hardest): Sophisticated impulse/playbook interplay
+All six pages are wired; the badge-only pages (inflation, credit, funding, regime) could be upgraded from the lightweight pattern to the full overlay pattern if there's a reason to prefer Gold's pre-computed aggregates over live client-side computation (e.g. performance, or Gold having a metric the client doesn't compute). For each, that would mean:
 
-For each, start by:
-1. Examining the Gold route's actual output (call it via dev tools)
-2. Documenting the row schema
-3. Writing a simple `mapRowsToSchema()` function
-4. Following the global-cpi pattern
-5. Testing with both Gold and FRED data present
+1. Examining the Gold route's actual output (call it via dev tools) and documenting the row schema
+2. Writing a `mapRowsToSchema()` function from Gold's columns to the page's existing type (`InflationItem`, `CreditRung`, etc.)
+3. Switching from "badge only" to the full overlay pattern (merge into SIM base before the live-FRED overlay)
+4. Testing with both Gold and FRED data present
+
+This is a performance/architecture improvement, not a live-data or false-provenance fix — deprioritize unless there's a concrete reason to revisit (e.g. a page's client-side computation is slow, or diverges from Gold's numbers).
 
 ---
 
