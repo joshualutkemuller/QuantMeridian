@@ -16,6 +16,88 @@ import { fmtNum, fmtSigned, pnlClass } from "@/lib/format";
 
 const REGIONS: ("All" | Region)[] = ["All", "AMER", "EMEA", "APAC"];
 
+/** Flag emoji for countries the BIS-backed Gold table covers but the SIM seed
+ *  (RATE_DEFS, 18 countries) does not. Gold now spans 38 central banks via
+ *  gold.global_policy_rates (BIS WS_CBPOL) — see fred-bronze-to-gold-pipeline
+ *  docs/handoffs/bis_policy_rates_source.md. */
+const EXTRA_FLAG_BY_ISO3: Record<string, string> = {
+  ARG: "🇦🇷", CHL: "🇨🇱", COL: "🇨🇴", CZE: "🇨🇿", DNK: "🇩🇰", HKG: "🇭🇰",
+  HUN: "🇭🇺", ISL: "🇮🇸", ISR: "🇮🇱", KWT: "🇰🇼", MKD: "🇲🇰", MYS: "🇲🇾",
+  PER: "🇵🇪", PHL: "🇵🇭", POL: "🇵🇱", ROU: "🇷🇴", RUS: "🇷🇺", SAU: "🇸🇦",
+  SRB: "🇷🇸", THA: "🇹🇭",
+};
+
+const EXTRA_CENTRAL_BANK_BY_ISO3: Record<string, string> = {
+  ARG: "Banco Central de la República Argentina",
+  CHL: "Banco Central de Chile",
+  COL: "Banco de la República",
+  CZE: "Czech National Bank",
+  DNK: "Danmarks Nationalbank",
+  HKG: "Hong Kong Monetary Authority",
+  HUN: "Magyar Nemzeti Bank",
+  ISL: "Central Bank of Iceland",
+  ISR: "Bank of Israel",
+  KWT: "Central Bank of Kuwait",
+  MKD: "National Bank of the Republic of North Macedonia",
+  MYS: "Bank Negara Malaysia",
+  PER: "Banco Central de Reserva del Perú",
+  PHL: "Bangko Sentral ng Pilipinas",
+  POL: "Narodowy Bank Polski",
+  ROU: "National Bank of Romania",
+  RUS: "Bank of Russia",
+  SAU: "Saudi Central Bank",
+  SRB: "National Bank of Serbia",
+  THA: "Bank of Thailand",
+};
+
+interface GoldPolicyRateRow {
+  iso3: string;
+  country: string;
+  region: string;
+  policy_rate_pct: number | null;
+  change_bps: number | null;
+  last_move_bps: number | null;
+  stance: string | null;
+  real_rate_pct: number | null;
+  observation_date: string;
+}
+
+function goldCycle(stance: string | null): PolicyRate["cycle"] {
+  return stance === "hiking" ? "HIKING" : stance === "cutting" ? "CUTTING" : "HOLD";
+}
+
+function goldBias(realRate: number | null): PolicyRate["bias"] {
+  if (realRate == null) return "NEUTRAL";
+  return realRate > 1.5 ? "HAWKISH" : realRate < 0 ? "DOVISH" : "NEUTRAL";
+}
+
+/** Build a full PolicyRate row for a Gold-only country (no RATE_DEFS entry).
+ *  Fields Gold doesn't carry (meeting calendar, cycle-streak length, rate
+ *  history) get honest minimal defaults rather than fabricated values. */
+function policyRateFromGold(row: GoldPolicyRateRow): PolicyRate | null {
+  if (row.policy_rate_pct == null) return null;
+  const cycle = goldCycle(row.stance);
+  return {
+    country: row.country,
+    flag: EXTRA_FLAG_BY_ISO3[row.iso3] ?? "🏳️",
+    region: (row.region as Region) ?? "EMEA",
+    centralBank: EXTRA_CENTRAL_BANK_BY_ISO3[row.iso3] ?? `${row.country} central bank`,
+    rate: row.policy_rate_pct,
+    priorRate: row.change_bps != null ? row.policy_rate_pct - row.change_bps / 100 : row.policy_rate_pct,
+    lastMoveBps: row.change_bps ?? row.last_move_bps ?? 0,
+    lastMeeting: "—",
+    cycle,
+    streak: 1,
+    nextMeeting: "—",
+    realRate: row.real_rate_pct ?? 0,
+    bias: goldBias(row.real_rate_pct),
+    history: [],
+    fredId: undefined,
+    source: "DB",
+    asOf: row.observation_date,
+  };
+}
+
 const cycleTone = (c: PolicyRate["cycle"]): "up" | "down" | "neutral" =>
   c === "CUTTING" ? "up" : c === "HIKING" ? "down" : "neutral";
 const biasTone = (b: PolicyRate["bias"]): "up" | "down" | "neutral" =>
@@ -27,49 +109,61 @@ const cycleHex = (c: PolicyRate["cycle"]) => (c === "CUTTING" ? "#2ECC71" : c ==
 export default function GlobalPolicyRates() {
   const { open } = useDrill();
   const [region, setRegion] = useState<"All" | Region>("All");
-  const [goldData, setGoldData] = useState<Record<string, Partial<PolicyRate>> | null>(null);
+  const [goldRows, setGoldRows] = useState<GoldPolicyRateRow[]>([]);
 
-  // Fetch Gold policy rate data
+  // Fetch Gold policy rate data — gold.global_policy_rates, populated via the
+  // BIS WS_CBPOL connector (fred-bronze-to-gold-pipeline). Covers 38 central
+  // banks vs. RATE_DEFS' 18-country SIM seed below.
   useEffect(() => {
     let alive = true;
     fetch("/api/econ/global-policy-rates")
       .then((r) => r.json())
       .then((data) => {
-        if (alive && data.rows) {
-          const byIso: Record<string, Partial<PolicyRate>> = {};
-          for (const row of data.rows) {
-            byIso[row.iso3] = {
-              rate: row.policy_rate_pct ?? undefined,
-              priorRate: row.change_bps ? row.policy_rate_pct - row.change_bps / 100 : undefined,
-              lastMoveBps: row.last_move_bps ?? undefined,
-              cycle: (row.stance === "hiking" ? "HIKING" : row.stance === "cutting" ? "CUTTING" : "HOLD") as any,
-              realRate: row.real_rate_pct ?? undefined,
-              bias: (row.real_rate_pct ? (row.real_rate_pct > 1.5 ? "HAWKISH" : row.real_rate_pct < 0 ? "DOVISH" : "NEUTRAL") : undefined) as any,
-              source: "DB" as const,
-              asOf: row.observation_date,
-            };
-          }
-          setGoldData(byIso);
-        }
+        if (alive && Array.isArray(data.rows)) setGoldRows(data.rows);
       })
-      .catch(() => setGoldData({})); // Empty object signals no Gold data
+      .catch(() => setGoldRows([]));
     return () => { alive = false; };
   }, []);
 
-  // Source order: live FRED/OECD snapshots → Gold DB → deterministic SIM.
+  // Gold rows keyed by country display name — matches Gold's `country` field
+  // to RATE_DEFS's `country` field 1:1 for the 18 countries both cover.
+  const goldByCountry = new Map(goldRows.map((r) => [r.country, r]));
+
+  // Source order: live FRED/OECD snapshots → Gold DB (BIS) → deterministic SIM.
   const baseAll = getGlobalPolicyRates();
   const baseWithGold = baseAll.map((r) => {
-    const gold = goldData?.[r.country] || goldData?.[r.iso3];
-    return gold ? { ...r, ...gold } : r;
+    const gold = goldByCountry.get(r.country);
+    if (!gold || gold.policy_rate_pct == null) return r;
+    return {
+      ...r,
+      rate: gold.policy_rate_pct,
+      priorRate: gold.change_bps != null ? gold.policy_rate_pct - gold.change_bps / 100 : r.priorRate,
+      lastMoveBps: gold.change_bps ?? gold.last_move_bps ?? r.lastMoveBps,
+      cycle: goldCycle(gold.stance),
+      realRate: gold.real_rate_pct ?? r.realRate,
+      bias: gold.real_rate_pct != null ? goldBias(gold.real_rate_pct) : r.bias,
+      source: "DB" as const,
+      asOf: gold.observation_date,
+    };
   });
 
   const base = getGlobalSummary();
   // Live FRED for central banks with an OECD / ECB rate series.
   const { data: liveMap, source } = useLiveSeriesSet(baseWithGold.map((r) => r.fredId).filter(Boolean) as string[], "lin", 36);
-  const all = baseWithGold.map((r) => {
+  const merged = baseWithGold.map((r) => {
     const L = r.fredId ? liveMap[r.fredId] : undefined;
     return L && isRealEconSource(L.source) && L.observations.length ? { ...livePolicyRate(r, L.observations), source: L.source } : r;
-  }).sort((a, b) => b.rate - a.rate);
+  });
+
+  // Append Gold-only countries (no RATE_DEFS entry) so the page reflects the
+  // BIS connector's full 38-country reach, not just the 18-country SIM seed.
+  const seedCountries = new Set(baseAll.map((r) => r.country));
+  const extraFromGold = goldRows
+    .filter((row) => !seedCountries.has(row.country))
+    .map(policyRateFromGold)
+    .filter((r): r is PolicyRate => r !== null);
+
+  const all = [...merged, ...extraFromGold].sort((a, b) => b.rate - a.rate);
   const allSources = all.map((r) => r.source).filter((s) => s && s !== "LOADING");
   const realSources = allSources.filter((s) => s === "DB" || s === "FRED");
   const isRealMajority = realSources.length > allSources.length / 2;

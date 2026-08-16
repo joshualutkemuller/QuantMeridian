@@ -1,5 +1,5 @@
 import { json } from "@/lib/server/http";
-import { goldStore } from "@/lib/server/goldStore";
+import { goldStore, goldTable } from "@/lib/server/goldStore";
 
 export const runtime = "nodejs";
 
@@ -22,7 +22,18 @@ export async function GET() {
     return json({ rows: [], source: "ERR" });
   }
 
-  const rows = await store.latest<GoldPolicyRateRow>("global_policy_rates");
+  // store.latest() returns the whole fact table (no per-key filtering — see
+  // GoldStore docstring), which for this table is 25+ years of monthly
+  // history across 38 countries. Select only the latest observation per
+  // iso3 so the page gets one current row per country, not an arbitrary
+  // historical one.
+  const table = goldTable("global_policy_rates");
+  const rows = await store.raw<GoldPolicyRateRow>(
+    `SELECT * FROM ${table} p1
+     WHERE observation_date = (
+       SELECT MAX(observation_date) FROM ${table} p2 WHERE p2.iso3 = p1.iso3
+     )`
+  );
   return json({
     rows: rows.map((r) => ({
       iso3: r.iso3,
