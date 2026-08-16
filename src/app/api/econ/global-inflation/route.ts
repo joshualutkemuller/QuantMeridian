@@ -1,5 +1,5 @@
 import { json } from "@/lib/server/http";
-import { goldStore } from "@/lib/server/goldStore";
+import { goldStore, goldTable } from "@/lib/server/goldStore";
 
 export const runtime = "nodejs";
 
@@ -23,7 +23,16 @@ export async function GET() {
     return json({ rows: [], source: "ERR" });
   }
 
-  const rows = await store.latest<GoldInflationRow>("global_inflation");
+  // store.latest() returns the whole fact table (no per-key filtering — see
+  // GoldStore docstring); this table carries annual World Bank CPI back to
+  // the 1990s for 38 countries. Select only the latest observation per iso3.
+  const table = goldTable("global_inflation");
+  const rows = await store.raw<GoldInflationRow>(
+    `SELECT * FROM ${table} p1
+     WHERE observation_date = (
+       SELECT MAX(observation_date) FROM ${table} p2 WHERE p2.iso3 = p1.iso3
+     )`
+  );
   return json({
     rows: rows.map((r) => ({
       iso3: r.iso3,
