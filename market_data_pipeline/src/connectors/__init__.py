@@ -1,4 +1,4 @@
-"""Connector layer: vendor-agnostic market & macro data adapters."""
+"""Connector layer: FRED macro data adapter (sole source)."""
 
 from market_data_pipeline.src.connectors.base import (
     AdapterResult,
@@ -9,8 +9,6 @@ from market_data_pipeline.src.connectors.base import (
     ThrottledClient,
 )
 from market_data_pipeline.src.connectors.fred import FredConnector, fred_enabled
-from market_data_pipeline.src.connectors.synthetic import SyntheticConnector
-from market_data_pipeline.src.connectors.yahoo import YahooConnector
 
 __all__ = [
     "MacroDataAdapter",
@@ -21,6 +19,4 @@ __all__ = [
     "ThrottledClient",
     "FredConnector",
     "fred_enabled",
-    "YahooConnector",
-    "SyntheticConnector",
 ]

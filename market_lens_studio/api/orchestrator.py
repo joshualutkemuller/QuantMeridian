@@ -160,10 +160,8 @@ class Orchestrator:
 
         Returns {series_id: (dates, values)}.
         """
-        from market_lens_studio.data.adapters.yahoo_adapter import YahooAdapter
         from market_lens_studio.data.adapters.fred_adapter import FredAdapter
 
-        yahoo = YahooAdapter()
         fred = FredAdapter()
         result = {}
 
@@ -180,10 +178,7 @@ class Orchestrator:
                 )
 
             try:
-                if sc.source == "fred":
-                    dates, values = fred.fetch_series(ticker, request.start_date, request.end_date)
-                else:
-                    dates, values = yahoo.fetch_series(ticker, request.start_date, request.end_date)
+                dates, values = fred.fetch_series(ticker, request.start_date, request.end_date)
 
                 if dates and values:
                     self._lineage.record(

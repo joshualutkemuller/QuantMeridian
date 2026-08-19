@@ -1,10 +1,8 @@
 """Ingestion orchestration — extract → archive → normalize → quality → load.
 
-Idempotent and revision-aware: raw frames are archived to Parquet (immutable
-history) and upserted to DuckDB on natural keys, so reruns never duplicate.
-Sources are chosen per settings: FRED for macro (falls back to synthetic when no
-key / offline), Yahoo for market (falls back to synthetic). Analytics gold
-tables are rebuilt from the normalized layer at the end of a run.
+FRED is the sole data source. Market equity/price data is served by the
+fred-bronze-to-gold-pipeline via MACRO_DB_URL; this pipeline handles macro
+series only.
 """
 
 from __future__ import annotations
@@ -12,7 +10,6 @@ from __future__ import annotations
 import json
 import math
 import time
-import uuid
 from datetime import date, datetime, timezone
 
 import polars as pl
@@ -20,18 +17,12 @@ import polars as pl
 from market_data_pipeline.src import analytics
 from market_data_pipeline.src.config.catalog import get_catalog
 from market_data_pipeline.src.config.settings import get_settings
-from market_data_pipeline.src.connectors import (
-    FredConnector,
-    SyntheticConnector,
-    YahooConnector,
-    fred_enabled,
-)
-from market_data_pipeline.src.ingestion.news import ingest_news as _ingest_news, export_news_snapshot
+from market_data_pipeline.src.connectors import FredConnector
 from market_data_pipeline.src.ingestion.manifest import ManifestWriter
 from market_data_pipeline.src.quality.checks import QualityChecker
 from market_data_pipeline.src.storage.duckdb_store import DuckDBStore
 from market_data_pipeline.src.storage.parquet_archive import ParquetArchive
-from market_data_pipeline.src.transforms.normalize import normalize_macro, normalize_market
+from market_data_pipeline.src.transforms.normalize import normalize_macro
 
 
 def _now() -> datetime:
@@ -107,17 +98,7 @@ class Pipeline:
     # ------------------------------------------------------------------
 
     def _macro_connector(self):
-        if self.settings.offline or not fred_enabled():
-            return SyntheticConnector()
         return FredConnector(cache_ttl_hours=self.settings.macro_cache_ttl_h)
-
-    def _market_connector(self):
-        if self.settings.offline or not self.settings.allow_yahoo:
-            return SyntheticConnector()
-        return YahooConnector(
-            cache_ttl_hours=self.settings.market_cache_ttl_h,
-            rate_limit=self.settings.yahoo_rate_limit,
-        )
 
     # ------------------------------------------------------------------
     # Extraction
@@ -125,14 +106,10 @@ class Pipeline:
 
     def ingest_macro(self, run_id: str, start: date | None = None) -> pl.DataFrame:
         conn = self._macro_connector()
-        synth = SyntheticConnector()
         frames = []
         for m in self.catalog.macro:
             _t0 = time.perf_counter()
             res = conn.fetch_series(m.fred_id, start)
-            if res.rows.is_empty() and not isinstance(conn, SyntheticConnector):
-                # graceful per-series fallback to synthetic
-                res = synth.fetch_series(m.fred_id, start)
             res.latency_ms = int((time.perf_counter() - _t0) * 1000)
             self.manifest.record_result(run_id, res)
             if not res.rows.is_empty():
@@ -144,31 +121,9 @@ class Pipeline:
         self._load_raw_macro(raw, run_id)
         return normalize_macro(raw, run_id, self.catalog)
 
-    def ingest_market(self, run_id: str, start: date | None = None) -> pl.DataFrame:
-        conn = self._market_connector()
-        symbols = self.catalog.asset_symbols
-        _t0 = time.perf_counter()
-        res = conn.fetch_history(symbols, start)
-        if res.rows.is_empty() and not isinstance(conn, SyntheticConnector):
-            res = SyntheticConnector().fetch_history(symbols, start)
-        res.latency_ms = int((time.perf_counter() - _t0) * 1000)
-        self.manifest.record_result(run_id, res)
-        raw = res.rows
-        if raw.is_empty():
-            return pl.DataFrame()
-        self.archive.write(raw, "raw", "market_prices", raw["source"][0], run_id)
-        self._load_raw_market(raw, run_id)
-        return normalize_market(raw, run_id, self.catalog)
-
     # ------------------------------------------------------------------
     # Raw loads
     # ------------------------------------------------------------------
-
-    def _load_raw_market(self, raw: pl.DataFrame, run_id: str) -> None:
-        df = raw.with_columns(
-            pl.lit(run_id).alias("ingestion_run_id"), pl.lit(_now()).alias("ingested_at")
-        )
-        self.store.upsert("raw_market_prices", df, ["vendor_symbol", "date", "source"])
 
     def _load_raw_macro(self, raw: pl.DataFrame, run_id: str) -> None:
         df = raw.with_columns(
@@ -185,59 +140,37 @@ class Pipeline:
         )
 
     # ------------------------------------------------------------------
-    # News ingestion
-    # ------------------------------------------------------------------
-
-    def ingest_news(self, n: int = 50) -> dict:
-        """Fetch news headlines from the provider chain.
-
-        Returns the result of ``ingest_news()`` from the news module.
-        Never raises — returns an empty result when no API key is configured.
-        """
-        try:
-            return _ingest_news(n)
-        except Exception:
-            return {"source": "NONE", "headlines": [], "fetched_at": _now().isoformat()}
-
-    # ------------------------------------------------------------------
     # Full run
     # ------------------------------------------------------------------
 
     def run(self, start: date | None = None, run_id: str | None = None) -> dict:
         run_id = run_id or f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         macro_norm = self.ingest_macro(run_id, start)
-        market_norm = self.ingest_market(run_id, start)
-        normalized = pl.concat(
-            [f for f in (macro_norm, market_norm) if not f.is_empty()], how="vertical_relaxed"
-        ) if (not macro_norm.is_empty() or not market_norm.is_empty()) else pl.DataFrame()
+        normalized = macro_norm
 
-        # archive + load normalized
         if not normalized.is_empty():
             self.archive.write(normalized, "silver", "normalized", "ALL", run_id)
             self.store.upsert(
                 "normalized_time_series", normalized, ["series_id", "date", "source"]
             )
 
-        # quality
         qc = QualityChecker(
             abnormal_move_pct=self.settings.abnormal_move_pct,
             stale_days_daily=self.settings.stale_days_daily,
             stale_days_monthly=self.settings.stale_days_monthly,
         )
-        expected = [a.series_id for a in self.catalog.assets] + [m.series_id for m in self.catalog.macro]
+        expected = [m.series_id for m in self.catalog.macro]
         qc.run_all(normalized, expected_series=expected)
         qframe = qc.to_frame(run_id)
         if not qframe.is_empty():
             self.store.append("data_quality_results", qframe)
 
-        # gold analytics
         self.build_analytics(run_id, normalized)
 
         return {
             "run_id": run_id,
             "normalized_rows": normalized.height,
             "macro_rows": macro_norm.height,
-            "market_rows": market_norm.height,
             "quality": qc.summary(),
         }
 
@@ -287,43 +220,6 @@ class Pipeline:
     # Serving views (read directly by the terminal — DB or file)
     # ------------------------------------------------------------------
 
-    def _price_return_frame(self, run_id: str) -> pl.DataFrame:
-        """Build a normalized-like market frame from raw closes for price returns."""
-        raw = self.store.query("SELECT * FROM raw_market_prices")
-        if raw.is_empty():
-            return pl.DataFrame()
-
-        sym_to_asset = {a.vendor_symbol: a for a in self.catalog.assets}
-        rows = []
-        ingested = _now()
-        for sym, sub in raw.partition_by("vendor_symbol", as_dict=True).items():
-            symbol = sym[0] if isinstance(sym, tuple) else sym
-            asset = sym_to_asset.get(symbol)
-            if asset is None:
-                continue
-            source = sub["source"][0] if "source" in sub.columns and sub.height else "YAHOO"
-            rows.append(
-                sub.select(
-                    pl.lit(asset.series_id).alias("series_id"),
-                    pl.lit(source).alias("source"),
-                    pl.lit(symbol).alias("vendor_symbol"),
-                    pl.lit(asset.display_name).alias("display_name"),
-                    pl.lit(asset.asset_class).alias("asset_class"),
-                    pl.lit(asset.frequency).alias("frequency"),
-                    pl.col("date"),
-                    pl.col("close").cast(pl.Float64).alias("value"),
-                    pl.lit(asset.unit).alias("unit"),
-                    pl.lit(asset.currency).alias("currency"),
-                    pl.lit("PRICE_CLOSE").alias("adjustment_type"),
-                    pl.lit(None, dtype=pl.Datetime).alias("revision_timestamp"),
-                    pl.lit(None, dtype=pl.Date).alias("vintage_date"),
-                    pl.lit(ingested).alias("ingested_at"),
-                    pl.lit(run_id).alias("ingestion_run_id"),
-                ).filter(pl.col("value").is_not_null())
-            )
-
-        return pl.concat(rows, how="vertical_relaxed") if rows else pl.DataFrame()
-
     def build_api_views(
         self,
         prices: pl.DataFrame,
@@ -334,8 +230,6 @@ class Pipeline:
         ca = analytics.cross_asset_dashboard(prices)
         basis_note = "total" if return_basis != "price" else "price"
         asof = _frame_asof(prices)
-        news_result = self.ingest_news()
-        news_view = export_news_snapshot(news_result["headlines"]) if news_result["headlines"] else None
         views = _json_clean({
             "market": {"return_basis": basis_note, "cards": analytics.market_snapshot(prices)},
             "cross-asset": {"return_basis": basis_note, **ca},
@@ -357,8 +251,6 @@ class Pipeline:
             "index-returns": build_index_returns_view(prices, return_basis=basis_note, asof=asof),
             "eda": analytics.eda_dashboard(prices, macro),
         })
-        if news_view:
-            views["news"] = news_view
         return views
 
     def materialize_api_views(
@@ -379,14 +271,6 @@ class Pipeline:
                 ["EQUITY", "BOND", "COMMODITY", "CREDIT", "VOLATILITY", "CURRENCY"]))
             macro = df.filter(pl.col("asset_class").str.starts_with("MACRO"))
         views = self.build_api_views(prices, macro, return_basis="total")
-        price_prices = self._price_return_frame(run_id)
-        if not price_prices.is_empty():
-            price_views = self.build_api_views(price_prices, macro, return_basis="price")
-            views.update({
-                f"{view}:price": payload
-                for view, payload in price_views.items()
-                if view in {"market", "cross-asset", "regime", "bilello", "index-returns"}
-            })
         now = _now()
         rows = []
         for view, payload in views.items():
@@ -417,24 +301,11 @@ class Pipeline:
             ["EQUITY", "BOND", "COMMODITY", "CREDIT", "VOLATILITY", "CURRENCY"]))
         macro = df.filter(pl.col("asset_class").str.starts_with("MACRO"))
         views = self.build_api_views(prices, macro, return_basis="total")
-        price_prices = self._price_return_frame(run_id)
-        if not price_prices.is_empty():
-            price_views = self.build_api_views(price_prices, macro, return_basis="price")
-            views.update({
-                f"{view}:price": payload
-                for view, payload in price_views.items()
-                if view in {"market", "cross-asset", "regime", "bilello", "index-returns"}
-            })
         name_map = {
             "market": "market_snapshot", "cross-asset": "cross_asset", "rates": "rates",
             "inflation": "inflation", "regime": "regime", "bilello": "bilello",
             "index-returns": "index_returns",
             "eda": "eda",
-            "market:price": "market_snapshot_price",
-            "cross-asset:price": "cross_asset_price",
-            "regime:price": "regime_price",
-            "bilello:price": "bilello_price",
-            "index-returns:price": "index_returns_price",
         }
         written = []
         for view, payload in views.items():

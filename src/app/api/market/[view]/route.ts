@@ -1,7 +1,5 @@
 import { json } from "@/lib/server/http";
-import { readFile } from "fs/promises";
-import path from "path";
-import { goldEnabled, goldStore, goldTable, goldParam } from "@/lib/server/goldStore";
+import { goldEnabled, goldStore, goldTable, goldParam, type GoldStore } from "@/lib/server/goldStore";
 import { buildEdaFromGold } from "@/lib/server/goldEda";
 import {
   PRICE_SNAPSHOTS,
@@ -13,6 +11,9 @@ import {
   type BilelloView,
   type IndexReturnsView,
   type IndexReturnMatrix,
+  type RatesView,
+  type InflationCard,
+  type RegimeView,
 } from "@/data/marketPipeline";
 
 /** Market-snapshot view computed from observations: return basis + per-series cards. */
@@ -25,37 +26,6 @@ type ComputedView = MarketSnapshotView | CrossAsset | BilelloView | IndexReturns
 
 export const runtime = "nodejs"; // needs fs + optional native DB drivers
 
-/** FastAPI path for each terminal view (market_data_pipeline endpoints). */
-const ENDPOINT: Record<MarketView, string> = {
-  market: "/snapshot/market",
-  "cross-asset": "/snapshot/cross-asset",
-  rates: "/snapshot/rates",
-  inflation: "/snapshot/inflation",
-  regime: "/dashboard/regime",
-  bilello: "/dashboard/bilello",
-  "index-returns": "",
-  eda: "/dashboard/eda",
-};
-
-/** Exported-JSON filename for each view (matches `mdp export-views`). */
-const FILE_NAME: Record<MarketView, string> = {
-  market: "market_snapshot.json",
-  "cross-asset": "cross_asset.json",
-  rates: "rates.json",
-  inflation: "inflation.json",
-  regime: "regime.json",
-  bilello: "bilello.json",
-  "index-returns": "index_returns.json",
-  eda: "eda.json",
-};
-
-const PRICE_FILE_NAME: Partial<Record<MarketView, string>> = {
-  market: "market_snapshot_price.json",
-  "cross-asset": "cross_asset_price.json",
-  regime: "regime_price.json",
-  bilello: "bilello_price.json",
-  "index-returns": "index_returns_price.json",
-};
 
 function returnBasis(req: Request): ReturnBasis {
   return new URL(req.url).searchParams.get("basis") === "price" ? "price" : "total";
@@ -72,81 +42,12 @@ function snapshotFallbackEnabled(req: Request): boolean {
   return process.env.MARKET_SNAPSHOT_FALLBACK === "1";
 }
 
-function dbView(view: MarketView, basis: ReturnBasis): string {
-  return basis === "price" && view in PRICE_SNAPSHOTS ? `${view}:price` : view;
-}
 
 function snapshotFor(view: MarketView, basis: ReturnBasis): unknown {
   if (basis === "price" && view in PRICE_SNAPSHOTS) return PRICE_SNAPSHOTS[view as keyof typeof PRICE_SNAPSHOTS];
   return SNAPSHOTS[view];
 }
 
-/** Require an optional module at runtime without the bundler resolving it. */
-function optionalRequire(name: string): any {
-  try {
-    // eslint-disable-next-line no-eval
-    return (eval("require") as NodeRequire)(name);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Read one view's JSON payload from the pipeline's `analytics_api_views` table.
- * Supports a local DuckDB file (`*.duckdb` / `duckdb:<path>`) or Postgres
- * (`postgres://…`). Drivers are optional — install `duckdb` or `pg` to use them.
- */
-async function readFromDb(dbUrl: string, view: string): Promise<unknown | null> {
-  const isPg = /^postgres(ql)?:\/\//.test(dbUrl);
-  if (isPg) {
-    const pg = optionalRequire("pg");
-    if (!pg) {
-      console.warn("[market] MARKET_DB_URL is Postgres but the 'pg' driver isn't available in this runtime");
-      return null;
-    }
-    const client = new pg.Client({ connectionString: dbUrl });
-    try {
-      await client.connect();
-      const r = await client.query(
-        "SELECT payload_json FROM analytics_api_views WHERE view = $1",
-        [view]
-      );
-      if (!r.rows[0]?.payload_json) {
-        console.warn(`[market] connected to Postgres, but analytics_api_views has no row for view '${view}' — run 'publish-views' to populate it`);
-        return null;
-      }
-      return JSON.parse(r.rows[0].payload_json);
-    } finally {
-      await client.end().catch(() => {});
-    }
-  }
-
-  // DuckDB file
-  const duckdb = optionalRequire("duckdb");
-  if (!duckdb) {
-    console.warn("[market] MARKET_DB_URL is a DuckDB file but the 'duckdb' driver isn't installed (run `npm i duckdb`)");
-    return null;
-  }
-  const file = dbUrl.replace(/^duckdb:/, "");
-  const db = new duckdb.Database(file, duckdb.OPEN_READONLY ?? 1);
-  const con = db.connect();
-  try {
-    const rows: any[] = await new Promise((resolve, reject) =>
-      con.all(
-        "SELECT payload_json FROM analytics_api_views WHERE view = ?",
-        view,
-        (err: Error | null, res: any[]) => (err ? reject(err) : resolve(res))
-      )
-    );
-    if (!rows[0]?.payload_json) {
-      console.warn(`[market] DuckDB opened, but analytics_api_views has no row for view '${view}' — run 'publish-views'/'export-views'`);
-      return null;
-    }
-    return JSON.parse(rows[0].payload_json);
-  } finally {
-    db.close();
-  }
-}
 
 interface MarketObservation {
   series_id: string;
@@ -158,25 +59,6 @@ interface MarketObservation {
   price?: number;
 }
 
-async function readMarketObservations(dbUrl: string, basis: ReturnBasis, asof: string): Promise<MarketObservation[]> {
-  if (!/^postgres(ql)?:\/\//.test(dbUrl)) return [];
-  const pg = optionalRequire("pg");
-  if (!pg) return [];
-  const client = new pg.Client({ connectionString: dbUrl });
-  try {
-    await client.connect();
-    const r = await client.query(
-      `SELECT series_id, display_name, asset_class, source, date::text AS date, value
-       FROM market_series_observations
-       WHERE basis = $1 AND date <= $2
-       ORDER BY series_id, date`,
-      [basis, asof]
-    );
-    return r.rows.map((row: any) => ({ ...row, value: Number(row.value) })).filter((row: MarketObservation) => Number.isFinite(row.value));
-  } finally {
-    await client.end().catch(() => {});
-  }
-}
 
 function groupObs(rows: MarketObservation[]): Map<string, MarketObservation[]> {
   const grouped = new Map<string, MarketObservation[]>();
@@ -423,6 +305,206 @@ function indexReturnsFromRows(rows: MarketObservation[], basis: ReturnBasis): In
   return { return_basis: basis, asof: latest, indices: INDEX_MAP.map(([symbol, proxy, name, base, drift, vol]) => ({ symbol, proxy, name, base, drift, vol })), matrices };
 }
 
+// ---------------------------------------------------------------------------
+// Gold DB builders for rates / inflation / regime
+// ---------------------------------------------------------------------------
+
+function addDays(dateStr: string, days: number): string {
+  const d = new Date(dateStr + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().split("T")[0];
+}
+
+const TENOR_TO_SERIES: Record<string, string> = {
+  "1M": "DGS1MO", "3M": "DGS3MO", "6M": "DGS6MO",
+  "1Y": "DGS1", "2Y": "DGS2", "3Y": "DGS3", "5Y": "DGS5",
+  "7Y": "DGS7", "10Y": "DGS10", "20Y": "DGS20", "30Y": "DGS30",
+};
+
+const TENOR_CHANGE_LABEL: Record<string, string> = {
+  "1M": "1-Month", "3M": "3-Month", "6M": "6-Month",
+  "1Y": "1-Year", "2Y": "2-Year", "3Y": "3-Year", "5Y": "5-Year",
+  "7Y": "7-Year", "10Y": "10-Year", "20Y": "20-Year", "30Y": "30-Year",
+};
+
+const TENOR_ORDER = ["1M", "3M", "6M", "1Y", "2Y", "3Y", "5Y", "7Y", "10Y", "20Y", "30Y"];
+
+interface GoldCurveHistoryRow {
+  as_of_date: string;
+  tenor?: string;
+  tenor_label?: string;
+  tenor_months?: number;
+  yield_pct: number;
+}
+
+async function buildRatesFromGold(store: GoldStore): Promise<RatesView | null> {
+  const today = new Date().toISOString().split("T")[0];
+  const cutoff = addDays(today, -400); // covers 3M changes + YTD from Jan 1
+
+  const rows = await store.raw<GoldCurveHistoryRow>(
+    `SELECT as_of_date, tenor, tenor_label, tenor_months, yield_pct FROM ${goldTable("treasury_curve")} WHERE as_of_date >= ${goldParam(1)} ORDER BY as_of_date ASC`,
+    [cutoff]
+  );
+  if (!rows.length) return null;
+
+  // Group by tenor, collecting sorted date+yield pairs
+  const byTenor = new Map<string, { dates: string[]; yields: number[] }>();
+  for (const row of rows) {
+    const tenor = row.tenor ?? row.tenor_label ?? "";
+    if (!tenor) continue;
+    const entry = byTenor.get(tenor) ?? { dates: [], yields: [] };
+    entry.dates.push(row.as_of_date);
+    entry.yields.push(row.yield_pct);
+    byTenor.set(tenor, entry);
+  }
+  if (!byTenor.size) return null;
+
+  const maxDate = rows[rows.length - 1].as_of_date;
+  const d1 = addDays(maxDate, -1);
+  const d7 = addDays(maxDate, -7);
+  const d30 = addDays(maxDate, -30);
+  const d90 = addDays(maxDate, -90);
+  const ytdBase = `${maxDate.slice(0, 4)}-01-01`;
+
+  function lookback(dates: string[], yields: number[], target: string): number | null {
+    for (let i = dates.length - 2; i >= 0; i--) {
+      if (dates[i] <= target) return yields[i];
+    }
+    return null;
+  }
+
+  function bps(latest: number, base: number | null): number | null {
+    return base !== null ? Number(((latest - base) * 100).toFixed(1)) : null;
+  }
+
+  const curve: RatesView["curve"] = [];
+  const changes: RatesView["changes"] = [];
+
+  for (const tenor of TENOR_ORDER) {
+    const entry = byTenor.get(tenor);
+    if (!entry) continue;
+    const { dates, yields } = entry;
+    const seriesId = TENOR_TO_SERIES[tenor] ?? tenor;
+    const label = TENOR_CHANGE_LABEL[tenor] ?? tenor;
+    const latestYield = yields[yields.length - 1];
+
+    if (dates[dates.length - 1] === maxDate) {
+      curve.push({ series_id: seriesId, tenor, label: tenor, yield: Number(latestYield.toFixed(2)) });
+    }
+
+    changes.push({
+      series_id: seriesId,
+      label,
+      latest: Number(latestYield.toFixed(2)),
+      chg_1d_bps: bps(latestYield, lookback(dates, yields, d1)),
+      chg_1w_bps: bps(latestYield, lookback(dates, yields, d7)),
+      chg_1m_bps: bps(latestYield, lookback(dates, yields, d30)),
+      chg_3m_bps: bps(latestYield, lookback(dates, yields, d90)),
+      chg_ytd_bps: bps(latestYield, lookback(dates, yields, ytdBase)),
+    });
+  }
+
+  if (!curve.length) return null;
+
+  const twoY = byTenor.get("2Y");
+  const tenY = byTenor.get("10Y");
+  const threeM = byTenor.get("3M");
+  const two_s_ten_s_bps = twoY && tenY
+    ? Number(((tenY.yields[tenY.yields.length - 1] - twoY.yields[twoY.yields.length - 1]) * 100).toFixed(1))
+    : null;
+  const three_m_ten_y_bps = threeM && tenY
+    ? Number(((tenY.yields[tenY.yields.length - 1] - threeM.yields[threeM.yields.length - 1]) * 100).toFixed(1))
+    : null;
+
+  return { asof: maxDate, curve, spreads: { two_s_ten_s_bps, three_m_ten_y_bps }, changes };
+}
+
+interface GoldInflationRow {
+  series_id?: string | null;
+  label?: string | null;
+  name?: string | null;
+  yoy?: number | null;
+  yoy_pct?: number | null;
+  prior_yoy?: number | null;
+  prior_yoy_pct?: number | null;
+  mom?: number | null;
+  mom_pct?: number | null;
+  trend?: string | null;
+  as_of_date?: string | null;
+  date?: string | null;
+  observation_date?: string | null;
+}
+
+async function buildInflationFromGold(store: GoldStore): Promise<{ cards: InflationCard[] } | null> {
+  const rows = await store.latest<GoldInflationRow>("inflation_explorer");
+  if (!rows.length) return null;
+
+  const cards: InflationCard[] = rows
+    .filter((r) => r.series_id)
+    .map((r) => ({
+      series_id: r.series_id as string,
+      label: r.label ?? r.name ?? (r.series_id as string),
+      yoy: finiteNumber(r.yoy ?? r.yoy_pct),
+      prior_yoy: finiteNumber(r.prior_yoy ?? r.prior_yoy_pct),
+      mom: finiteNumber(r.mom ?? r.mom_pct),
+      trend: r.trend ?? null,
+      asof: r.as_of_date ?? r.date ?? r.observation_date ?? null,
+    }));
+
+  return cards.length ? { cards } : null;
+}
+
+interface GoldRegimeDailyRow {
+  named_regime?: string | null;
+  confidence?: number | null;
+  growth_score?: number | null;
+  inflation_score?: number | null;
+  financial_conditions_score?: number | null;
+  risk_on_off_score?: number | null;
+  liquidity_score?: number | null;
+  composite_score?: number | null;
+  date?: string | null;
+  observation_date?: string | null;
+}
+
+function regimeScoreLabel(score: number | null, labels: [string, string, string]): string {
+  if (score === null) return labels[1];
+  if (score >= 15) return labels[0];
+  if (score <= -15) return labels[2];
+  return labels[1];
+}
+
+async function buildRegimeFromGold(store: GoldStore): Promise<RegimeView | null> {
+  const rows = await store.latest<GoldRegimeDailyRow>("macro_regime_daily");
+  if (!rows.length) return null;
+
+  const r = [...rows].sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""))[0];
+  const asof = r.date ?? r.observation_date ?? "";
+  const growth = r.growth_score ?? null;
+  const inflation = r.inflation_score ?? null;
+  const finCond = r.financial_conditions_score ?? null;
+  const riskScore = r.risk_on_off_score ?? growth;
+  const liquidityScore = r.liquidity_score ?? (finCond !== null ? -finCond : null);
+
+  const scores = [growth, inflation, finCond].filter((s): s is number => s !== null);
+  const compositeScore = r.composite_score ?? (scores.length ? scores.reduce((a, v) => a + v, 0) / scores.length : null);
+
+  const namedRegime = r.named_regime ?? "UNKNOWN";
+  const growthDesc = growth !== null && growth >= 10 ? "expansion" : growth !== null && growth <= -10 ? "contraction" : "flat";
+  const inflDesc = inflation !== null && inflation >= 10 ? "elevated" : inflation !== null && inflation <= -10 ? "low" : "moderate";
+  const narrative = `Regime: ${namedRegime}. Growth is ${growthDesc}, inflation is ${inflDesc}. Confidence: ${r.confidence != null ? r.confidence.toFixed(0) : "N/A"}%.`;
+
+  return {
+    asof,
+    risk_on_off: { score: riskScore ?? 0, label: regimeScoreLabel(riskScore, ["RISK-ON", "NEUTRAL", "RISK-OFF"]) },
+    inflation_pressure: { score: inflation ?? 0, label: regimeScoreLabel(inflation, ["ELEVATED", "MODERATE", "LOW"]) },
+    growth_momentum: { score: growth ?? 0, label: regimeScoreLabel(growth, ["EXPANSION", "FLAT", "CONTRACTION"]) },
+    liquidity: { score: liquidityScore ?? 0, label: regimeScoreLabel(liquidityScore, ["AMPLE", "NEUTRAL", "TIGHT"]) },
+    composite: { score: compositeScore ?? 0, label: namedRegime },
+    narrative,
+  };
+}
+
 function computedView(view: MarketView, rows: MarketObservation[], basis: ReturnBasis): ComputedView | null {
   if (!rows.length) return null;
   const market = marketSnapshotFromObservations(rows, basis);
@@ -479,16 +561,6 @@ function goldEquityRowsToObservations(rows: GoldEquityRow[], basis: ReturnBasis,
     .sort((a, b) => a.series_id.localeCompare(b.series_id) || a.date.localeCompare(b.date));
 }
 
-/** Read one view's JSON payload from a local directory of exported files. */
-async function readFromDir(dir: string, view: MarketView, basis: ReturnBasis): Promise<unknown | null> {
-  const filename = basis === "price" ? PRICE_FILE_NAME[view] ?? FILE_NAME[view] : FILE_NAME[view];
-  try {
-    const raw = await readFile(path.join(dir, filename), "utf8");
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
 
 function extractEarliestAsOf(data: unknown, view: MarketView): string | null {
   const d = data as any;
@@ -586,12 +658,8 @@ function filterSnapshotByAsOf(data: unknown, view: MarketView, asof: string): un
 /**
  * GET /api/market/[view]
  *
- * Resolves a market_data_pipeline view from the first configured source:
- *   1. MARKET_DB_URL    — local DuckDB file or Postgres `analytics_api_views`  → source "DB"
- *   2. MARKET_DATA_DIR  — directory of exported view JSON (`mdp export-views`) → source "FILE"
- *   3. MARKET_PIPELINE_URL — the running FastAPI service                       → source "LIVE"
- *   4. committed build-time snapshot, only when explicitly enabled             → source "SNAPSHOT"
- *
+ * Reads market views from the Gold DB (MACRO_DB_URL) via goldStore, then falls
+ * back to the committed build-time snapshot when explicitly enabled.
  * Always 200 with a `source` field so the UI renders uniformly and never blocks.
  */
 export async function GET(req: Request, { params }: { params: { view: string } }) {
@@ -601,7 +669,6 @@ export async function GET(req: Request, { params }: { params: { view: string } }
   }
   const basis = returnBasis(req);
   const asof = asOfDate(req);
-  const viewKey = dbView(view, basis);
 
   // 0a. Gold DB (MACRO_DB_URL) — EDA analytics tables
   if (goldEnabled() && view === "eda") {
@@ -655,62 +722,46 @@ export async function GET(req: Request, { params }: { params: { view: string } }
     }
   }
 
-  // 1. local database (DuckDB file or Postgres)
-  const dbUrl = process.env.MARKET_DB_URL;
-  if (dbUrl) {
+  // 0c. Gold DB (MACRO_DB_URL) — rates: treasury curve + spreads + changes
+  if (goldEnabled() && view === "rates") {
     try {
-      if (asof && ["market", "cross-asset", "bilello", "index-returns"].includes(view)) {
-        const rows = await readMarketObservations(dbUrl, basis, asof);
-        const data = computedView(view, rows, basis);
-        if (data) {
-          const earliestAsOf = extractEarliestAsOf(data, view);
-          return json({ source: "DB", view, basis, asof, earliestAsOf, data });
-        }
-      }
-      const data = await readFromDb(dbUrl, viewKey);
+      const data = await buildRatesFromGold(goldStore());
       if (data) {
-        const earliestAsOf = extractEarliestAsOf(data, view);
-        return json({ source: "DB", view, basis, earliestAsOf, data });
+        return json({ source: "DB", view, basis, earliestAsOf: null, data });
       }
+      console.warn("[market] Gold DB returned no curve rows for view 'rates'");
     } catch (err) {
-      // Connection/auth/SSL/query failure — log it (the route otherwise falls
-      // back to the snapshot silently, hiding why MARKET_DB_URL didn't work).
-      console.warn(`[market] MARKET_DB_URL read failed for view '${viewKey}': ${(err as Error).message}`);
+      console.warn(`[market] Gold DB read failed for view 'rates': ${(err as Error).message}`);
     }
   }
 
-  // 2. local exported-file cache
-  const dir = process.env.MARKET_DATA_DIR;
-  if (dir) {
-    const data = await readFromDir(dir, view, basis);
-    if (data) {
-      const earliestAsOf = extractEarliestAsOf(data, view);
-      const filtered = asof ? filterSnapshotByAsOf(data, view, asof) : data;
-      return json({ source: "FILE", view, basis, ...(asof ? { asof } : {}), earliestAsOf, data: filtered });
-    }
-  }
-
-  // 3. live FastAPI service
-  const base = process.env.MARKET_PIPELINE_URL;
-  if (base && basis === "total" && ENDPOINT[view]) {
+  // 0d. Gold DB (MACRO_DB_URL) — inflation: inflation_explorer cards
+  if (goldEnabled() && view === "inflation") {
     try {
-      const r = await fetch(`${base.replace(/\/$/, "")}${ENDPOINT[view]}`, {
-        signal: AbortSignal.timeout(4000),
-        cache: "no-store",
-      });
-      if (r.ok) {
-        const livePayload = await r.json();
-        const earliestAsOf = extractEarliestAsOf(livePayload, view);
-        const filtered = asof ? filterSnapshotByAsOf(livePayload, view, asof) : livePayload;
-        return json({ source: "LIVE", view, basis, ...(asof ? { asof } : {}), earliestAsOf, data: filtered });
+      const data = await buildInflationFromGold(goldStore());
+      if (data) {
+        return json({ source: "DB", view, basis, earliestAsOf: null, data });
       }
-      console.warn(`[market] MARKET_PIPELINE_URL returned HTTP ${r.status} for ${ENDPOINT[view]}`);
+      console.warn("[market] Gold DB returned no inflation_explorer rows for view 'inflation'");
     } catch (err) {
-      console.warn(`[market] MARKET_PIPELINE_URL fetch failed for ${ENDPOINT[view]}: ${(err as Error).message}`);
+      console.warn(`[market] Gold DB read failed for view 'inflation': ${(err as Error).message}`);
     }
   }
 
-  // 4. committed build-time snapshot
+  // 0e. Gold DB (MACRO_DB_URL) — regime: macro_regime_daily scores
+  if (goldEnabled() && view === "regime") {
+    try {
+      const data = await buildRegimeFromGold(goldStore());
+      if (data) {
+        return json({ source: "DB", view, basis, earliestAsOf: null, data });
+      }
+      console.warn("[market] Gold DB returned no regime rows for view 'regime'");
+    } catch (err) {
+      console.warn(`[market] Gold DB read failed for view 'regime': ${(err as Error).message}`);
+    }
+  }
+
+  // Committed build-time snapshot fallback
   if (!snapshotFallbackEnabled(req)) {
     return json({
       source: "SNAPSHOT_DISABLED",
