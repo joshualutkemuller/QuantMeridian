@@ -1,5 +1,5 @@
 import { json } from "@/lib/server/http";
-import { goldEnabled, goldStore, goldTable, goldParam } from "@/lib/server/goldStore";
+import { goldEnabled, goldStore, goldTable, goldParam, type GoldStore } from "@/lib/server/goldStore";
 import { buildEdaFromGold } from "@/lib/server/goldEda";
 import {
   PRICE_SNAPSHOTS,
@@ -11,6 +11,9 @@ import {
   type BilelloView,
   type IndexReturnsView,
   type IndexReturnMatrix,
+  type RatesView,
+  type InflationCard,
+  type RegimeView,
 } from "@/data/marketPipeline";
 
 /** Market-snapshot view computed from observations: return basis + per-series cards. */
@@ -302,6 +305,206 @@ function indexReturnsFromRows(rows: MarketObservation[], basis: ReturnBasis): In
   return { return_basis: basis, asof: latest, indices: INDEX_MAP.map(([symbol, proxy, name, base, drift, vol]) => ({ symbol, proxy, name, base, drift, vol })), matrices };
 }
 
+// ---------------------------------------------------------------------------
+// Gold DB builders for rates / inflation / regime
+// ---------------------------------------------------------------------------
+
+function addDays(dateStr: string, days: number): string {
+  const d = new Date(dateStr + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().split("T")[0];
+}
+
+const TENOR_TO_SERIES: Record<string, string> = {
+  "1M": "DGS1MO", "3M": "DGS3MO", "6M": "DGS6MO",
+  "1Y": "DGS1", "2Y": "DGS2", "3Y": "DGS3", "5Y": "DGS5",
+  "7Y": "DGS7", "10Y": "DGS10", "20Y": "DGS20", "30Y": "DGS30",
+};
+
+const TENOR_CHANGE_LABEL: Record<string, string> = {
+  "1M": "1-Month", "3M": "3-Month", "6M": "6-Month",
+  "1Y": "1-Year", "2Y": "2-Year", "3Y": "3-Year", "5Y": "5-Year",
+  "7Y": "7-Year", "10Y": "10-Year", "20Y": "20-Year", "30Y": "30-Year",
+};
+
+const TENOR_ORDER = ["1M", "3M", "6M", "1Y", "2Y", "3Y", "5Y", "7Y", "10Y", "20Y", "30Y"];
+
+interface GoldCurveHistoryRow {
+  as_of_date: string;
+  tenor?: string;
+  tenor_label?: string;
+  tenor_months?: number;
+  yield_pct: number;
+}
+
+async function buildRatesFromGold(store: GoldStore): Promise<RatesView | null> {
+  const today = new Date().toISOString().split("T")[0];
+  const cutoff = addDays(today, -400); // covers 3M changes + YTD from Jan 1
+
+  const rows = await store.raw<GoldCurveHistoryRow>(
+    `SELECT as_of_date, tenor, tenor_label, tenor_months, yield_pct FROM ${goldTable("treasury_curve")} WHERE as_of_date >= ${goldParam(1)} ORDER BY as_of_date ASC`,
+    [cutoff]
+  );
+  if (!rows.length) return null;
+
+  // Group by tenor, collecting sorted date+yield pairs
+  const byTenor = new Map<string, { dates: string[]; yields: number[] }>();
+  for (const row of rows) {
+    const tenor = row.tenor ?? row.tenor_label ?? "";
+    if (!tenor) continue;
+    const entry = byTenor.get(tenor) ?? { dates: [], yields: [] };
+    entry.dates.push(row.as_of_date);
+    entry.yields.push(row.yield_pct);
+    byTenor.set(tenor, entry);
+  }
+  if (!byTenor.size) return null;
+
+  const maxDate = rows[rows.length - 1].as_of_date;
+  const d1 = addDays(maxDate, -1);
+  const d7 = addDays(maxDate, -7);
+  const d30 = addDays(maxDate, -30);
+  const d90 = addDays(maxDate, -90);
+  const ytdBase = `${maxDate.slice(0, 4)}-01-01`;
+
+  function lookback(dates: string[], yields: number[], target: string): number | null {
+    for (let i = dates.length - 2; i >= 0; i--) {
+      if (dates[i] <= target) return yields[i];
+    }
+    return null;
+  }
+
+  function bps(latest: number, base: number | null): number | null {
+    return base !== null ? Number(((latest - base) * 100).toFixed(1)) : null;
+  }
+
+  const curve: RatesView["curve"] = [];
+  const changes: RatesView["changes"] = [];
+
+  for (const tenor of TENOR_ORDER) {
+    const entry = byTenor.get(tenor);
+    if (!entry) continue;
+    const { dates, yields } = entry;
+    const seriesId = TENOR_TO_SERIES[tenor] ?? tenor;
+    const label = TENOR_CHANGE_LABEL[tenor] ?? tenor;
+    const latestYield = yields[yields.length - 1];
+
+    if (dates[dates.length - 1] === maxDate) {
+      curve.push({ series_id: seriesId, tenor, label: tenor, yield: Number(latestYield.toFixed(2)) });
+    }
+
+    changes.push({
+      series_id: seriesId,
+      label,
+      latest: Number(latestYield.toFixed(2)),
+      chg_1d_bps: bps(latestYield, lookback(dates, yields, d1)),
+      chg_1w_bps: bps(latestYield, lookback(dates, yields, d7)),
+      chg_1m_bps: bps(latestYield, lookback(dates, yields, d30)),
+      chg_3m_bps: bps(latestYield, lookback(dates, yields, d90)),
+      chg_ytd_bps: bps(latestYield, lookback(dates, yields, ytdBase)),
+    });
+  }
+
+  if (!curve.length) return null;
+
+  const twoY = byTenor.get("2Y");
+  const tenY = byTenor.get("10Y");
+  const threeM = byTenor.get("3M");
+  const two_s_ten_s_bps = twoY && tenY
+    ? Number(((tenY.yields[tenY.yields.length - 1] - twoY.yields[twoY.yields.length - 1]) * 100).toFixed(1))
+    : null;
+  const three_m_ten_y_bps = threeM && tenY
+    ? Number(((tenY.yields[tenY.yields.length - 1] - threeM.yields[threeM.yields.length - 1]) * 100).toFixed(1))
+    : null;
+
+  return { asof: maxDate, curve, spreads: { two_s_ten_s_bps, three_m_ten_y_bps }, changes };
+}
+
+interface GoldInflationRow {
+  series_id?: string | null;
+  label?: string | null;
+  name?: string | null;
+  yoy?: number | null;
+  yoy_pct?: number | null;
+  prior_yoy?: number | null;
+  prior_yoy_pct?: number | null;
+  mom?: number | null;
+  mom_pct?: number | null;
+  trend?: string | null;
+  as_of_date?: string | null;
+  date?: string | null;
+  observation_date?: string | null;
+}
+
+async function buildInflationFromGold(store: GoldStore): Promise<{ cards: InflationCard[] } | null> {
+  const rows = await store.latest<GoldInflationRow>("inflation_explorer");
+  if (!rows.length) return null;
+
+  const cards: InflationCard[] = rows
+    .filter((r) => r.series_id)
+    .map((r) => ({
+      series_id: r.series_id as string,
+      label: r.label ?? r.name ?? (r.series_id as string),
+      yoy: finiteNumber(r.yoy ?? r.yoy_pct),
+      prior_yoy: finiteNumber(r.prior_yoy ?? r.prior_yoy_pct),
+      mom: finiteNumber(r.mom ?? r.mom_pct),
+      trend: r.trend ?? null,
+      asof: r.as_of_date ?? r.date ?? r.observation_date ?? null,
+    }));
+
+  return cards.length ? { cards } : null;
+}
+
+interface GoldRegimeDailyRow {
+  named_regime?: string | null;
+  confidence?: number | null;
+  growth_score?: number | null;
+  inflation_score?: number | null;
+  financial_conditions_score?: number | null;
+  risk_on_off_score?: number | null;
+  liquidity_score?: number | null;
+  composite_score?: number | null;
+  date?: string | null;
+  observation_date?: string | null;
+}
+
+function regimeScoreLabel(score: number | null, labels: [string, string, string]): string {
+  if (score === null) return labels[1];
+  if (score >= 15) return labels[0];
+  if (score <= -15) return labels[2];
+  return labels[1];
+}
+
+async function buildRegimeFromGold(store: GoldStore): Promise<RegimeView | null> {
+  const rows = await store.latest<GoldRegimeDailyRow>("macro_regime_daily");
+  if (!rows.length) return null;
+
+  const r = [...rows].sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""))[0];
+  const asof = r.date ?? r.observation_date ?? "";
+  const growth = r.growth_score ?? null;
+  const inflation = r.inflation_score ?? null;
+  const finCond = r.financial_conditions_score ?? null;
+  const riskScore = r.risk_on_off_score ?? growth;
+  const liquidityScore = r.liquidity_score ?? (finCond !== null ? -finCond : null);
+
+  const scores = [growth, inflation, finCond].filter((s): s is number => s !== null);
+  const compositeScore = r.composite_score ?? (scores.length ? scores.reduce((a, v) => a + v, 0) / scores.length : null);
+
+  const namedRegime = r.named_regime ?? "UNKNOWN";
+  const growthDesc = growth !== null && growth >= 10 ? "expansion" : growth !== null && growth <= -10 ? "contraction" : "flat";
+  const inflDesc = inflation !== null && inflation >= 10 ? "elevated" : inflation !== null && inflation <= -10 ? "low" : "moderate";
+  const narrative = `Regime: ${namedRegime}. Growth is ${growthDesc}, inflation is ${inflDesc}. Confidence: ${r.confidence != null ? r.confidence.toFixed(0) : "N/A"}%.`;
+
+  return {
+    asof,
+    risk_on_off: { score: riskScore ?? 0, label: regimeScoreLabel(riskScore, ["RISK-ON", "NEUTRAL", "RISK-OFF"]) },
+    inflation_pressure: { score: inflation ?? 0, label: regimeScoreLabel(inflation, ["ELEVATED", "MODERATE", "LOW"]) },
+    growth_momentum: { score: growth ?? 0, label: regimeScoreLabel(growth, ["EXPANSION", "FLAT", "CONTRACTION"]) },
+    liquidity: { score: liquidityScore ?? 0, label: regimeScoreLabel(liquidityScore, ["AMPLE", "NEUTRAL", "TIGHT"]) },
+    composite: { score: compositeScore ?? 0, label: namedRegime },
+    narrative,
+  };
+}
+
 function computedView(view: MarketView, rows: MarketObservation[], basis: ReturnBasis): ComputedView | null {
   if (!rows.length) return null;
   const market = marketSnapshotFromObservations(rows, basis);
@@ -516,6 +719,45 @@ export async function GET(req: Request, { params }: { params: { view: string } }
       }
     } catch (err) {
       console.warn(`[market] Gold DB read failed for view '${view}': ${(err as Error).message}`);
+    }
+  }
+
+  // 0c. Gold DB (MACRO_DB_URL) — rates: treasury curve + spreads + changes
+  if (goldEnabled() && view === "rates") {
+    try {
+      const data = await buildRatesFromGold(goldStore());
+      if (data) {
+        return json({ source: "DB", view, basis, earliestAsOf: null, data });
+      }
+      console.warn("[market] Gold DB returned no curve rows for view 'rates'");
+    } catch (err) {
+      console.warn(`[market] Gold DB read failed for view 'rates': ${(err as Error).message}`);
+    }
+  }
+
+  // 0d. Gold DB (MACRO_DB_URL) — inflation: inflation_explorer cards
+  if (goldEnabled() && view === "inflation") {
+    try {
+      const data = await buildInflationFromGold(goldStore());
+      if (data) {
+        return json({ source: "DB", view, basis, earliestAsOf: null, data });
+      }
+      console.warn("[market] Gold DB returned no inflation_explorer rows for view 'inflation'");
+    } catch (err) {
+      console.warn(`[market] Gold DB read failed for view 'inflation': ${(err as Error).message}`);
+    }
+  }
+
+  // 0e. Gold DB (MACRO_DB_URL) — regime: macro_regime_daily scores
+  if (goldEnabled() && view === "regime") {
+    try {
+      const data = await buildRegimeFromGold(goldStore());
+      if (data) {
+        return json({ source: "DB", view, basis, earliestAsOf: null, data });
+      }
+      console.warn("[market] Gold DB returned no regime rows for view 'regime'");
+    } catch (err) {
+      console.warn(`[market] Gold DB read failed for view 'regime': ${(err as Error).message}`);
     }
   }
 
