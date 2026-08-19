@@ -1,6 +1,4 @@
 import { json } from "@/lib/server/http";
-import { readFile } from "fs/promises";
-import path from "path";
 import { goldEnabled, goldStore, goldTable, goldParam } from "@/lib/server/goldStore";
 import { buildEdaFromGold } from "@/lib/server/goldEda";
 import {
@@ -25,37 +23,6 @@ type ComputedView = MarketSnapshotView | CrossAsset | BilelloView | IndexReturns
 
 export const runtime = "nodejs"; // needs fs + optional native DB drivers
 
-/** FastAPI path for each terminal view (market_data_pipeline endpoints). */
-const ENDPOINT: Record<MarketView, string> = {
-  market: "/snapshot/market",
-  "cross-asset": "/snapshot/cross-asset",
-  rates: "/snapshot/rates",
-  inflation: "/snapshot/inflation",
-  regime: "/dashboard/regime",
-  bilello: "/dashboard/bilello",
-  "index-returns": "",
-  eda: "/dashboard/eda",
-};
-
-/** Exported-JSON filename for each view (matches `mdp export-views`). */
-const FILE_NAME: Record<MarketView, string> = {
-  market: "market_snapshot.json",
-  "cross-asset": "cross_asset.json",
-  rates: "rates.json",
-  inflation: "inflation.json",
-  regime: "regime.json",
-  bilello: "bilello.json",
-  "index-returns": "index_returns.json",
-  eda: "eda.json",
-};
-
-const PRICE_FILE_NAME: Partial<Record<MarketView, string>> = {
-  market: "market_snapshot_price.json",
-  "cross-asset": "cross_asset_price.json",
-  regime: "regime_price.json",
-  bilello: "bilello_price.json",
-  "index-returns": "index_returns_price.json",
-};
 
 function returnBasis(req: Request): ReturnBasis {
   return new URL(req.url).searchParams.get("basis") === "price" ? "price" : "total";
@@ -72,81 +39,12 @@ function snapshotFallbackEnabled(req: Request): boolean {
   return process.env.MARKET_SNAPSHOT_FALLBACK === "1";
 }
 
-function dbView(view: MarketView, basis: ReturnBasis): string {
-  return basis === "price" && view in PRICE_SNAPSHOTS ? `${view}:price` : view;
-}
 
 function snapshotFor(view: MarketView, basis: ReturnBasis): unknown {
   if (basis === "price" && view in PRICE_SNAPSHOTS) return PRICE_SNAPSHOTS[view as keyof typeof PRICE_SNAPSHOTS];
   return SNAPSHOTS[view];
 }
 
-/** Require an optional module at runtime without the bundler resolving it. */
-function optionalRequire(name: string): any {
-  try {
-    // eslint-disable-next-line no-eval
-    return (eval("require") as NodeRequire)(name);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Read one view's JSON payload from the pipeline's `analytics_api_views` table.
- * Supports a local DuckDB file (`*.duckdb` / `duckdb:<path>`) or Postgres
- * (`postgres://…`). Drivers are optional — install `duckdb` or `pg` to use them.
- */
-async function readFromDb(dbUrl: string, view: string): Promise<unknown | null> {
-  const isPg = /^postgres(ql)?:\/\//.test(dbUrl);
-  if (isPg) {
-    const pg = optionalRequire("pg");
-    if (!pg) {
-      console.warn("[market] MARKET_DB_URL is Postgres but the 'pg' driver isn't available in this runtime");
-      return null;
-    }
-    const client = new pg.Client({ connectionString: dbUrl });
-    try {
-      await client.connect();
-      const r = await client.query(
-        "SELECT payload_json FROM analytics_api_views WHERE view = $1",
-        [view]
-      );
-      if (!r.rows[0]?.payload_json) {
-        console.warn(`[market] connected to Postgres, but analytics_api_views has no row for view '${view}' — run 'publish-views' to populate it`);
-        return null;
-      }
-      return JSON.parse(r.rows[0].payload_json);
-    } finally {
-      await client.end().catch(() => {});
-    }
-  }
-
-  // DuckDB file
-  const duckdb = optionalRequire("duckdb");
-  if (!duckdb) {
-    console.warn("[market] MARKET_DB_URL is a DuckDB file but the 'duckdb' driver isn't installed (run `npm i duckdb`)");
-    return null;
-  }
-  const file = dbUrl.replace(/^duckdb:/, "");
-  const db = new duckdb.Database(file, duckdb.OPEN_READONLY ?? 1);
-  const con = db.connect();
-  try {
-    const rows: any[] = await new Promise((resolve, reject) =>
-      con.all(
-        "SELECT payload_json FROM analytics_api_views WHERE view = ?",
-        view,
-        (err: Error | null, res: any[]) => (err ? reject(err) : resolve(res))
-      )
-    );
-    if (!rows[0]?.payload_json) {
-      console.warn(`[market] DuckDB opened, but analytics_api_views has no row for view '${view}' — run 'publish-views'/'export-views'`);
-      return null;
-    }
-    return JSON.parse(rows[0].payload_json);
-  } finally {
-    db.close();
-  }
-}
 
 interface MarketObservation {
   series_id: string;
@@ -158,25 +56,6 @@ interface MarketObservation {
   price?: number;
 }
 
-async function readMarketObservations(dbUrl: string, basis: ReturnBasis, asof: string): Promise<MarketObservation[]> {
-  if (!/^postgres(ql)?:\/\//.test(dbUrl)) return [];
-  const pg = optionalRequire("pg");
-  if (!pg) return [];
-  const client = new pg.Client({ connectionString: dbUrl });
-  try {
-    await client.connect();
-    const r = await client.query(
-      `SELECT series_id, display_name, asset_class, source, date::text AS date, value
-       FROM market_series_observations
-       WHERE basis = $1 AND date <= $2
-       ORDER BY series_id, date`,
-      [basis, asof]
-    );
-    return r.rows.map((row: any) => ({ ...row, value: Number(row.value) })).filter((row: MarketObservation) => Number.isFinite(row.value));
-  } finally {
-    await client.end().catch(() => {});
-  }
-}
 
 function groupObs(rows: MarketObservation[]): Map<string, MarketObservation[]> {
   const grouped = new Map<string, MarketObservation[]>();
@@ -479,16 +358,6 @@ function goldEquityRowsToObservations(rows: GoldEquityRow[], basis: ReturnBasis,
     .sort((a, b) => a.series_id.localeCompare(b.series_id) || a.date.localeCompare(b.date));
 }
 
-/** Read one view's JSON payload from a local directory of exported files. */
-async function readFromDir(dir: string, view: MarketView, basis: ReturnBasis): Promise<unknown | null> {
-  const filename = basis === "price" ? PRICE_FILE_NAME[view] ?? FILE_NAME[view] : FILE_NAME[view];
-  try {
-    const raw = await readFile(path.join(dir, filename), "utf8");
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
-}
 
 function extractEarliestAsOf(data: unknown, view: MarketView): string | null {
   const d = data as any;
@@ -586,12 +455,8 @@ function filterSnapshotByAsOf(data: unknown, view: MarketView, asof: string): un
 /**
  * GET /api/market/[view]
  *
- * Resolves a market_data_pipeline view from the first configured source:
- *   1. MARKET_DB_URL    — local DuckDB file or Postgres `analytics_api_views`  → source "DB"
- *   2. MARKET_DATA_DIR  — directory of exported view JSON (`mdp export-views`) → source "FILE"
- *   3. MARKET_PIPELINE_URL — the running FastAPI service                       → source "LIVE"
- *   4. committed build-time snapshot, only when explicitly enabled             → source "SNAPSHOT"
- *
+ * Reads market views from the Gold DB (MACRO_DB_URL) via goldStore, then falls
+ * back to the committed build-time snapshot when explicitly enabled.
  * Always 200 with a `source` field so the UI renders uniformly and never blocks.
  */
 export async function GET(req: Request, { params }: { params: { view: string } }) {
@@ -601,7 +466,6 @@ export async function GET(req: Request, { params }: { params: { view: string } }
   }
   const basis = returnBasis(req);
   const asof = asOfDate(req);
-  const viewKey = dbView(view, basis);
 
   // 0a. Gold DB (MACRO_DB_URL) — EDA analytics tables
   if (goldEnabled() && view === "eda") {
@@ -655,62 +519,7 @@ export async function GET(req: Request, { params }: { params: { view: string } }
     }
   }
 
-  // 1. local database (DuckDB file or Postgres)
-  const dbUrl = process.env.MARKET_DB_URL;
-  if (dbUrl) {
-    try {
-      if (asof && ["market", "cross-asset", "bilello", "index-returns"].includes(view)) {
-        const rows = await readMarketObservations(dbUrl, basis, asof);
-        const data = computedView(view, rows, basis);
-        if (data) {
-          const earliestAsOf = extractEarliestAsOf(data, view);
-          return json({ source: "DB", view, basis, asof, earliestAsOf, data });
-        }
-      }
-      const data = await readFromDb(dbUrl, viewKey);
-      if (data) {
-        const earliestAsOf = extractEarliestAsOf(data, view);
-        return json({ source: "DB", view, basis, earliestAsOf, data });
-      }
-    } catch (err) {
-      // Connection/auth/SSL/query failure — log it (the route otherwise falls
-      // back to the snapshot silently, hiding why MARKET_DB_URL didn't work).
-      console.warn(`[market] MARKET_DB_URL read failed for view '${viewKey}': ${(err as Error).message}`);
-    }
-  }
-
-  // 2. local exported-file cache
-  const dir = process.env.MARKET_DATA_DIR;
-  if (dir) {
-    const data = await readFromDir(dir, view, basis);
-    if (data) {
-      const earliestAsOf = extractEarliestAsOf(data, view);
-      const filtered = asof ? filterSnapshotByAsOf(data, view, asof) : data;
-      return json({ source: "FILE", view, basis, ...(asof ? { asof } : {}), earliestAsOf, data: filtered });
-    }
-  }
-
-  // 3. live FastAPI service
-  const base = process.env.MARKET_PIPELINE_URL;
-  if (base && basis === "total" && ENDPOINT[view]) {
-    try {
-      const r = await fetch(`${base.replace(/\/$/, "")}${ENDPOINT[view]}`, {
-        signal: AbortSignal.timeout(4000),
-        cache: "no-store",
-      });
-      if (r.ok) {
-        const livePayload = await r.json();
-        const earliestAsOf = extractEarliestAsOf(livePayload, view);
-        const filtered = asof ? filterSnapshotByAsOf(livePayload, view, asof) : livePayload;
-        return json({ source: "LIVE", view, basis, ...(asof ? { asof } : {}), earliestAsOf, data: filtered });
-      }
-      console.warn(`[market] MARKET_PIPELINE_URL returned HTTP ${r.status} for ${ENDPOINT[view]}`);
-    } catch (err) {
-      console.warn(`[market] MARKET_PIPELINE_URL fetch failed for ${ENDPOINT[view]}: ${(err as Error).message}`);
-    }
-  }
-
-  // 4. committed build-time snapshot
+  // Committed build-time snapshot fallback
   if (!snapshotFallbackEnabled(req)) {
     return json({
       source: "SNAPSHOT_DISABLED",

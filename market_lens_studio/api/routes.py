@@ -46,7 +46,6 @@ from market_lens_studio.config.schemas import (
 )
 from market_lens_studio.data.adapters.fred_adapter import FredAdapter
 from market_lens_studio.data.adapters.proxy_resolver import ProxyResolver
-from market_lens_studio.data.adapters.yahoo_adapter import YahooAdapter
 from market_lens_studio.data.lineage import LineageTracker
 from market_lens_studio.data.series_catalog import (
     SERIES_CATALOG,
@@ -125,14 +124,9 @@ def _fetch_series(
     end_date: Optional[date] = None,
 ) -> tuple[list[date], list[float]]:
     """Fetch a data series using the appropriate adapter."""
-    if source == "fred":
-        adapter = FredAdapter()
-        fid = get_fred_id(series_id) or ticker
-        return adapter.fetch_series(fid, start_date, end_date, series_id)
-    else:
-        adapter = YahooAdapter()
-        yticker = get_yahoo_ticker(series_id) or ticker
-        return adapter.fetch_series(yticker, start_date, end_date, series_id)
+    adapter = FredAdapter()
+    fid = get_fred_id(series_id) or ticker
+    return adapter.fetch_series(fid, start_date, end_date, series_id)
 
 
 def _clean_dict(d: Any) -> Any:
