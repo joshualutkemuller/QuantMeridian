@@ -102,7 +102,7 @@ export const PRESET_BLENDS: CustomBlend[] = [
     components: [
       { seriesId: "SOFR", weight: 0.5, label: "SOFR" },
       { seriesId: "BGCR", weight: 0.3, label: "BGCR" },
-      { seriesId: "TGCR", weight: 0.2, label: "TGCR" },
+      { seriesId: "TGCRRATE", weight: 0.2, label: "TGCR" },
     ],
     spreadBps: 0,
     description: "Weighted average of secured overnight rates — proxy for GC repo funding cost",

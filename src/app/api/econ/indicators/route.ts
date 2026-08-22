@@ -136,6 +136,23 @@ function buildInflationMetrics(
   const values = rows.map((r) => r.value);
   const indexValue = values[values.length - 1];
   const prior = values[values.length - 2];
+  const resolved = resolveFred(s.id);
+  const isAlreadyRate = resolved.units === "lin"
+    && s.unit.includes("%")
+    && (s.unit.includes("y/y") || s.unit.includes("m/m") || s.unit.includes("ann."));
+  if (isAlreadyRate) {
+    const value = Number(indexValue.toFixed(s.decimals));
+    const priorValue = Number(prior.toFixed(s.decimals));
+    const rateSlot = s.unit.includes("m/m") ? "mom" : "yoy";
+    return {
+      indexValue: null,
+      mom: rateSlot === "mom" ? value : null,
+      momDelta: rateSlot === "mom" ? ppDelta(value, priorValue) : null,
+      yoy: rateSlot === "yoy" ? value : null,
+      yoyDelta: rateSlot === "yoy" ? ppDelta(value, priorValue) : null,
+      monthlyPrint: rateSlot === "mom" ? value : null,
+    };
+  }
   const mom = s.freq === "M" ? pct(indexValue, prior, 2) : null;
   const priorMom = s.freq === "M" && values.length >= 3 ? pct(prior, values[values.length - 3], 2) : null;
   const yoyLag = s.freq === "M" ? 13 : s.freq === "Q" ? 5 : null;

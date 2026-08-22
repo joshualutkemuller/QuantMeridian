@@ -36,7 +36,7 @@ export const FUNDING_SERIES: FundingDef[] = [
   { id: "OBFR", short: "OBFR", label: "Overnight Bank Funding Rate", group: "Overnight", unit: "%", decimals: 2, hasFred: true, anchor: 4.84, vol: 0.006, drift: 0 },
   { id: "SOFR", short: "SOFR", label: "Secured Overnight Financing Rate", group: "Overnight", unit: "%", decimals: 2, hasFred: true, anchor: 4.82, vol: 0.02, drift: 0 },
   { id: "BGCR", short: "BGCR", label: "Broad General Collateral Rate", group: "Overnight", unit: "%", decimals: 2, hasFred: true, anchor: 4.8, vol: 0.018, drift: 0 },
-  { id: "TGCR", short: "TGCR", label: "Tri-Party General Collateral Rate", group: "Overnight", unit: "%", decimals: 2, hasFred: true, anchor: 4.79, vol: 0.018, drift: 0 },
+  { id: "TGCRRATE", short: "TGCR", label: "Tri-Party General Collateral Rate", group: "Overnight", unit: "%", decimals: 2, hasFred: true, anchor: 4.79, vol: 0.018, drift: 0 },
   // Balances
   { id: "RRPONTSYD", short: "RRP", label: "Overnight Reverse Repo (take-up)", group: "Balances", unit: "$B", decimals: 0, hasFred: true, anchor: 470, vol: 18, drift: -0.4 },
   { id: "WRESBAL", short: "Reserves", label: "Reserve Balances at the Fed", group: "Balances", unit: "$T", decimals: 2, hasFred: true, anchor: 3.25, vol: 0.012, drift: -0.0006 },
@@ -155,7 +155,7 @@ export function computeSpreads(map: SeriesMap): SpreadRow[] {
   const rows: { id: string; label: string; desc: string; a: string; b: string; stressHigh: boolean }[] = [
     { id: "sofr_effr", label: "SOFR − EFFR", desc: "Secured vs unsecured o/n; wide = repo pressure", a: "SOFR", b: "EFFR", stressHigh: true },
     { id: "sofr_iorb", label: "SOFR − IORB", desc: "Repo vs admin floor; rising toward 0 = tightening", a: "SOFR", b: "IORB", stressHigh: true },
-    { id: "gc_ois", label: "GC − OIS", desc: "Tri-party GC vs fed funds; wide = collateral pressure", a: "TGCR", b: "EFFR", stressHigh: true },
+    { id: "gc_ois", label: "GC − OIS", desc: "Tri-party GC vs fed funds; wide = collateral pressure", a: "TGCRRATE", b: "EFFR", stressHigh: true },
     { id: "bill_ois", label: "Bill − OIS", desc: "3M bill vs fed funds; very negative = bill scarcity", a: "DTB3", b: "EFFR", stressHigh: false },
   ];
   const out = rows.map((r) => {
@@ -287,7 +287,7 @@ function fundingAction(tone: DeskSignalTone, calm: string, watch: string, stress
 
 export function computeDeskSignals(map: SeriesMap, liveIds?: Set<string>): FundingDeskSignal[] {
   const sofrEffr = diffBps(map["SOFR"], map["EFFR"]).value ?? 0;
-  const tgcrEffr = diffBps(map["TGCR"], map["EFFR"]).value ?? 0;
+  const tgcrEffr = diffBps(map["TGCRRATE"], map["EFFR"]).value ?? 0;
   const sofrIorb = diffBps(map["SOFR"], map["IORB"]).value ?? -10;
   const billOis = diffBps(map["DTB3"], map["EFFR"]).value ?? -10;
   const fra = latest(map["FRA_OIS"]) ?? 17;
@@ -321,7 +321,7 @@ export function computeDeskSignals(map: SeriesMap, liveIds?: Set<string>): Fundi
       driver: `SOFR-EFFR ${sofrEffr.toFixed(1)}bps; TGCR-EFFR ${tgcrEffr.toFixed(1)}bps`,
       derivation: "Score blends SOFR-EFFR, TGCR-EFFR, and SOFR proximity to IORB; wider secured funding spreads raise stress.",
       action: fundingAction(repoTone, "Keep GC pricing normal.", "Watch term repo prints and avoid underpricing specials funding.", "Term out funding and widen repo/financing marks."),
-      source: sourceFor(["SOFR", "EFFR", "TGCR", "IORB"], liveIds),
+      source: sourceFor(["SOFR", "EFFR", "TGCRRATE", "IORB"], liveIds),
     },
     {
       desk: "Agency",
@@ -361,7 +361,7 @@ export function computeDeskSignals(map: SeriesMap, liveIds?: Set<string>): Fundi
       driver: `TGCR-EFFR ${tgcrEffr.toFixed(1)}bps; Bill-OIS ${billOis.toFixed(1)}bps; RRP $${rrp.toFixed(0)}B`,
       derivation: "Score combines GC spread, bill scarcity, and remaining RRP liquidity buffer as a proxy for high-quality collateral tightness.",
       action: fundingAction(collateralTone, "Collateral schedule can stay standard.", "Pre-position HQLA and review haircut-sensitive exposures.", "Tighten collateral eligibility and escalate substitution requests early."),
-      source: sourceFor(["TGCR", "EFFR", "DTB3", "RRPONTSYD"], liveIds),
+      source: sourceFor(["TGCRRATE", "EFFR", "DTB3", "RRPONTSYD"], liveIds),
     },
     {
       desk: "E-Trading",
@@ -371,7 +371,7 @@ export function computeDeskSignals(map: SeriesMap, liveIds?: Set<string>): Fundi
       driver: `Prime ${primeScore}/100; collateral ${collateralScore}/100; q-end ${qe}d`,
       derivation: "Score maps funding, collateral, bank funding, and calendar pressure into an execution-liquidity caution proxy.",
       action: fundingAction(etradingTone, "Normal participation and routing assumptions.", "Use more patient execution on funding-sensitive products.", "Reduce aggression, raise slippage assumptions, and monitor ETF/credit liquidity."),
-      source: sourceFor(["SOFR", "EFFR", "TGCR", "WRESBAL"], liveIds),
+      source: sourceFor(["SOFR", "EFFR", "TGCRRATE", "WRESBAL"], liveIds),
     },
   ];
 }

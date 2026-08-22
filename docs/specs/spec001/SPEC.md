@@ -1,0 +1,380 @@
+# Spec001: Expand CPI Component Coverage
+
+## Status
+
+Draft
+
+## Owner
+
+Macro terminal / inflation explorer
+
+## Background
+
+The Inflation Explorer currently integrates 18 CPI item-level components through static definitions in `src/data/inflation.ts` and matching FRED catalog rows in `src/data/econSeries.ts`. Those definitions feed:
+
+- CPI component table and contribution bars in `src/app/economics/inflation/page.tsx`
+- live index-level fetches through `useLiveSeriesSet(allIds, "lin", 15)`
+- derived `Index`, `MoM %`, `YoY %`, `Delta MoM`, and `Delta YoY` via `liveInflationItem`
+- drill-through using `DrillProvider` with raw levels and derived growth metrics
+- key-indicator inflation fallback through `/api/econ/indicators`
+
+The local Gold DB now contains more CPI-like series than the 18 app-wired items. A direct profile of `gold_fred_latest_observation` found:
+
+- 18 existing app CPI components with observations
+- 74 CPI-like observed series matching `CUSR%`, `CUUR%`, or `CPI%`
+- 56 CPI-like observed series not currently in the app component list
+
+Important metadata caveat: `gold_dim_series` only contains 4 of the current 18 CPI components, while `gold_fred_latest_observation` contains all 18. Expansion should use `gold_fred_latest_observation` for availability and `meta_fred_series` for titles/tags, not rely only on `gold_dim_series`.
+
+## Goal
+
+Integrate additional CPI component series in the same user-facing pattern as the existing 18 CPI components:
+
+- component appears in the CPI item table
+- component has a label, weight or contribution treatment, and group membership
+- component fetches live raw index levels through the existing `lin` path
+- component derives `Index`, `MoM %`, `YoY %`, `Delta MoM`, and `Delta YoY`
+- component supports drill-through with raw level and derived metric history
+- component can optionally appear in the broader macro indicator list if it is added to `FRED_CATALOG`
+
+## Non-Goals
+
+- Do not add regional headline CPI rows as item-level components.
+- Do not add duplicate headline/core CPI rows to the item-level component list.
+- Do not mix seasonally adjusted and not-seasonally-adjusted versions of the same component in the default view without a clear toggle.
+- Do not use placeholder weights for contribution analytics without labeling the contribution as unavailable or unweighted.
+
+## Current 18 CPI Components
+
+These are currently wired in `src/data/inflation.ts` and `src/data/econSeries.ts`:
+
+| Series ID | Label |
+| --- | --- |
+| CUSR0000SAH1 | Shelter |
+| CUSR0000SEHC | Owners' Equiv. Rent |
+| CUSR0000SEHA | Rent of Primary Residence |
+| CPIUFDSL | Food |
+| CUSR0000SAF11 | Food at Home |
+| CUSR0000SEFV | Food Away from Home |
+| CPIENGSL | Energy |
+| CUSR0000SETB01 | Gasoline |
+| CUSR0000SEHF01 | Electricity |
+| CPIMEDSL | Medical Care |
+| CUSR0000SETA01 | New Vehicles |
+| CUSR0000SETA02 | Used Cars & Trucks |
+| CPIAPPSL | Apparel |
+| CPITRNSL | Transportation Services |
+| CUSR0000SEMD | Hospital Services |
+| CUSR0000SAS367 | Airline Fares |
+| CPIRECSL | Recreation |
+| CUSR0000SAE1 | Education & Communication |
+
+## Additional DB Inventory
+
+### Recommended Seasonally Adjusted National Additions
+
+Add these first. They are national CPI-U `CUSR0000...` seasonally adjusted group/component rows with live observations in Gold.
+
+| Series ID | DB Title | Suggested Label | Notes |
+| --- | --- | --- | --- |
+| CUSR0000SA0 | CPI-U All Items (SA) | All Items | Headline duplicate; use only as reference, not default component |
+| CUSR0000SA0E | CPI-U Energy (SA) | Energy | Duplicate of existing energy concept; evaluate against `CPIENGSL` |
+| CUSR0000SA0L1E | CPI-U All Items Less Food and Energy / Core (SA) | Core CPI | Headline/core duplicate; use only as reference |
+| CUSR0000SAA | CPI-U Apparel (SA) | Apparel | SA alternative to existing `CPIAPPSL` |
+| CUSR0000SAC | CPI-U Commodities (SA) | Commodities | New group |
+| CUSR0000SACL1E | CPI-U Commodities Less Food and Energy Commodities (SA) | Core Goods | New group |
+| CUSR0000SAE | CPI-U Education and Communication (SA) | Education & Communication | SA parent of existing `CUSR0000SAE1` |
+| CUSR0000SAF | CPI-U Food and Beverages (SA) | Food & Beverages | New group |
+| CUSR0000SAF1 | CPI-U Food (SA) | Food | SA alternative to existing `CPIUFDSL` |
+| CUSR0000SAG | CPI-U Other Goods and Services (SA) | Other Goods & Services | New group |
+| CUSR0000SAH | CPI-U Housing (SA) | Housing | New parent group |
+| CUSR0000SAH2 | CPI-U Fuels and Utilities (SA) | Fuels & Utilities | New component |
+| CUSR0000SAM | CPI-U Medical Care (SA) | Medical Care | SA parent of existing `CPIMEDSL` |
+| CUSR0000SAM1 | CPI-U Medical Care Commodities (SA) | Medical Care Commodities | New component |
+| CUSR0000SAM2 | CPI-U Medical Care Services (SA) | Medical Care Services | New component |
+| CUSR0000SAR | CPI-U Recreation (SA) | Recreation | SA parent/alternative to existing `CPIRECSL` |
+| CUSR0000SAS | CPI-U Services (SA) | Services | New group |
+| CUSR0000SASLE | CPI-U Services Less Energy Services (SA) | Core Services ex Energy | New group |
+| CUSR0000SAT | CPI-U Transportation (SA) | Transportation | SA parent/alternative to existing `CPITRNSL` |
+| CUSR0000SEHF02 | CPI-U Utility (Piped) Gas Service (SA) | Utility Gas Service | New component |
+
+### Optional Not-Seasonally-Adjusted National Additions
+
+These `CUUR0000...` rows are useful, but should not be mixed into the default SA CPI table unless the UI adds an `SA / NSA` toggle. They generally mirror many `CUSR0000...` concepts.
+
+| Series ID | Suggested Label |
+| --- | --- |
+| CUUR0000SAA | Apparel NSA |
+| CUUR0000SAC | Commodities NSA |
+| CUUR0000SACL1E | Core Goods NSA |
+| CUUR0000SAE | Education & Communication NSA |
+| CUUR0000SAF | Food & Beverages NSA |
+| CUUR0000SAF1 | Food NSA |
+| CUUR0000SAF11 | Food at Home NSA |
+| CUUR0000SAF116 | Alcoholic Beverages NSA |
+| CUUR0000SAG | Other Goods & Services NSA |
+| CUUR0000SAH | Housing NSA |
+| CUUR0000SAH1 | Shelter NSA |
+| CUUR0000SAH2 | Fuels & Utilities NSA |
+| CUUR0000SAM | Medical Care NSA |
+| CUUR0000SAM1 | Medical Care Commodities NSA |
+| CUUR0000SAM2 | Medical Care Services NSA |
+| CUUR0000SAR | Recreation NSA |
+| CUUR0000SAS | Services NSA |
+| CUUR0000SASLE | Core Services ex Energy NSA |
+| CUUR0000SAT | Transportation NSA |
+| CUUR0000SEFV | Food Away from Home NSA |
+| CUUR0000SEHA | Rent of Primary Residence NSA |
+| CUUR0000SEHC | Owners' Equivalent Rent NSA |
+| CUUR0000SEHF01 | Electricity NSA |
+| CUUR0000SEHF02 | Utility Gas Service NSA |
+| CUUR0000SETA01 | New Vehicles NSA |
+| CUUR0000SETA02 | Used Cars & Trucks NSA |
+| CUUR0000SETB01 | Gasoline NSA |
+
+### Exclude From Default Item-Level Components
+
+These have observations but should not be counted as new item-level components by default:
+
+- `CPIAUCSL`: headline CPI already used as a headline aggregate
+- `CPILFESL`: core CPI already used as a headline aggregate
+- `CUSR0000SA0`, `CUUR0000SA0`: all-items headline variants
+- `CUSR0000SA0L1E`, `CUUR0000SA0L1E`: core CPI variants
+- `CUUR0100SA0`, `CUUR0200SA0`, `CUUR0300SA0`, `CUUR0400SA0`: regional headline CPI
+
+## Proposed Data Model Changes
+
+### Inflation Component Definition
+
+Replace or extend the tuple shape in `src/data/inflation.ts`:
+
+Current:
+
+```ts
+const CPI_COMPONENTS: [string, string, number, number][] = [
+  // id, label, weight%, baseYoY
+];
+```
+
+Proposed:
+
+```ts
+interface InflationComponentDef {
+  id: string;
+  label: string;
+  group: "CPI" | "PCE";
+  subgroup?: "headline" | "food" | "energy" | "housing" | "medical" | "transportation" | "goods" | "services" | "other";
+  seasonalAdjustment: "SA" | "NSA";
+  weight: number | null;
+  baseYoY: number;
+  includeInDefault: boolean;
+  contributionEligible: boolean;
+  preferredOver?: string;
+}
+```
+
+Rationale:
+
+- The expanded DB inventory includes duplicate concepts across SA, NSA, and legacy FRED IDs.
+- Some added group series do not have exact basket weights in the app yet.
+- Contributions should be shown only when weights are available and meaningful.
+
+### FRED Catalog
+
+For each default component added to `CPI_COMPONENTS`, also add a matching `FRED_CATALOG` entry in `src/data/econSeries.ts` so it can participate in:
+
+- `/api/econ/indicators`
+- macro chart search/linking
+- drill links
+- snapshot/simulation fallback behavior
+
+Use:
+
+```ts
+{
+  id,
+  label: `CPI: ${label}`,
+  short,
+  unit: "index",
+  category: "INFLATION",
+  freq: "M",
+  decimals: 1,
+  level,
+  vol,
+  bullish: false
+}
+```
+
+## UI Plan
+
+### Phase 1: Add SA National Expansion
+
+Add a curated set of SA additions to the default CPI component table:
+
+- Commodities
+- Core Goods
+- Food & Beverages
+- Housing
+- Fuels & Utilities
+- Medical Care Commodities
+- Medical Care Services
+- Services
+- Core Services ex Energy
+- Utility Gas Service
+- Other Goods & Services
+
+Avoid adding headline/core duplicates to the default table.
+
+### Phase 2: Add Component Controls
+
+Add small table controls to the CPI component panel:
+
+- `Level`: `Core View` / `Expanded`
+- `Seasonality`: `SA` / `NSA`
+- `Contribution`: `Weighted only` / `All series`
+
+Default:
+
+- `Level = Core View`
+- `Seasonality = SA`
+- `Contribution = Weighted only`
+
+### Phase 3: Contribution Handling
+
+For new components without verified weights:
+
+- display `Weight %` as `-`
+- exclude from weighted contribution bars by default
+- include in hot/cool acceleration lists
+- include in drill-through
+
+Add verified weights later through either:
+
+- BLS relative importance data
+- a local static weight map
+- a Gold DB table if the pipeline adds CPI relative importance
+
+## API Plan
+
+### Existing Endpoint Behavior
+
+`/api/econ/batch?ids=...&units=lin&n=15` already returns index-level observations for arbitrary series IDs in the component list.
+
+`liveInflationItem` already derives:
+
+- index
+- MoM
+- prior MoM
+- YoY
+- prior YoY
+- Delta MoM
+- Delta YoY
+
+No new endpoint is required for phase 1.
+
+### Optional Future Endpoint
+
+Add `/api/econ/inflation/components` if the component list should become DB-driven instead of static. It should:
+
+- query `gold_fred_latest_observation` for observed CPI component IDs
+- join `meta_fred_series` for title/tags
+- classify `SA` vs `NSA`
+- exclude headline/core/regional rows unless requested
+- return a stable list sorted by subgroup and label
+
+This should come after the static expansion is verified in the UI.
+
+## Implementation Checklist
+
+1. Add `InflationComponentDef` to `src/data/inflation.ts`.
+2. Convert existing `CPI_COMPONENTS` and `PCE_COMPONENTS` from tuples to objects.
+3. Add curated SA CPI additions to `CPI_COMPONENTS`.
+4. Preserve the existing 18 IDs and labels to avoid breaking user familiarity.
+5. Set `weight: null` for additions unless a verified weight is available.
+6. Update `makeItem` and `getInflationComponents` to support nullable weights.
+7. Update contribution calculation so `weight == null` produces `contribution: null` or is excluded from contribution bars.
+8. Update component table to render missing weight as `-`.
+9. Update contribution chart to use only contribution-eligible rows.
+10. Add matching `FRED_CATALOG` rows for all added default components.
+11. Ensure `useLiveSeriesSet(allIds, "lin", 15)` includes expanded IDs.
+12. Ensure drill-through uses `units: "lin"` and `growthMetrics: true`, same as existing 18.
+13. Add table controls for core/expanded and SA/NSA only after default expansion is stable.
+14. Add tests for `liveInflationItem`, nullable weights, and contribution filtering.
+15. Verify `/api/econ/batch` returns DB observations for all added default IDs.
+
+## Candidate Phase 1 Default Additions
+
+Use this initial default expansion list unless design review chooses otherwise:
+
+```ts
+[
+  { id: "CUSR0000SAC", label: "Commodities", subgroup: "goods" },
+  { id: "CUSR0000SACL1E", label: "Core Goods", subgroup: "goods" },
+  { id: "CUSR0000SAF", label: "Food & Beverages", subgroup: "food" },
+  { id: "CUSR0000SAH", label: "Housing", subgroup: "housing" },
+  { id: "CUSR0000SAH2", label: "Fuels & Utilities", subgroup: "housing" },
+  { id: "CUSR0000SAM1", label: "Medical Care Commodities", subgroup: "medical" },
+  { id: "CUSR0000SAM2", label: "Medical Care Services", subgroup: "medical" },
+  { id: "CUSR0000SAS", label: "Services", subgroup: "services" },
+  { id: "CUSR0000SASLE", label: "Core Services ex Energy", subgroup: "services" },
+  { id: "CUSR0000SEHF02", label: "Utility Gas Service", subgroup: "energy" },
+  { id: "CUSR0000SAG", label: "Other Goods & Services", subgroup: "other" }
+]
+```
+
+## Validation Plan
+
+### Data Checks
+
+Run these checks before merging implementation:
+
+```sql
+SELECT series_id, COUNT(*) AS obs_rows, MAX(observation_date) AS latest_date
+FROM gold_fred_latest_observation
+WHERE NOT is_missing
+  AND series_id IN (...)
+GROUP BY series_id
+ORDER BY series_id;
+```
+
+Acceptance:
+
+- every added default ID has at least 14 non-missing monthly observations
+- latest date is within the expected CPI publication lag
+- series values are positive index levels
+
+### UI Checks
+
+- Inflation Explorer CPI table includes the added default rows in expanded mode.
+- Each added row has populated `Index`, `MoM %`, `YoY %`, `Delta MoM`, and `Delta YoY`.
+- Rows with missing weights do not produce misleading weighted contribution values.
+- Drill-through opens and displays raw index plus derived MoM/YoY metrics.
+- Core 18 components remain present.
+
+### Build/Test Checks
+
+Run:
+
+```bash
+npm test -- src/lib/useEcon.test.ts
+npm run build:client
+```
+
+Add focused tests if component definition logic is refactored into pure helpers.
+
+## Rollout Plan
+
+1. Land static definition refactor with no new visible components.
+2. Add the phase 1 SA default additions behind an `Expanded` table mode.
+3. Verify live DB values for every added ID locally.
+4. Enable expanded mode in the default CPI table if density remains usable.
+5. Add NSA toggle in a separate follow-up.
+6. Consider a DB-driven component endpoint only after the static expanded list is stable.
+
+## Open Questions
+
+- Should parent groups such as `Housing`, `Services`, and `Commodities` sit beside narrower subcomponents, or should the default table avoid parent/child double counting?
+- Do we want verified BLS relative-importance weights before showing any expanded contribution analytics?
+- Should NSA rows be hidden by default, or should a seasonality toggle be visible immediately?
+- Should regional CPI headline rows live in a separate regional CPI module instead of the Inflation Explorer?
+

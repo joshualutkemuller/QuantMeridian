@@ -118,7 +118,7 @@ export const FRED_CATALOG: FredSeries[] = [
 
   // ── Expanded inflation ──
   { id: "PPIACO", label: "PPI All Commodities (YoY)", short: "PPI", unit: "% y/y", category: "INFLATION", freq: "M", decimals: 1, level: 1.9, vol: 0.3, bullish: false },
-  { id: "STICKCPIM159SFRB", label: "Sticky CPI (YoY)", short: "Sticky CPI", unit: "% y/y", category: "INFLATION", freq: "M", decimals: 1, level: 3.2, vol: 0.12, bullish: false },
+  { id: "STICKCPIM159SFRBATL", label: "Sticky CPI (YoY)", short: "Sticky CPI", unit: "% y/y", category: "INFLATION", freq: "M", decimals: 1, level: 3.2, vol: 0.12, bullish: false },
   { id: "PCEPILFE_MOM", label: "Core PCE (MoM)", short: "Core PCE m/m", unit: "% m/m", category: "INFLATION", freq: "M", decimals: 2, level: 0.21, vol: 0.06, bullish: false },
 
   // ── Expanded activity / consumer / housing ──
@@ -148,7 +148,7 @@ export const FRED_CATALOG: FredSeries[] = [
   { id: "OBFR", label: "Overnight Bank Funding Rate", short: "OBFR", unit: "%", category: "RATES", freq: "D", decimals: 2, level: 4.09, vol: 0.01, bullish: null },
   { id: "IORB", label: "Interest on Reserve Balances", short: "IORB", unit: "%", category: "RATES", freq: "D", decimals: 2, level: 4.15, vol: 0.005, bullish: null },
   { id: "BGCR", label: "Broad General Collateral Rate", short: "BGCR", unit: "%", category: "RATES", freq: "D", decimals: 2, level: 4.29, vol: 0.02, bullish: null },
-  { id: "TGCR", label: "Tri-Party General Collateral Rate", short: "TGCR", unit: "%", category: "RATES", freq: "D", decimals: 2, level: 4.28, vol: 0.02, bullish: null },
+  { id: "TGCRRATE", label: "Tri-Party General Collateral Rate", short: "TGCR", unit: "%", category: "RATES", freq: "D", decimals: 2, level: 4.28, vol: 0.02, bullish: null },
   { id: "SOFR30DAYAVG", label: "30-Day Average SOFR", short: "SOFR 30d", unit: "%", category: "RATES", freq: "D", decimals: 2, level: 4.31, vol: 0.01, bullish: null },
   { id: "DFEDTARU", label: "Fed Funds Target Range — Upper", short: "Target Up", unit: "%", category: "RATES", freq: "D", decimals: 2, level: 4.25, vol: 0.0, bullish: null },
   { id: "DFEDTARL", label: "Fed Funds Target Range — Lower", short: "Target Lo", unit: "%", category: "RATES", freq: "D", decimals: 2, level: 4.0, vol: 0.0, bullish: null },
@@ -271,7 +271,7 @@ const FRED_OVERRIDE: Record<string, Partial<FredResolved>> = {
   BAMLH0A3HYC: { units: "lin", scale: 100 },
   BAMLEMCBPIOAS: { units: "lin", scale: 100 },
   // already-YoY rate series — do not re-transform
-  STICKCPIM159SFRB: { units: "lin" },
+  STICKCPIM159SFRBATL: { units: "lin" },
   // rescaled levels
   PERMIT: { units: "lin", scale: 0.001 }, // thousands -> millions
   EXHOSLUSM495S: { units: "lin", scale: 1e-6 }, // count -> millions

@@ -184,7 +184,7 @@ const EVENT_SERIES: EventDef[] = [
   { name: "Core PCE (m/m)", category: "Inflation", time: "08:30", importance: "HIGH", freq: "monthly", releaseDay: 28, baseValue: 0.25, volatility: 0.1, unit: "%", fmt: pctFmt, fredId: "PCEPILFE", fredUnits: "pch" },
   { name: "PCE Price Index (m/m)", category: "Inflation", time: "08:30", importance: "HIGH", freq: "monthly", releaseDay: 28, baseValue: 0.2, volatility: 0.15, unit: "%", fmt: pctFmt, fredId: "PCEPI", fredUnits: "pch" },
   { name: "PPI (m/m)", category: "Inflation", time: "08:30", importance: "MEDIUM", freq: "monthly", releaseDay: 13, baseValue: 0.15, volatility: 0.2, unit: "%", fmt: pctFmt, fredId: "PPIACO", fredUnits: "pch" },
-  { name: "Sticky CPI (y/y)", category: "Inflation", time: "08:30", importance: "MEDIUM", freq: "monthly", releaseDay: 12, baseValue: 3.2, volatility: 0.12, unit: "%", fmt: pctFmt, fredId: "STICKCPIM159SFRB" },
+  { name: "Sticky CPI (y/y)", category: "Inflation", time: "08:30", importance: "MEDIUM", freq: "monthly", releaseDay: 12, baseValue: 3.2, volatility: 0.12, unit: "%", fmt: pctFmt, fredId: "STICKCPIM159SFRBATL" },
   { name: "Median CPI (ann.)", category: "Inflation", time: "08:30", importance: "MEDIUM", freq: "monthly", releaseDay: 12, baseValue: 3.3, volatility: 0.2, unit: "%", fmt: pctFmt, fredId: "MEDCPIM159SFRB" },
   { name: "Trimmed-Mean PCE (y/y)", category: "Inflation", time: "08:30", importance: "MEDIUM", freq: "monthly", releaseDay: 28, baseValue: 2.7, volatility: 0.12, unit: "%", fmt: pctFmt, fredId: "PCETRIM12M159SFRB" },
   { name: "5y Breakeven Inflation", category: "Inflation", time: "—", importance: "LOW", freq: "monthly", releaseDay: 15, baseValue: 2.34, volatility: 0.05, unit: "%", fmt: rateFmt, fredId: "T5YIE" },
