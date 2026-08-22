@@ -193,6 +193,7 @@ export interface LiveIndicator {
   yoy: number | null;
   yoyDelta: number | null;
   monthlyPrint: number | null;
+  indexValue?: number | null;
   asOf: string;
   history: number[];
   source: EconSeriesSource;
