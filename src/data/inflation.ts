@@ -10,13 +10,30 @@ import { Rng } from "@/lib/rng";
  */
 
 export type InflationGroup = "CPI" | "CORE_CPI" | "PCE" | "CORE_PCE";
+export type InflationSubgroup = "headline" | "food" | "energy" | "housing" | "medical" | "transportation" | "goods" | "services" | "other";
+export type SeasonalAdjustment = "SA" | "NSA";
+export type ComponentLevel = "core" | "expanded";
+
+export interface InflationComponentDef {
+  id: string;
+  label: string;
+  group: "CPI" | "PCE";
+  subgroup?: InflationSubgroup;
+  seasonalAdjustment: SeasonalAdjustment;
+  weight: number | null;
+  baseYoY: number;
+  includeInDefault: boolean;
+  contributionEligible: boolean;
+  preferredOver?: string;
+  legacyId?: string;
+}
 
 export interface InflationItem {
   id: string; // FRED series id
   label: string;
   group: InflationGroup;
   kind: "HEADLINE" | "COMPONENT";
-  weight: number; // % of basket (components)
+  weight: number | null; // % of basket (components), null when not verified
   index: number; // latest index level
   mom: number; // MoM %
   yoy: number; // YoY %
@@ -24,7 +41,11 @@ export interface InflationItem {
   priorYoy: number;
   momAccel: number; // mom - priorMom
   yoyAccel: number; // yoy - priorYoy
-  contribution: number; // weighted YoY contribution (pp)
+  contribution: number | null; // weighted YoY contribution (pp)
+  subgroup?: InflationSubgroup;
+  seasonalAdjustment?: SeasonalAdjustment;
+  contributionEligible: boolean;
+  legacyId?: string;
 }
 
 // [fredId, label, group, weight%, baseYoY, baseIndex]
@@ -35,57 +56,148 @@ const HEADLINES: [string, string, InflationGroup, number][] = [
   ["PCEPILFE", "Core PCE (ex Food & Energy)", "CORE_PCE", 2.6],
 ];
 
-const CPI_COMPONENTS: [string, string, number, number][] = [
-  // id, label, weight%, baseYoY
-  ["CUSR0000SAH1", "Shelter", 34.8, 3.9],
-  ["CUSR0000SEHC", "Owners' Equiv. Rent", 26.8, 4.1],
-  ["CUSR0000SEHA", "Rent of Primary Residence", 7.6, 3.8],
-  ["CPIUFDSL", "Food", 13.4, 2.2],
-  ["CUSR0000SAF11", "Food at Home", 8.1, 1.6],
-  ["CUSR0000SEFV", "Food Away from Home", 5.3, 3.4],
-  ["CPIENGSL", "Energy", 6.8, -1.8],
-  ["CUSR0000SETB01", "Gasoline", 3.3, -4.2],
-  ["CUSR0000SEHF01", "Electricity", 2.5, 3.1],
-  ["CPIMEDSL", "Medical Care", 8.1, 3.0],
-  ["CUSR0000SETA01", "New Vehicles", 4.1, 0.4],
-  ["CUSR0000SETA02", "Used Cars & Trucks", 2.6, -1.9],
-  ["CPIAPPSL", "Apparel", 2.5, 0.7],
-  ["CPITRNSL", "Transportation Services", 5.9, 4.6],
-  ["CUSR0000SEMD", "Hospital Services", 1.9, 4.0],
-  ["CUSR0000SAS367", "Airline Fares", 0.8, -2.4],
-  ["CPIRECSL", "Recreation", 5.2, 1.9],
-  ["CUSR0000SAE1", "Education & Communication", 5.8, 1.2],
+const component = (
+  id: string,
+  label: string,
+  group: "CPI" | "PCE",
+  subgroup: InflationSubgroup,
+  weight: number | null,
+  baseYoY: number,
+  includeInDefault = true,
+  contributionEligible = weight != null,
+  seasonalAdjustment: SeasonalAdjustment = "SA",
+  preferredOver?: string,
+  legacyId?: string
+): InflationComponentDef => ({
+  id,
+  label,
+  group,
+  subgroup,
+  seasonalAdjustment,
+  weight,
+  baseYoY,
+  includeInDefault,
+  contributionEligible,
+  preferredOver,
+  legacyId,
+});
+
+const CPI_COMPONENTS: InflationComponentDef[] = [
+  component("CUSR0000SAH1", "Shelter", "CPI", "housing", 34.8, 3.9),
+  component("CUSR0000SEHC", "Owners' Equiv. Rent", "CPI", "housing", 26.8, 4.1),
+  component("CUSR0000SEHA", "Rent of Primary Residence", "CPI", "housing", 7.6, 3.8),
+  component("CUSR0000SAF1", "Food", "CPI", "food", 13.4, 2.2, true, true, "SA", undefined, "CPIUFDSL"),
+  component("CUSR0000SAF11", "Food at Home", "CPI", "food", 8.1, 1.6),
+  component("CUSR0000SEFV", "Food Away from Home", "CPI", "food", 5.3, 3.4),
+  component("CUSR0000SA0E", "Energy", "CPI", "energy", 6.8, -1.8, true, true, "SA", undefined, "CPIENGSL"),
+  component("CUSR0000SETB01", "Gasoline", "CPI", "energy", 3.3, -4.2),
+  component("CUSR0000SEHF01", "Electricity", "CPI", "energy", 2.5, 3.1),
+  component("CUSR0000SAM", "Medical Care", "CPI", "medical", 8.1, 3.0, true, true, "SA", undefined, "CPIMEDSL"),
+  component("CUSR0000SETA01", "New Vehicles", "CPI", "goods", 4.1, 0.4),
+  component("CUSR0000SETA02", "Used Cars & Trucks", "CPI", "goods", 2.6, -1.9),
+  component("CUSR0000SAA", "Apparel", "CPI", "goods", 2.5, 0.7, true, true, "SA", undefined, "CPIAPPSL"),
+  component("CUSR0000SAT", "Transportation", "CPI", "transportation", 5.9, 4.6, true, true, "SA", undefined, "CPITRNSL"),
+  component("CUSR0000SEMD", "Hospital Services", "CPI", "medical", 1.9, 4.0),
+  component("CUSR0000SAS367", "Airline Fares", "CPI", "transportation", 0.8, -2.4),
+  component("CUSR0000SAR", "Recreation", "CPI", "other", 5.2, 1.9, true, true, "SA", undefined, "CPIRECSL"),
+  component("CUSR0000SAE", "Education & Communication", "CPI", "other", 5.8, 1.2, true, true, "SA", undefined, "CUSR0000SAE1"),
+
+  // Phase 1 expanded SA national CPI additions. Weights are intentionally null
+  // here; market_terminal must only accept expanded weights from the Gold DB.
+  component("CUSR0000SAC", "Commodities", "CPI", "goods", null, 0.8, false, false),
+  component("CUSR0000SACL1E", "Core Goods", "CPI", "goods", null, 0.4, false, false),
+  component("CUSR0000SAF", "Food & Beverages", "CPI", "food", null, 2.4, false, false),
+  component("CUSR0000SAH", "Housing", "CPI", "housing", null, 3.7, false, false),
+  component("CUSR0000SAH2", "Fuels & Utilities", "CPI", "housing", null, 2.2, false, false),
+  component("CUSR0000SAM1", "Medical Care Commodities", "CPI", "medical", null, 2.1, false, false),
+  component("CUSR0000SAM2", "Medical Care Services", "CPI", "medical", null, 3.4, false, false),
+  component("CUSR0000SAS", "Services", "CPI", "services", null, 3.6, false, false),
+  component("CUSR0000SASLE", "Core Services ex Energy", "CPI", "services", null, 3.7, false, false),
+  component("CUSR0000SEHF02", "Utility Gas Service", "CPI", "energy", null, -0.5, false, false),
+  component("CUSR0000SAG", "Other Goods & Services", "CPI", "other", null, 2.0, false, false),
+
+  // NSA CPI-U rows are only exposed behind the CPI SA/NSA toggle. Weights stay
+  // null here and are filled only from gold_inflation_explorer when available.
+  component("CUUR0000SAH1", "Shelter", "CPI", "housing", null, 3.9, true, false, "NSA"),
+  component("CUUR0000SEHC", "Owners' Equiv. Rent", "CPI", "housing", null, 4.1, true, false, "NSA"),
+  component("CUUR0000SEHA", "Rent of Primary Residence", "CPI", "housing", null, 3.8, true, false, "NSA"),
+  component("CUUR0000SAF1", "Food", "CPI", "food", null, 2.2, true, false, "NSA", undefined, "CPIUFDSL"),
+  component("CUUR0000SAF11", "Food at Home", "CPI", "food", null, 1.6, true, false, "NSA"),
+  component("CUUR0000SEFV", "Food Away from Home", "CPI", "food", null, 3.4, true, false, "NSA"),
+  component("CUUR0000SA0E", "Energy", "CPI", "energy", null, -1.8, true, false, "NSA", undefined, "CPIENGSL"),
+  component("CUUR0000SETB01", "Gasoline", "CPI", "energy", null, -4.2, true, false, "NSA"),
+  component("CUUR0000SEHF01", "Electricity", "CPI", "energy", null, 3.1, true, false, "NSA"),
+  component("CUUR0000SAM", "Medical Care", "CPI", "medical", null, 3.0, true, false, "NSA", undefined, "CPIMEDSL"),
+  component("CUUR0000SETA01", "New Vehicles", "CPI", "goods", null, 0.4, true, false, "NSA"),
+  component("CUUR0000SETA02", "Used Cars & Trucks", "CPI", "goods", null, -1.9, true, false, "NSA"),
+  component("CUUR0000SAA", "Apparel", "CPI", "goods", null, 0.7, true, false, "NSA", undefined, "CPIAPPSL"),
+  component("CUUR0000SAT", "Transportation", "CPI", "transportation", null, 4.6, true, false, "NSA", undefined, "CPITRNSL"),
+  component("CUUR0000SAR", "Recreation", "CPI", "other", null, 1.9, true, false, "NSA", undefined, "CPIRECSL"),
+  component("CUUR0000SAE", "Education & Communication", "CPI", "other", null, 1.2, true, false, "NSA", undefined, "CUSR0000SAE1"),
+  component("CUUR0000SAC", "Commodities", "CPI", "goods", null, 0.8, false, false, "NSA"),
+  component("CUUR0000SACL1E", "Core Goods", "CPI", "goods", null, 0.4, false, false, "NSA"),
+  component("CUUR0000SAF", "Food & Beverages", "CPI", "food", null, 2.4, false, false, "NSA"),
+  component("CUUR0000SAF116", "Alcoholic Beverages", "CPI", "food", null, 2.0, false, false, "NSA"),
+  component("CUUR0000SAG", "Other Goods & Services", "CPI", "other", null, 2.0, false, false, "NSA"),
+  component("CUUR0000SAH", "Housing", "CPI", "housing", null, 3.7, false, false, "NSA"),
+  component("CUUR0000SAH2", "Fuels & Utilities", "CPI", "housing", null, 2.2, false, false, "NSA"),
+  component("CUUR0000SAM1", "Medical Care Commodities", "CPI", "medical", null, 2.1, false, false, "NSA"),
+  component("CUUR0000SAM2", "Medical Care Services", "CPI", "medical", null, 3.4, false, false, "NSA"),
+  component("CUUR0000SAS", "Services", "CPI", "services", null, 3.6, false, false, "NSA"),
+  component("CUUR0000SASLE", "Core Services ex Energy", "CPI", "services", null, 3.7, false, false, "NSA"),
+  component("CUUR0000SEHF02", "Utility Gas Service", "CPI", "energy", null, -0.5, false, false, "NSA"),
 ];
 
-const PCE_COMPONENTS: [string, string, number, number][] = [
-  ["DGDSRG3M086SBEA", "Goods", 33.5, 0.3],
-  ["DSERRG3M086SBEA", "Services", 66.5, 3.4],
-  ["DNRGRG3M086SBEA", "Energy Goods & Services", 4.1, -1.6],
-  ["DFXARG3M086SBEA", "Food", 7.6, 2.0],
-  ["DHUTRC1M027SBEA", "Housing & Utilities", 17.8, 3.7],
-  ["DHLCRG3M086SBEA", "Health Care", 16.9, 2.9],
-  ["DTRSRC1M027SBEA", "Transportation", 3.2, 1.4],
-  ["DRCARC1M027SBEA", "Recreation", 3.6, 2.1],
+const PCE_COMPONENTS: InflationComponentDef[] = [
+  component("DGDSRG3M086SBEA", "Goods", "PCE", "goods", 33.5, 0.3),
+  component("DSERRG3M086SBEA", "Services", "PCE", "services", 66.5, 3.4),
+  component("DNRGRG3M086SBEA", "Energy Goods & Services", "PCE", "energy", 4.1, -1.6),
+  component("DFXARG3M086SBEA", "Food", "PCE", "food", 7.6, 2.0),
+  component("DHUTRC1M027SBEA", "Housing & Utilities", "PCE", "housing", 17.8, 3.7),
+  component("DHLCRG3M086SBEA", "Health Care", "PCE", "medical", 16.9, 2.9),
+  component("DTRSRC1M027SBEA", "Transportation", "PCE", "transportation", 3.2, 1.4),
+  component("DRCARC1M027SBEA", "Recreation", "PCE", "other", 3.6, 2.1),
 ];
 
-function makeItem(id: string, label: string, group: InflationGroup, kind: InflationItem["kind"], weight: number, baseYoY: number): InflationItem {
+function makeItem(
+  id: string,
+  label: string,
+  group: InflationGroup,
+  kind: InflationItem["kind"],
+  weight: number | null,
+  baseYoY: number,
+  meta?: Pick<InflationComponentDef, "subgroup" | "seasonalAdjustment" | "contributionEligible" | "legacyId">
+): InflationItem {
   const rng = new Rng(`infl-${id}`);
   const yoy = Number((baseYoY + rng.normal(0, 0.15)).toFixed(2));
   const priorYoy = Number((yoy - rng.normal(0, 0.18)).toFixed(2));
   const mom = Number((yoy / 12 + rng.normal(0, 0.12)).toFixed(2));
   const priorMom = Number((mom - rng.normal(0, 0.14)).toFixed(2));
   const index = Number((100 * Math.pow(1 + yoy / 100, 4) + rng.float(180, 230)).toFixed(2));
+  const contribution = weight == null ? null : Number(((weight / 100) * yoy).toFixed(2));
   return {
     id, label, group, kind, weight,
     index, yoy, priorYoy, mom, priorMom,
     momAccel: Number((mom - priorMom).toFixed(2)),
     yoyAccel: Number((yoy - priorYoy).toFixed(2)),
-    contribution: Number(((weight / 100) * yoy).toFixed(2)),
+    contribution,
+    subgroup: meta?.subgroup,
+    seasonalAdjustment: meta?.seasonalAdjustment,
+    contributionEligible: meta?.contributionEligible ?? weight != null,
+    legacyId: meta?.legacyId,
   };
 }
 
 export function getInflationHeadlines(): InflationItem[] {
-  return HEADLINES.map(([id, label, group, base]) => makeItem(id, label, group, "HEADLINE", 100, base));
+  return HEADLINES.map(([id, label, group, base]) => makeItem(id, label, group, "HEADLINE", 100, base, { subgroup: "headline", seasonalAdjustment: "SA", contributionEligible: false }));
+}
+
+function shiftMonth(date: string, delta: number): string {
+  const [year, month] = date.slice(0, 7).split("-").map(Number);
+  const zeroBased = (year * 12) + (month - 1) + delta;
+  const shiftedYear = Math.floor(zeroBased / 12);
+  const shiftedMonth = (zeroBased % 12) + 1;
+  return `${shiftedYear}-${String(shiftedMonth).padStart(2, "0")}-01`;
 }
 
 /**
@@ -95,31 +207,42 @@ export function getInflationHeadlines(): InflationItem[] {
  * fully live on the face values, not just the drill-down.
  */
 export function liveInflationItem(base: InflationItem, obs: { date: string; value: number }[]): InflationItem {
-  const v = obs.map((o) => o.value);
-  if (v.length < 14) return base;
-  const n = v.length;
   const pct = (a: number, b: number) => (b ? (a / b - 1) * 100 : 0);
-  const index = v[n - 1];
-  const mom = pct(v[n - 1], v[n - 2]);
-  const priorMom = pct(v[n - 2], v[n - 3]);
-  const yoy = pct(v[n - 1], v[n - 13]);
-  const priorYoy = pct(v[n - 2], v[n - 14]);
+  const byDate = new Map(obs.filter((o) => Number.isFinite(o.value)).map((o) => [o.date, o.value]));
+  const latest = [...obs].reverse().find((o) => Number.isFinite(o.value));
+  if (!latest) return base;
+
+  const current = latest.value;
+  const prevMonth = byDate.get(shiftMonth(latest.date, -1));
+  const prevTwoMonths = byDate.get(shiftMonth(latest.date, -2));
+  const yearAgo = byDate.get(shiftMonth(latest.date, -12));
+  const prevMonthYearAgo = byDate.get(shiftMonth(latest.date, -13));
+  if (prevMonth == null || prevTwoMonths == null || yearAgo == null || prevMonthYearAgo == null) return base;
+
+  const mom = pct(current, prevMonth);
+  const priorMom = pct(prevMonth, prevTwoMonths);
+  const yoy = pct(current, yearAgo);
+  const priorYoy = pct(prevMonth, prevMonthYearAgo);
   return {
     ...base,
-    index: Number(index.toFixed(2)),
+    index: Number(current.toFixed(2)),
     mom: Number(mom.toFixed(2)),
     priorMom: Number(priorMom.toFixed(2)),
     yoy: Number(yoy.toFixed(2)),
     priorYoy: Number(priorYoy.toFixed(2)),
     momAccel: Number((mom - priorMom).toFixed(2)),
     yoyAccel: Number((yoy - priorYoy).toFixed(2)),
-    contribution: Number(((base.weight / 100) * yoy).toFixed(2)),
+    contribution: base.weight == null ? null : Number(((base.weight / 100) * yoy).toFixed(2)),
   };
 }
 
-export function getInflationComponents(group: "CPI" | "PCE"): InflationItem[] {
+export function getInflationComponents(group: "CPI" | "PCE", level: ComponentLevel = "core", seasonality: SeasonalAdjustment = "SA"): InflationItem[] {
   const defs = group === "CPI" ? CPI_COMPONENTS : PCE_COMPONENTS;
-  return defs.map(([id, label, weight, base]) => makeItem(id, label, group === "CPI" ? "CPI" : "PCE", "COMPONENT", weight, base)).sort((a, b) => b.weight - a.weight);
+  return defs
+    .filter((def) => def.seasonalAdjustment === (group === "CPI" ? seasonality : "SA"))
+    .filter((def) => level === "expanded" || def.includeInDefault)
+    .map((def) => makeItem(def.id, def.label, group === "CPI" ? "CPI" : "PCE", "COMPONENT", def.weight, def.baseYoY, def))
+    .sort((a, b) => (b.weight ?? -1) - (a.weight ?? -1));
 }
 
 export interface InflationSummary {
