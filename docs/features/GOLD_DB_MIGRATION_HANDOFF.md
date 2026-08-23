@@ -3,9 +3,9 @@
 **Status:** Plan / handoff (not code). **Owner:** data-platform + terminal FE.
 **Companion source of truth:** the sibling `fred-bronze-to-gold-pipeline`
 project (Bronze→Silver→Gold medallion on Delta / SQLite). Its terminal-facing
-plan is `fred-bronze-to-gold-pipeline/docs/handoffs/market_terminal_gold_views.md`
-and its series audit is `.../docs/gap/market_terminal_series_gap.md`. Read those
-alongside this one — this document is the **reverse** handoff: how the terminal
+plan is now mirrored locally at `docs/gold-db/market_terminal_gold_views.md`
+and its series audit is mirrored at `docs/gold-db/market_terminal_series_gap.md`.
+Read those alongside this one — this document is the **reverse** handoff: how the terminal
 stops calling live APIs and reads **only** the pipeline's Gold layer.
 
 ---
@@ -390,7 +390,7 @@ raw-obs path for interactive pairs); ML routes → `recession_probability_daily`
 **Phase 6 — Removal & hardening.**
 Delete `src/lib/server/fred.ts` from the prod path, all `*Snapshot*` files, all
 SIM generators for Tier A. Add the CI grep gate (§11). Update `ARCHITECTURE.md`,
-`docs/DATA_PIPELINE_OVERVIEW.md`, `docs/MODULE_DATA_AUDIT.md`.
+`docs/data/DATA_PIPELINE_OVERVIEW.md`, `docs/gold-db/MODULE_DATA_AUDIT.md`.
 
 Phases 1–5 are independently shippable (a module reads Gold or, until its phase
 lands, keeps the old chain — no big-bang cutover).

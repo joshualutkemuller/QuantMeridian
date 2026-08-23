@@ -3,7 +3,7 @@
 **Generated**: 2026-07-28
 **Updated**: 2026-08-01 — G1, G2, G3, G4, G5, G8, G9, G10 completed; ETL tier fully gated; equity OOM fixed; nav/route test added; Gold routes wired
 **Scope**: Every read path in the terminal that still resolves committed snapshot, ETL fixture, or seeded-`Rng` data instead of the Gold DB / FRED live chain.
-**Related**: `docs/features/GOLD_DB_MIGRATION_HANDOFF.md`, `docs/validation/MODULE_DATA_AUDIT.md`, `docs/validation/LIVE_DATA_READINESS_ASSESSMENT.md`
+**Related**: `docs/features/GOLD_DB_MIGRATION_HANDOFF.md`, `docs/gold-db/MODULE_DATA_AUDIT.md`, `docs/validation/LIVE_DATA_READINESS_ASSESSMENT.md`
 
 ---
 
@@ -135,7 +135,7 @@ So the ungated tier at `econ/series/route.ts:96` serves **~19-month-old CPI data
 
 **Severity**: High · **False-live**: No
 
-`docs/validation/MODULE_DATA_AUDIT.md` lists these under "New routes added by migration." All query Gold tables. Originally none were referenced anywhere outside `src/app/api`:
+`docs/gold-db/MODULE_DATA_AUDIT.md` lists these under "New routes added by migration." All query Gold tables. Originally none were referenced anywhere outside `src/app/api`:
 
 | Route | Gold tables | Page | Status |
 |---|---|---|---|
@@ -239,7 +239,7 @@ Fully synthetic, sourced from seeded `Rng` generators, all correctly badged `Pro
 | `/copilot` | `@/data/securitiesLending`, `@/data/primeFinance`, `@/data/collateral`, `@/data/cash` |
 | `/securities-lending/squeeze` | `@/data/squeeze` |
 
-This matches the **Tier C** classification in `MODULE_DATA_AUDIT.md` ("book stays synthetic") — there are no Gold tables for the securities-finance domain and no internal book connected.
+This matches the **Tier C** classification in `docs/gold-db/MODULE_DATA_AUDIT.md` ("book stays synthetic") — there are no Gold tables for the securities-finance domain and no internal book connected.
 
 **No action implied.** Listed to confirm the scope is intentional rather than unfinished migration, and so a future reviewer does not re-flag it.
 
