@@ -286,21 +286,53 @@ This should come after the static expansion is verified in the UI.
 
 ## Implementation Checklist
 
-1. Add `InflationComponentDef` to `src/data/inflation.ts`.
-2. Convert existing `CPI_COMPONENTS` and `PCE_COMPONENTS` from tuples to objects.
-3. Add curated SA CPI additions to `CPI_COMPONENTS`.
-4. Preserve the existing 18 IDs and labels to avoid breaking user familiarity.
-5. Set `weight: null` for additions unless a verified weight is available.
-6. Update `makeItem` and `getInflationComponents` to support nullable weights.
-7. Update contribution calculation so `weight == null` produces `contribution: null` or is excluded from contribution bars.
-8. Update component table to render missing weight as `-`.
-9. Update contribution chart to use only contribution-eligible rows.
-10. Add matching `FRED_CATALOG` rows for all added default components.
-11. Ensure `useLiveSeriesSet(allIds, "lin", 15)` includes expanded IDs.
-12. Ensure drill-through uses `units: "lin"` and `growthMetrics: true`, same as existing 18.
-13. Add table controls for core/expanded and SA/NSA only after default expansion is stable.
-14. Add tests for `liveInflationItem`, nullable weights, and contribution filtering.
-15. Verify `/api/econ/batch` returns DB observations for all added default IDs.
+1. [x] Add `InflationComponentDef` to `src/data/inflation.ts`.
+2. [x] Convert existing `CPI_COMPONENTS` and `PCE_COMPONENTS` from tuples to objects.
+3. [x] Add curated SA CPI additions to `CPI_COMPONENTS`.
+4. [x] Preserve the existing 18 IDs and labels to avoid breaking user familiarity.
+5. [x] Set `weight: null` for additions unless a verified weight is available.
+6. [x] Update `makeItem` and `getInflationComponents` to support nullable weights.
+7. [x] Update contribution calculation so `weight == null` produces `contribution: null` or is excluded from contribution bars.
+8. [x] Update component table to render missing weight as `-`.
+9. [x] Update contribution chart to use only contribution-eligible rows.
+10. [x] Add matching `FRED_CATALOG` rows for all added default components.
+11. [x] Ensure `useLiveSeriesSet(allIds, "lin", 15)` includes expanded IDs.
+12. [x] Ensure drill-through uses `units: "lin"` and `growthMetrics: true`, same as existing 18.
+13. [x] Add table controls for core/expanded.
+14. [x] Add tests for `liveInflationItem`, nullable weights, and contribution filtering.
+15. [x] Verify `/api/econ/batch` returns DB observations for all added default IDs.
+16. [ ] Add SA/NSA toggle after default expansion is stable.
+17. [ ] Wire verified relative-importance weights before showing expanded contribution analytics.
+
+## Implementation Status
+
+As of 2026-08-22, Phase 1 is wired into `market_terminal` behind the Inflation
+Explorer `Expanded` mode:
+
+- `src/data/inflation.ts` now models component definitions as objects with
+  subgroup, seasonal adjustment, nullable weight, default-inclusion, and
+  contribution eligibility metadata.
+- The existing 18 CPI component rows remain the default core view.
+- The 11 curated SA CPI additions are available only in expanded mode until
+  verified relative-importance weights are available.
+- Expanded rows with missing weights render `Weight %` and `Contrib pp` as `-`
+  and are excluded from the YoY contribution bar chart.
+- `src/data/econSeries.ts` has matching `FRED_CATALOG` entries so the batch
+  endpoint and drill-through can resolve the new IDs.
+- `src/data/inflation.test.ts` covers default-vs-expanded component counts,
+  nullable weights, contribution eligibility, and live-value derivation.
+
+Local validation:
+
+- `gold_fred_latest_observation` has all 11 Phase 1 IDs with 30 rows each
+  through `2026-06-01`.
+- `gold_fred_feature_transforms` has all 11 Phase 1 IDs with 29 rows each
+  through `2026-06-01`.
+- `/api/econ/batch?units=lin&n=15` returned `source: DB` and 15 observations
+  for every Phase 1 ID.
+- The returned batch window is sufficient for live MoM/YoY derivation, but the
+  transformed series currently skip `2025-10-01`; track that as a Gold pipeline
+  calendar-continuity follow-up.
 
 ## Candidate Phase 1 Default Additions
 
@@ -377,4 +409,3 @@ Add focused tests if component definition logic is refactored into pure helpers.
 - Do we want verified BLS relative-importance weights before showing any expanded contribution analytics?
 - Should NSA rows be hidden by default, or should a seasonality toggle be visible immediately?
 - Should regional CPI headline rows live in a separate regional CPI module instead of the Inflation Explorer?
-

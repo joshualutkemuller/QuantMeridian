@@ -14,6 +14,7 @@ import {
   getInflationHeadlines,
   getInflationComponents,
   liveInflationItem,
+  type ComponentLevel,
   type InflationItem,
 } from "@/data/inflation";
 import { fmtNum, fmtSigned, fmtSignedPct } from "@/lib/format";
@@ -42,6 +43,7 @@ export default function InflationExplorer() {
 
   const [metric, setMetric] = useState<Metric>("yoy");
   const [basket, setBasket] = useState<Basket>("CPI");
+  const [componentLevel, setComponentLevel] = useState<ComponentLevel>("core");
   const [goldData, setGoldData] = useState<any>(null);
 
   // Fetch Gold inflation data
@@ -59,8 +61,8 @@ export default function InflationExplorer() {
   }, []);
 
   // Take headline + component face values fully live from FRED index series.
-  const cpiComps = getInflationComponents("CPI");
-  const pceComps = getInflationComponents("PCE");
+  const cpiComps = getInflationComponents("CPI", componentLevel);
+  const pceComps = getInflationComponents("PCE", componentLevel);
   const headBase = getInflationHeadlines();
   const allIds = [...headBase, ...cpiComps, ...pceComps].map((i) => i.id);
   const { data: liveMap, source } = useLiveSeriesSet(allIds, "lin", 15);
@@ -72,6 +74,7 @@ export default function InflationExplorer() {
   const headlines = headBase.map(merge);
   const cpiMerged = cpiComps.map(merge);
   const components = (basket === "CPI" ? cpiMerged : pceComps.map(merge));
+  const weightedComponents = components.filter((c) => c.contributionEligible && c.contribution != null);
   const head = (g: string) => headlines.find((h) => h.group === g)!;
 
   // Determine page source: prefer Gold if available, otherwise FRED/SIM
@@ -167,8 +170,12 @@ export default function InflationExplorer() {
       key: "weight",
       header: "Weight %",
       align: "right",
-      render: (r) => <span className="text-term-text-dim">{fmtNum(r.weight, 1)}</span>,
-      sortVal: (r) => r.weight,
+      render: (r) => (
+        r.weight == null
+          ? <span className="text-term-text-dim">-</span>
+          : <span className="text-term-text-dim">{fmtNum(r.weight, 1)}</span>
+      ),
+      sortVal: (r) => r.weight ?? -1,
     },
     {
       key: "index",
@@ -214,18 +221,22 @@ export default function InflationExplorer() {
       key: "contribution",
       header: "Contrib pp",
       align: "right",
-      render: (r) => <span className={inflClass(r.contribution)}>{fmtSigned(r.contribution, 2)}</span>,
-      sortVal: (r) => r.contribution,
+      render: (r) => (
+        r.contribution == null
+          ? <span className="text-term-text-dim">-</span>
+          : <span className={inflClass(r.contribution)}>{fmtSigned(r.contribution, 2)}</span>
+      ),
+      sortVal: (r) => r.contribution ?? Number.NEGATIVE_INFINITY,
     },
   ];
 
   // Contribution bars (weighted YoY pp) sorted desc.
-  const contribBars = [...components]
-    .sort((a, b) => b.contribution - a.contribution)
+  const contribBars = [...weightedComponents]
+    .sort((a, b) => (b.contribution ?? 0) - (a.contribution ?? 0))
     .map((c) => ({
       label: c.label,
-      value: c.contribution,
-      color: c.contribution >= 0 ? "#FF3B3B" : "#2ECC71",
+      value: c.contribution ?? 0,
+      color: (c.contribution ?? 0) >= 0 ? "#FF3B3B" : "#2ECC71",
     }));
 
   // Hot / cool lists by yoyAccel.
@@ -304,6 +315,7 @@ export default function InflationExplorer() {
           <div className="space-y-3 px-3 py-3">
             <TermToggleGroup label="Primary Metric" value={metric} onChange={setMetric} options={METRICS.map((m) => ({ value: m.key, label: m.label }))} />
             <TermToggleGroup label="Basket" value={basket} onChange={setBasket} options={[{ value: "CPI" as Basket, label: "CPI" }, { value: "PCE" as Basket, label: "PCE" }]} />
+            <TermToggleGroup label="Level" value={componentLevel} onChange={setComponentLevel} options={[{ value: "core" as ComponentLevel, label: "Core View" }, { value: "expanded" as ComponentLevel, label: "Expanded" }]} />
             <div className="space-y-1 border-t border-term-border pt-2 text-3xs text-term-text-mute">
               <p>
                 <span className="text-term-amber">ΔMoM / ΔYoY</span> = change in the % print vs the prior
@@ -318,13 +330,14 @@ export default function InflationExplorer() {
 
         {/* COMPONENT TABLE */}
         <Panel
-          title={`${basket} Components — Item Level`}
+          title={`${basket} Components — ${componentLevel === "expanded" ? "Expanded" : "Core"}`}
           code="COMP"
           accent
           className="xl:col-span-2"
           right={
             <div className="flex items-center gap-2">
               <Tag tone="blue">{components.length} items</Tag>
+              {componentLevel === "expanded" && <Tag tone="amber">{weightedComponents.length} weighted</Tag>}
               <span className="text-3xs text-term-text-mute">{METRICS.find((m) => m.key === metric)?.label}</span>
             </div>
           }
@@ -340,12 +353,12 @@ export default function InflationExplorer() {
         </Panel>
 
         {/* CONTRIBUTION */}
-        <Panel title="YoY Contribution" code="CTRB" right={<span className="text-3xs text-term-text-mute">weighted pp</span>}>
+        <Panel title="YoY Contribution" code="CTRB" right={<span className="text-3xs text-term-text-mute">{weightedComponents.length} weighted pp</span>}>
           <div className="px-2 py-2">
             <BarChart data={contribBars} horizontal fmt={(n) => fmtSigned(n, 2)} />
             <div className="mt-2 px-1 text-3xs text-term-text-mute">
               Weight × YoY = contribution to headline {basket}. <span className="text-term-down">Red</span> adds to
-              inflation, <span className="text-term-up">green</span> subtracts.
+              inflation, <span className="text-term-up">green</span> subtracts. Rows without verified weights are excluded.
             </div>
           </div>
         </Panel>

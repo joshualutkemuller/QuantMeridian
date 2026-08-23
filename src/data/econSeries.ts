@@ -210,6 +210,17 @@ export const FRED_CATALOG: FredSeries[] = [
   { id: "CUSR0000SAS367", label: "CPI: Airline Fares", short: "Airfares", unit: "index", category: "INFLATION", freq: "M", decimals: 1, level: 295, vol: 3.0, bullish: false },
   { id: "CPIRECSL", label: "CPI: Recreation", short: "Recreation", unit: "index", category: "INFLATION", freq: "M", decimals: 1, level: 132, vol: 0.2, bullish: false },
   { id: "CUSR0000SAE1", label: "CPI: Education & Communication", short: "Edu/Comm", unit: "index", category: "INFLATION", freq: "M", decimals: 1, level: 160, vol: 0.2, bullish: false },
+  { id: "CUSR0000SAC", label: "CPI: Commodities", short: "Commodities", unit: "index", category: "INFLATION", freq: "M", decimals: 1, level: 175, vol: 0.5, bullish: false },
+  { id: "CUSR0000SACL1E", label: "CPI: Core Goods", short: "Core Goods", unit: "index", category: "INFLATION", freq: "M", decimals: 1, level: 130, vol: 0.4, bullish: false },
+  { id: "CUSR0000SAF", label: "CPI: Food & Beverages", short: "Food/Bvg", unit: "index", category: "INFLATION", freq: "M", decimals: 1, level: 325, vol: 0.3, bullish: false },
+  { id: "CUSR0000SAH", label: "CPI: Housing", short: "Housing", unit: "index", category: "INFLATION", freq: "M", decimals: 1, level: 345, vol: 0.4, bullish: false },
+  { id: "CUSR0000SAH2", label: "CPI: Fuels & Utilities", short: "Fuel/Util", unit: "index", category: "INFLATION", freq: "M", decimals: 1, level: 280, vol: 1.0, bullish: false },
+  { id: "CUSR0000SAM1", label: "CPI: Medical Care Commodities", short: "Med Goods", unit: "index", category: "INFLATION", freq: "M", decimals: 1, level: 395, vol: 0.4, bullish: false },
+  { id: "CUSR0000SAM2", label: "CPI: Medical Care Services", short: "Med Svcs", unit: "index", category: "INFLATION", freq: "M", decimals: 1, level: 620, vol: 0.4, bullish: false },
+  { id: "CUSR0000SAS", label: "CPI: Services", short: "Services", unit: "index", category: "INFLATION", freq: "M", decimals: 1, level: 390, vol: 0.4, bullish: false },
+  { id: "CUSR0000SASLE", label: "CPI: Core Services ex Energy", short: "Core Svcs", unit: "index", category: "INFLATION", freq: "M", decimals: 1, level: 405, vol: 0.4, bullish: false },
+  { id: "CUSR0000SEHF02", label: "CPI: Utility Gas Service", short: "Utility Gas", unit: "index", category: "INFLATION", freq: "M", decimals: 1, level: 285, vol: 2.0, bullish: false },
+  { id: "CUSR0000SAG", label: "CPI: Other Goods & Services", short: "Other G&S", unit: "index", category: "INFLATION", freq: "M", decimals: 1, level: 540, vol: 0.4, bullish: false },
 
   // ── PCE component series (INFL module) ──
   { id: "DGDSRG3M086SBEA", label: "PCE: Goods", short: "PCE Goods", unit: "% m/m", category: "INFLATION", freq: "M", decimals: 1, level: 0.1, vol: 0.3, bullish: false },
