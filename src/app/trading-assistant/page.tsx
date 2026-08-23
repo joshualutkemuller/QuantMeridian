@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import clsx from "clsx";
 import { DataGrid, type Column } from "@/components/ui/DataGrid";
 import { KpiStrip, PageHeader } from "@/components/ui/PageHeader";
@@ -16,7 +16,6 @@ import {
   buildSignal,
   buildSignals,
   canPlacePaperOrder,
-  computePaperPositions,
   runRiskChecks,
   type AssistantMode,
   type BotCode,
@@ -24,6 +23,7 @@ import {
   type PolyBotSignal,
   type RiskProfile,
 } from "@/data/polybot";
+import { usePaperLedger } from "@/lib/usePaperLedger";
 import { usePolyBook } from "@/lib/usePolybot";
 import { usePolyHistory, usePolymarkets } from "@/lib/usePolymarket";
 import { fmtNum, fmtPct, fmtSignedPct, fmtUsdAbbr, pnlClass } from "@/lib/format";
@@ -48,28 +48,12 @@ function bookTone(source: string): "up" | "amber" | "neutral" | "down" {
   return "neutral";
 }
 
-function loadPaperOrders(): PaperOrder[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem("qit.polybot.paperOrders");
-    return raw ? JSON.parse(raw) as PaperOrder[] : [];
-  } catch {
-    return [];
-  }
-}
-
-function savePaperOrders(orders: PaperOrder[]) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem("qit.polybot.paperOrders", JSON.stringify(orders.slice(0, 50)));
-}
-
 export default function TradingAssistant() {
   const [bot, setBot] = useState<BotCode>("POLYBOT");
   const [mode, setMode] = useState<AssistantMode>("RESEARCH");
   const [riskProfile, setRiskProfile] = useState<RiskProfile>("CONSERVATIVE");
   const [universe, setUniverse] = useState<Universe>("ALL");
   const [selected, setSelected] = useState<PolyMarket | null>(null);
-  const [paperOrders, setPaperOrders] = useState<PaperOrder[]>([]);
   const { simEnabled, toggle: toggleSimMode } = useSimMode();
 
   const category = universe === "ALL" ? undefined : universe;
@@ -79,14 +63,9 @@ export default function TradingAssistant() {
     { value: "ALL", label: "All active" },
     ...categories.map((c) => ({ value: c.category, label: c.category })),
   ];
-
-  useEffect(() => {
-    setPaperOrders(loadPaperOrders());
-  }, []);
-
-  useEffect(() => {
-    savePaperOrders(paperOrders);
-  }, [paperOrders]);
+  const { snapshot: ledger, status: ledgerStatus, submitOrder, resetLedger } = usePaperLedger(markets);
+  const paperOrders = ledger.orders;
+  const positions = ledger.positions;
 
   const selectedMarket = useMemo(() => {
     if (selected) {
@@ -97,7 +76,6 @@ export default function TradingAssistant() {
   }, [markets, selected]);
 
   const { data: book, source: bookSource } = usePolyBook(selectedMarket);
-  const positions = useMemo(() => computePaperPositions(paperOrders, markets), [markets, paperOrders]);
   const riskChecks = useMemo(
     () => runRiskChecks({
       market: selectedMarket,
@@ -109,7 +87,7 @@ export default function TradingAssistant() {
     }),
     [book, paperOrders, positions, riskProfile, selectedMarket]
   );
-  const paperAllowed = mode === "PAPER" && canPlacePaperOrder(riskChecks);
+  const paperAllowed = mode === "PAPER" && ledgerStatus !== "LOADING" && canPlacePaperOrder(riskChecks);
 
   const signals = useMemo(
     () => buildSignals(markets, book ?? undefined, selectedMarket?.id),
@@ -121,8 +99,8 @@ export default function TradingAssistant() {
   const activeSignals = signals.filter((s) => s.signalScore >= 45).length;
   const avgEdge = signals.length ? signals.reduce((sum, s) => sum + s.expectedEdge, 0) / signals.length : 0;
   const avgDepth = signals.length ? signals.reduce((sum, s) => sum + s.depthScore, 0) / signals.length : 0;
-  const paperExposure = positions.reduce((sum, p) => sum + p.costBasis, 0);
-  const paperPnl = positions.reduce((sum, p) => sum + p.pnl, 0);
+  const paperExposure = ledger.exposureUsd;
+  const paperPnl = ledger.pnlUsd;
   const ticketSize = RISK_LIMITS[riskProfile].maxOrderUsd;
   const bookLevels = book?.levels ?? [];
 
@@ -192,22 +170,22 @@ export default function TradingAssistant() {
     },
   ];
 
-  function addPaperOrder(side: PaperOrder["side"]) {
+  async function addPaperOrder(side: PaperOrder["side"]) {
     if (!selectedMarket || mode !== "PAPER" || !canPlacePaperOrder(riskChecks)) return;
     const price = side === "BUY_YES"
       ? book?.bestAsk && book.bestAsk > 0 ? book.bestAsk : selectedMarket.yesPrice
       : selectedMarket.noPrice;
-    const order: PaperOrder = {
-      id: `paper-${Date.now()}`,
-      createdAt: new Date().toISOString(),
+    await submitOrder({
+      botCode: bot,
       marketId: selectedMarket.id,
       question: selectedMarket.question,
+      market: selectedMarket,
       side,
       price,
       sizeUsd: ticketSize,
-      mode: "PAPER",
-    };
-    setPaperOrders((prev) => [order, ...prev].slice(0, 50));
+      riskProfile,
+      book,
+    });
   }
 
   const prices = history.map((p) => p.price * 100);
@@ -277,6 +255,7 @@ export default function TradingAssistant() {
         </div>
         <Tag tone={mode === "PAPER" ? "amber" : "neutral"}>{mode}</Tag>
         <Tag tone={paperAllowed ? "up" : "amber"}>{paperAllowed ? "PAPER READY" : "GATED"}</Tag>
+        <Tag tone={ledgerStatus === "SERVER" ? "up" : ledgerStatus === "LOADING" ? "amber" : "neutral"}>{ledgerStatus === "SERVER" ? "SERVER LEDGER" : ledgerStatus}</Tag>
         <Tag tone="neutral">LIVE DISABLED</Tag>
       </div>
 
@@ -285,7 +264,7 @@ export default function TradingAssistant() {
         <Stat label="Markets Scanned" value={markets.length} sub={universe === "ALL" ? "all active" : universe} />
         <Stat label="Active Signals" value={activeSignals} sub="score >= 45" tone={activeSignals > 0 ? "up" : "neutral"} />
         <Stat label="Avg Edge" value={fmtSignedPct(avgEdge * 100, 1)} tone={avgEdge > 0 ? "up" : avgEdge < 0 ? "down" : "neutral"} />
-        <Stat label="Paper Exposure" value={fmtUsdAbbr(paperExposure)} sub={`${paperOrders.length} orders`} tone={paperExposure > 0 ? "amber" : "neutral"} />
+        <Stat label="Paper Exposure" value={fmtUsdAbbr(paperExposure)} sub={`${paperOrders.length} orders / ${ledger.fills.length} fills`} tone={paperExposure > 0 ? "amber" : "neutral"} />
         <Stat label="Paper P&L" value={fmtUsdAbbr(paperPnl)} sub="marked to market" tone={paperPnl > 0 ? "up" : paperPnl < 0 ? "down" : "neutral"} />
       </KpiStrip>
 
@@ -389,7 +368,7 @@ export default function TradingAssistant() {
                         </button>
                       </div>
                       <div className="mt-2 text-2xs text-term-text-dim">
-                        Paper orders are blocked unless every risk check passes. Live execution remains disabled.
+                        Paper orders are server-risk checked first; local fallback is used only if the paper API is unavailable.
                       </div>
                     </div>
                     <div className="rounded-sm border border-term-border bg-term-panel-2 p-2">
@@ -410,7 +389,23 @@ export default function TradingAssistant() {
         </div>
 
         <div className="col-span-12 grid grid-cols-1 gap-2 xl:grid-cols-3">
-          <Panel title="Paper Ledger" code="PAPER" right={<Tag tone="amber">LOCAL STORAGE</Tag>} scroll>
+          <Panel
+            title="Paper Ledger"
+            code="PAPER"
+            right={
+              <div className="flex items-center gap-1">
+                <Tag tone={ledger.storage === "IN_MEMORY" ? "up" : "amber"}>{ledger.storage === "IN_MEMORY" ? "SERVER STATE" : "LOCAL FALLBACK"}</Tag>
+                <button
+                  type="button"
+                  onClick={resetLedger}
+                  className="rounded-sm border border-term-border bg-term-panel-3 px-1.5 py-0.5 text-3xs font-semibold uppercase tracking-wide text-term-text-mute hover:border-term-amber hover:text-term-amber"
+                >
+                  Reset
+                </button>
+              </div>
+            }
+            scroll
+          >
             <div className="flex max-h-48 flex-col">
               {paperOrders.length === 0 ? (
                 <div className="p-4 text-xs text-term-text-mute">No paper orders yet. Set mode to Paper and use the ticket above.</div>
@@ -448,10 +443,13 @@ export default function TradingAssistant() {
               <div><span className="text-term-amber">INIT</span> Loaded Trading Assistant with Polymarket default.</div>
               <div><span className="text-term-amber">DATA</span> {simEnabled ? "SIM mode enabled for deterministic testing." : "Live-first mode; enable SIM if public API data is unavailable."}</div>
               <div><span className="text-term-amber">BOOK</span> Selected market book source: {bookSource}.</div>
+              <div><span className="text-term-amber">LEDGER</span> {ledger.storage === "IN_MEMORY" ? "Using server in-memory paper ledger." : "Using browser fallback ledger."}</div>
               <div><span className="text-term-amber">SCAN</span> Ranked {markets.length} markets using edge, depth, spread, and urgency.</div>
               <div><span className="text-term-amber">RISK</span> {riskChecks.filter((check) => !check.ok).length} blocking checks.</div>
+              {ledger.events.slice(0, 3).map((event) => (
+                <div key={event.id}><span className="text-term-amber">{event.type}</span> {event.message}</div>
+              ))}
               <div><span className="text-term-amber">SAFE</span> Research mode default; live orders disabled.</div>
-              <div><span className="text-term-amber">PAPER</span> Ledger persists in browser local storage.</div>
             </div>
           </Panel>
         </div>
