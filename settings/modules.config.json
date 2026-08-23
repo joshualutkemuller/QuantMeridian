@@ -19,6 +19,7 @@
     "SXU":    { "enabled": true, "label": "Sources & Uses" },
     "OPT":    { "enabled": true, "label": "Optimization Center" },
     "DESK":   { "enabled": true, "label": "Trading Desk" },
+    "TASSIST": { "enabled": true, "label": "Trading Assistant" },
     "ECON":   { "enabled": true, "label": "Macro Dashboard" },
     "CURV":   { "enabled": true, "label": "Treasury Curve Lab" },
     "INFL":   { "enabled": true, "label": "Inflation Explorer" },
