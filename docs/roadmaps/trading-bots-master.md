@@ -2,20 +2,27 @@
 
 Date: 2026-08-23
 Branch: `trading_bot`
-Status: Phase 0/1 implementation started
+Status: Phase 1/2 implementation in progress
 
 ## Current Build Status
 
 | Item | Status | Implementation note |
 |---|---|---|
-| Master roadmap | Done | `docs/roadmaps/trading-bots-master.md` created |
+| Master roadmap | Done | `docs/roadmaps/trading-bots-master.md` created and updated as tasks land |
 | `TRADING_ASSISTANT` nav group | Done | Added to `src/lib/nav.ts` after `DESK` |
-| `TASSIST` route | Done | Added to `src/App.tsx` and module config |
+| `TASSIST` route | Done | Added to `src/App.tsx` and `settings/modules.config.json` |
 | `POLYBOT` default dropdown | Done | `Polymarket` is the first/default bot in `/trading-assistant` |
 | Research/Paper/Live mode control | Done | `Research` default; `Live` disabled |
 | SIM data toggle | Done | Uses `useSimMode()` and existing `qit-sim-mode` localStorage flag |
-| Polymarket signal shell | Done | Signal queue, selected market, derived book, paper ticket, run log |
-| Paper ledger persistence | Initial decision made | Browser `localStorage` for first build; server-side ledger deferred |
+| Polymarket market/event APIs | Done | Existing routes now call public Gamma discovery with SIM fallback |
+| Polymarket CLOB book API | Done | Added `/api/polymarket/book` for selected YES-token depth with SIM fallback |
+| `POLYBOT` logic extraction | Done | Added `src/data/polybot.ts` for signals, books, positions, and risk checks |
+| Paper ledger contracts | Done | Added `src/data/paperLedger.ts` for order, fill, event, and snapshot types |
+| Server paper ledger | Done for first build | Added in-process server ledger in `src/server/paperLedger.ts` with orders, fills, events, positions, exposure, and P&L |
+| Paper ledger APIs | Done for first build | Added `GET/POST/DELETE /api/trading-assistant/paper/orders` and `GET /api/trading-assistant/paper/positions` |
+| Paper positions and P&L | Done for first build | Computed from server ledger snapshot, with browser local fallback if the paper API is unavailable |
+| Hard paper risk gates | Done for first build | Ticket disabled client-side and rechecked server-side before simulated fills |
+| Paper ledger tests | Done for first build | Added deterministic Vitest coverage for server ledger fills/rejections/reset/P&L, API routes, local fallback, and `TASSIST` nav contract |
 | Live execution | Not started | Must remain disabled until credentials, risk gates, approvals, and kill switch exist |
 
 ## Purpose
@@ -46,28 +53,40 @@ This document tracks:
 
 | Layer | File | Current role | Next likely extraction |
 |---|---|---|---|
-| Page/UI | `src/app/trading-assistant/page.tsx` | Bot dropdown, mode selector, SIM toggle, signal queue, selected market panel, derived order book, paper ticket, local paper ledger | Split into `components/trading-assistant/*` once the page grows |
-| Existing Polymarket data | `src/data/polymarket.ts` | Deterministic market/event/history fixtures and category helpers | Add `src/data/tradingAssistant.ts` or `src/data/polybot.ts` for bot-specific signals |
-| Existing Polymarket hooks | `src/lib/usePolymarket.ts` | Live/SIM market, event, and history hooks used by `POLYBOT` | Add `usePolyBotSignals` once signal endpoint exists |
+| Page/UI | `src/app/trading-assistant/page.tsx` | Bot dropdown, mode selector, SIM toggle, signal queue, selected market panel, CLOB/SIM book, server-ledger paper ticket, paper ledger, positions/P&L, reset control, run log | Split into `components/trading-assistant/*` once the page grows |
+| Bot domain logic | `src/data/polybot.ts` | Bot options, risk profiles, signal scoring, book normalization, paper position/P&L accounting, hard paper risk checks | Add unit tests and configurable signal weights |
+| Paper ledger contracts | `src/data/paperLedger.ts` | Shared order intent, fill, event, snapshot, and storage/source types | Extend with run records when signal endpoint exists |
+| Server paper ledger | `src/server/paperLedger.ts` | In-process paper ledger state, server-side risk checks, simulated fills, reset, and snapshot creation | Replace with JSON/DB-backed repository behind the same API boundary |
+| Polymarket data mapping | `src/data/polymarket.ts` | SIM fixtures plus Gamma event/market mapping and outcome-token extraction | Expand category/tag mapping once live payload coverage is reviewed |
+| Existing Polymarket hooks | `src/lib/usePolymarket.ts` | Live/SIM market, event, and history hooks consumed by `POLYBOT` | Keep shared by `POLY` and Trading Assistant |
+| POLYBOT hooks | `src/lib/usePolybot.ts` | Selected market CLOB/SIM order-book hook | Add `usePolybotSignals` when signal endpoint exists |
+| Paper ledger hook | `src/lib/usePaperLedger.ts` | Client hook for server ledger fetch, order submission, reset, and localStorage fallback | Add optimistic/rejected-order UI states |
+| Market APIs | `src/app/api/polymarket/markets/route.ts`, `src/app/api/polymarket/events/route.ts` | Public Gamma discovery with deterministic SIM fallback | Add schema validation and cache headers |
+| Book API | `src/app/api/polymarket/book/route.ts` | Public CLOB `/book?token_id=` adapter with SIM fallback | Add multi-token YES/NO book support |
+| Paper APIs | `src/app/api/trading-assistant/paper/orders/route.ts`, `src/app/api/trading-assistant/paper/positions/route.ts` | Server paper order, reset, snapshot, positions, fills, and events | Add durable persistence and run IDs |
+| Paper ledger tests | `src/server/paperLedger.test.ts`, `src/app/api/trading-assistant/paper/routes.test.ts`, `src/lib/usePaperLedger.test.ts` | Deterministic tests for simulated fills, risk rejections, reset behavior, API snapshots, local fallback orders, and P&L math | Add UI interaction tests once component extraction starts |
+| History API | `src/app/api/polymarket/history/route.ts` | CLOB history attempt with deterministic fallback | Confirm final token/market id convention against live payloads |
 | Sim mode | `src/lib/simMode.tsx` | Global SIM toggle; persisted in `qit-sim-mode` | Keep shared across terminal modules |
 | Formatting/UI | `src/components/ui/*`, `src/components/charts/*` | Reused terminal controls and charts | No new primitives needed yet |
 
 ### Persistence Decision
 
-For the first build, paper orders persist in browser `localStorage` under `qit.polybot.paperOrders`.
+For the first server-ledger build, paper orders persist in an in-process server ledger. The browser `localStorage` ledger under `qit.polybot.paperOrders` remains as a fallback only when the paper API is unavailable.
 
 Reasoning:
 
-- Fastest path to test the UX and workflow without backend state.
-- Avoids inventing a server persistence layer before the paper-trading model is proven.
+- Gives the bot an API-backed paper-trading boundary without introducing a database too early.
+- Keeps order/fill/risk events server-side so the UI is no longer the primary ledger.
+- Preserves localStorage fallback for quick local testing and resilience during API failures.
 - Keeps live execution clearly separated from research/paper behavior.
 
 Future upgrade path:
 
 | Stage | Persistence |
 |---|---|
-| Current | Browser `localStorage` paper ledger |
-| Next | Server-side JSON or lightweight API-backed paper ledger |
+| Previous | Browser `localStorage` paper ledger |
+| Current | In-process server paper ledger with localStorage fallback |
+| Next | Server-side JSON or lightweight durable repository |
 | Later | Auditable database table for bot runs, orders, fills, positions, and risk events |
 | Live | Immutable execution/audit ledger with credentials kept server-side only |
 
@@ -98,7 +117,7 @@ The existing `POLY` module should remain in `INTELLIGENCE` as the prediction-mar
 
 | Bot code | Bot name | Market | Status | Default mode | Primary edge hypothesis | Data dependencies | Notes |
 |---|---|---:|---|---|---|---|---|
-| `POLYBOT` | Polymarket Bot | Prediction markets | Shell built | Research/Paper | Mispriced probabilities, shallow liquidity, stale event reaction, cross-market inconsistencies | Existing Polymarket hooks, Gamma/CLOB later, price history | First build now visible at `/trading-assistant` |
+| `POLYBOT` | Polymarket Bot | Prediction markets | Paper ledger tested | Research/Paper | Mispriced probabilities, shallow liquidity, stale event reaction, cross-market inconsistencies | Existing Polymarket hooks, Gamma/CLOB, paper ledger API, price history | First build now visible at `/trading-assistant` |
 | `KALSHI` | Kalshi Bot | Regulated event contracts | Backlog | Research | Event probability and calendar surprise pricing | Future API adapter | Keep separate from Polymarket due to venue/regulatory differences |
 | `CRYPTO_MM` | Crypto Market Maker | Crypto spot/perps | Backlog | Research | Spread capture plus inventory skew | Future exchange adapter | Requires stronger execution controls |
 | `MACRO_EVENT` | Macro Event Bot | Rates/macro assets | Backlog | Research | FOMC/CPI/NFP event pricing drift | FRED, calendar, market data | Could connect to existing `CAL`, `FOMC`, `MKT` |
@@ -193,13 +212,13 @@ References:
 
 | Capability | Description | Build priority | Current status |
 |---|---|---:|---|
-| Market discovery | Pull active, non-closed events and markets; filter by category, tag, volume, close date | P0 | Reuses existing Polymarket hook/fixtures |
+| Market discovery | Pull active, non-closed events and markets; filter by category, tag, volume, close date | P0 | Gamma route wired with SIM fallback |
 | Market detail view | Show question, outcomes, tokens, close date, volume, liquidity, tags, event grouping | P0 | Shell built |
-| Order book reader | Pull bids/asks for selected outcome token, compute midpoint, spread, depth, imbalance | P0 | Derived book built; CLOB endpoint still future |
+| Order book reader | Pull bids/asks for selected outcome token, compute midpoint, spread, depth, imbalance | P0 | CLOB `/book` adapter built with SIM fallback |
 | Price history | Show probability path, momentum, realized probability volatility, drawdown from peak odds | P0 | Reuses existing history hook |
-| Signal engine | Rank markets by estimated edge, liquidity, spread, staleness, and event urgency | P1 | In-page first-pass signal model built |
+| Signal engine | Rank markets by estimated edge, liquidity, spread, staleness, and event urgency | P1 | Extracted to `src/data/polybot.ts`; endpoint still future |
 | Explanation layer | Explain signal drivers in plain English and quantitative fields | P1 | Partial via run log, warnings, and signal fields |
-| Paper trading | Simulate limit/market orders against current and historical books with slippage assumptions | P1 | `$5` local paper ticket built |
+| Paper trading | Simulate paper orders against current selected book/mark with server ledger and local fallback | P1 | Risk-gated paper ticket and API-backed paper ledger built |
 | Bot run log | Store run timestamp, input universe, signals generated, paper orders, warnings | P1 | In-page visible log; persistent run log future |
 | Live execution | Authenticated CLOB order creation/cancel path with hard kill switch | P3 | Not started; disabled |
 
@@ -237,11 +256,11 @@ Start with transparent, non-ML signals before adding models. Prediction markets 
 | Risk control | Default | Requirement | Current status |
 |---|---|---|---|
 | Mode | Research/Paper | Live is disabled until credentials, limits, and kill switch pass checks | Built; `Research` default, `Live` disabled |
-| Max order size | `$5` paper default | Configurable per bot and per market | Built as fixed first-pass value |
-| Max position per market | `$25` paper default | Hard cap before placing any order | Displayed; enforcement future |
-| Max daily loss | `$25` paper default | Pauses bot once breached | Future |
-| Min depth | Configurable | Do not trade if market cannot absorb order size | Warning field built; hard gate future |
-| Max spread | Configurable | Do not trade when spread exceeds threshold | Warning field built; hard gate future |
+| Max order size | `$5` conservative paper default | Configurable per risk profile | Enforced by paper ticket |
+| Max position per market | `$25` conservative paper default | Hard cap before placing any order | Enforced by paper ticket |
+| Max daily loss | `$25` conservative paper default | Pauses paper ticket once breached | Enforced by paper ticket |
+| Min depth | Configurable by risk profile | Do not trade if market cannot absorb order size | Enforced by paper ticket |
+| Max spread | Configurable by risk profile | Do not trade when spread exceeds threshold | Enforced by paper ticket |
 | Close-date rules | Configurable | Restrict markets near resolution unless strategy explicitly allows | Warning field built; hard gate future |
 | Manual approval | Required for live | Every live order requires approval until trusted automation is explicitly built | Future |
 | Kill switch | Always visible | Cancels open orders and pauses bot loop | Displayed as safety status; real action future |
@@ -301,11 +320,11 @@ export interface OrderIntent {
 | `/api/trading-assistant/bots` | `GET` | Bot registry and enabled bot list | All | Future; registry in page for now |
 | `/api/trading-assistant/polymarket/events` | `GET` | Active event discovery via Gamma | Research/Paper | Future; existing `/api/polymarket/events` reused indirectly |
 | `/api/trading-assistant/polymarket/markets` | `GET` | Market list with filters | Research/Paper | Future; existing `/api/polymarket/markets` reused indirectly |
-| `/api/trading-assistant/polymarket/book` | `GET` | CLOB order book by outcome token | Research/Paper | Future; derived book in page for now |
+| `/api/trading-assistant/polymarket/book` | `GET` | CLOB order book by outcome token | Research/Paper | Future; existing `/api/polymarket/book` reused indirectly |
 | `/api/trading-assistant/polymarket/history` | `GET` | Probability/price history | Research/Paper | Future; existing `/api/polymarket/history` reused indirectly |
 | `/api/trading-assistant/polymarket/signals` | `GET` | Ranked bot signals | Research/Paper | Future; in-page signal model for now |
-| `/api/trading-assistant/paper/orders` | `POST` | Simulated order creation | Paper | Future; localStorage paper ledger for now |
-| `/api/trading-assistant/paper/positions` | `GET` | Paper positions and P&L | Paper | Future |
+| `/api/trading-assistant/paper/orders` | `GET`/`POST`/`DELETE` | Paper ledger snapshot, risk-checked simulated order creation, and reset | Paper | Built; in-process server ledger |
+| `/api/trading-assistant/paper/positions` | `GET` | Paper positions, P&L, fills, and ledger events | Paper | Built; reads server ledger snapshot |
 | `/api/trading-assistant/live/orders` | `POST` | Future authenticated live order path | Live only, disabled initially | Future |
 | `/api/trading-assistant/kill-switch` | `POST` | Pause bot and cancel live orders when supported | Paper/Live | Future |
 
@@ -329,7 +348,7 @@ export interface OrderIntent {
 - [x] Create this master roadmap.
 - [x] Add `TRADING_ASSISTANT` nav group to `src/lib/nav.ts`.
 - [x] Add `TASSIST` nav item pointing to `/trading-assistant`.
-- [ ] Extract bot registry seed data out of page-local constants.
+- [x] Extract bot registry seed data out of page-local constants.
 
 #### Phase 1 - Read-only Polymarket workspace
 
@@ -338,15 +357,18 @@ export interface OrderIntent {
 - [x] Add SIM data toggle.
 - [x] Reuse existing `POLY` hooks where available.
 - [x] Add selected market detail, derived order book, price history, and data provenance.
-- [ ] Replace derived order book with CLOB `/book` adapter.
+- [x] Replace derived order book with CLOB `/book` adapter.
 
 #### Phase 2 - Signal engine and paper trading
 
 - [ ] Add signal ranking endpoint.
 - [ ] Add configurable signal weights.
 - [x] Add first-pass paper order simulation and paper ledger.
+- [x] Add API-backed paper orders, fills, positions, and reset.
+- [x] Add server-side risk checks before simulated fills.
+- [x] Add deterministic ledger/API/local fallback tests.
 - [x] Add run logs, warnings, and paper exposure.
-- [ ] Add paper positions and P&L calculation.
+- [x] Add paper positions and P&L calculation.
 
 #### Phase 3 - Strategy expansion
 
@@ -369,7 +391,8 @@ export interface OrderIntent {
 | Unit | Bot registry defaults, risk checks, signal formulas, price/probability transforms |
 | API | Polymarket adapter fallback, schema validation, stale/cached response handling |
 | UI | Dropdown default, mode gating, SIM toggle, live disabled state, mobile layout, provenance chips |
-| Paper trading | Fill simulation, localStorage ledger persistence, P&L ledger, risk caps, daily-loss stop |
+| Paper trading | Fill simulation, server ledger persistence boundary, local fallback, P&L ledger, risk caps, daily-loss stop |
+| Paper ledger current coverage | `src/server/paperLedger.test.ts`, `src/app/api/trading-assistant/paper/routes.test.ts`, `src/lib/usePaperLedger.test.ts`, `src/lib/nav.test.ts` |
 | Execution later | Credential absence blocks live, kill switch blocks orders, max order size rejects |
 
 ## Open Questions
@@ -377,7 +400,7 @@ export interface OrderIntent {
 - Should `POLYBOT` initially share `/polymarket` data functions or get a separate adapter layer immediately after the shell? Current answer: share now, extract once signal/API logic grows.
 - What default categories should the Polymarket bot monitor first: macro, crypto, politics, sports, earnings, or all active markets above a volume threshold?
 - Should user-supplied model probabilities be manual inputs first, or should the bot derive them from QuantMeridian macro/news modules?
-- Should the next iteration prioritize real CLOB order books or paper P&L/position accounting?
+- Should the next iteration prioritize a signal endpoint, configurable weights, or durable JSON/DB persistence behind the new paper ledger API?
 
 ## First Build Recommendation
 
