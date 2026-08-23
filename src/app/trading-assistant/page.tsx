@@ -10,6 +10,7 @@ import { Sparkline } from "@/components/charts/Sparkline";
 import { getPolyCategories, type PolyCategory, type PolyMarket } from "@/data/polymarket";
 import { usePolyHistory, usePolymarkets } from "@/lib/usePolymarket";
 import { fmtNum, fmtPct, fmtSignedPct, fmtUsdAbbr, pnlClass } from "@/lib/format";
+import { useSimMode } from "@/lib/simMode";
 
 type BotCode = "POLYBOT";
 type AssistantMode = "RESEARCH" | "PAPER" | "LIVE";
@@ -138,6 +139,7 @@ export default function TradingAssistant() {
   const [universe, setUniverse] = useState<Universe>("ALL");
   const [selected, setSelected] = useState<PolyMarket | null>(null);
   const [paperOrders, setPaperOrders] = useState<PaperOrder[]>([]);
+  const { simEnabled, toggle: toggleSimMode } = useSimMode();
 
   const category = universe === "ALL" ? undefined : universe;
   const { data: markets, source } = usePolymarkets({ limit: 100, category });
@@ -266,6 +268,7 @@ export default function TradingAssistant() {
             <span className="term-label hidden md:inline">BOT</span>
             <TermSelect value={bot} onChange={setBot} options={BOT_OPTIONS} size="sm" />
             <ProvenanceBadge source={source} />
+            <Tag tone={simEnabled ? "amber" : "up"}>{simEnabled ? "SIM ENABLED" : "LIVE FIRST"}</Tag>
           </>
         }
       />
@@ -291,6 +294,22 @@ export default function TradingAssistant() {
               {option.label}
             </button>
           ))}
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="term-label">DATA</span>
+          <button
+            type="button"
+            onClick={toggleSimMode}
+            className={clsx(
+              "rounded-sm border px-2 py-0.5 text-3xs font-semibold uppercase tracking-wide",
+              simEnabled
+                ? "border-term-amber bg-term-amber/15 text-term-amber"
+                : "border-term-up/40 bg-term-up/10 text-term-up hover:border-term-amber hover:text-term-amber"
+            )}
+            title="Toggle deterministic simulated data for easier local testing"
+          >
+            {simEnabled ? "SIM ON" : "LIVE DATA"}
+          </button>
         </div>
         <div className="flex items-center gap-1">
           <span className="term-label">UNIVERSE</span>
@@ -466,6 +485,7 @@ export default function TradingAssistant() {
           <Panel title="Run Log" code="LOG">
             <div className="flex flex-col gap-1 p-3 text-2xs text-term-text-dim">
               <div><span className="text-term-amber">INIT</span> Loaded Trading Assistant with Polymarket default.</div>
+              <div><span className="text-term-amber">DATA</span> {simEnabled ? "SIM mode enabled for deterministic testing." : "Live-first mode; enable SIM if public API data is unavailable."}</div>
               <div><span className="text-term-amber">SCAN</span> Ranked {markets.length} markets using edge, depth, spread, and urgency.</div>
               <div><span className="text-term-amber">SAFE</span> Research mode default; live orders disabled.</div>
               <div><span className="text-term-amber">PAPER</span> Ledger persists in browser local storage.</div>
