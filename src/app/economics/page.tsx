@@ -52,6 +52,27 @@ function pct(now: number, then: number, decimals = 2): number | null {
   return Number((((now - then) / Math.abs(then)) * 100).toFixed(decimals));
 }
 
+function metricClass(v: number | null | undefined) {
+  return v == null ? "text-term-text-dim" : pnlClass(v);
+}
+
+const MONTH_YEAR_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  month: "long",
+  timeZone: "UTC",
+  year: "numeric",
+});
+
+function periodLabel(r: IndicatorRow, asOf: string): string | null {
+  const match = /^(\d{4})-(\d{2})/.exec(asOf);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) return null;
+  if (r.freq === "Q") return `Q${Math.floor((month - 1) / 3) + 1} ${year}`;
+  if (r.freq === "M") return MONTH_YEAR_FORMATTER.format(new Date(Date.UTC(year, month - 1, 1)));
+  return null;
+}
+
 const KPI_IDS = ["GDPNOW", "PCEPILFE", "UNRATE", "FEDFUNDS", "DGS10", "T10Y2Y"] as const;
 const KPI_LABEL: Record<string, string> = {
   GDPNOW: "Real GDP (Nowcast)",
@@ -101,9 +122,12 @@ function effective(r: IndicatorRow, L: LiveIndicator | undefined) {
     change: L ? L.change : r.change,
     changePct: L ? L.changePct : pct(r.value, r.prior, 2),
     mom: L ? L.mom : null,
+    momDelta: L ? L.momDelta : null,
     qoq: L ? L.qoq : null,
     yoy: L ? L.yoy : r.yoy,
+    yoyDelta: L ? L.yoyDelta : null,
     monthlyPrint: L ? L.monthlyPrint : null,
+    indexValue: L ? L.indexValue ?? null : null,
     spark: L && L.history.length ? L.history : r.spark,
     asOf: L ? L.asOf : r.asOf,
     source: L ? L.source : "SIM" as const,
@@ -128,13 +152,15 @@ export default function MacroDashboard() {
   /** Open the 24-month drill-down for an indicator row. */
   const drill = (r: IndicatorRow) => {
     const growthMetrics = hasGrowthDrill(r);
+    const qoqAnnualizedMetrics = resolveFred(r.id).units === "pca" && seriesById(r.id)?.freq === "Q";
     open({
       id: r.id,
       label: r.label,
       units: resolveFred(r.id).units,
-      unitLabel: growthMetrics ? "level · derived MoM/YoY" : r.unit,
+      unitLabel: qoqAnnualizedMetrics ? "index · QoQ annualized" : growthMetrics ? "level · derived MoM/YoY" : r.unit,
       decimals: growthMetrics ? 2 : r.decimals,
       growthMetrics,
+      qoqAnnualizedMetrics,
     });
   };
 
@@ -210,14 +236,17 @@ export default function MacroDashboard() {
           if (!r) return <Stat key={id} label={KPI_LABEL[id]} value="—" />;
           const { value, change, asOf } = effective(r, liveInd[r.id]);
           const tone = toneFor(r.bullish, change);
+          const period = periodLabel(r, asOf);
           return (
             <div key={id} onClick={() => drill(r)} className="cursor-pointer transition-colors hover:bg-term-panel-2">
               <Stat
                 label={KPI_LABEL[id]}
                 value={fmtVal(value, r.decimals, r.unit)}
                 sub={
-                  <span className={pnlClass(change)}>
-                    Δ {fmtSigned(change, r.decimals)} {r.unit} · {asOf}
+                  <span>
+                    {period && <span className="text-term-text">{period} · </span>}
+                    <span className={pnlClass(change)}>Δ {fmtSigned(change, r.decimals)} {r.unit}</span>
+                    {asOf && <span> · as of {asOf}</span>}
                   </span>
                 }
                 tone={tone}
@@ -235,12 +264,16 @@ export default function MacroDashboard() {
             code="ECDB"
             accent
             toolbar={<TermToggleGroup label="Category" value={catFilter} onChange={setCatFilter} options={[{ value: "ALL", label: "All" }, ...CATEGORY_ORDER.map((c) => ({ value: c, label: ECON_CATEGORY_LABEL[c] }))]} size="sm" />}
-            right={<span className="tnum text-3xs text-term-text-mute">{indicators.length} series · Δ = unit change · Δ%/MoM/QoQ/YoY = percent change</span>}
+            right={<span className="tnum text-3xs text-term-text-mute">{indicators.length} series · inflation value = MoM % · Δ MoM/YoY in pp</span>}
           >
             <div className="grid grid-cols-1 gap-px bg-term-border md:grid-cols-2">
               {CATEGORY_ORDER.filter((cat) => catFilter === "ALL" || cat === catFilter).map((cat) => {
                 const rows = displayRows.filter((i) => i.category === cat);
                 if (rows.length === 0) return null;
+                const isInflation = cat === "INFLATION";
+                const gridCols = isInflation
+                  ? "grid-cols-[minmax(4.5rem,1fr)_1.5rem_4.25rem_4.75rem_4rem_4rem_4rem_4rem_1.25rem_3.5rem]"
+                  : "grid-cols-[minmax(4.5rem,1fr)_1.5rem_4.75rem_4.25rem_4rem_4rem_3.5rem_3.5rem_3.5rem_4rem_1.25rem_3.5rem]";
                 return (
                   <div key={cat} className="bg-term-panel">
                     <div className="flex items-center justify-between bg-term-panel-2 px-2 py-1">
@@ -250,19 +283,36 @@ export default function MacroDashboard() {
                       <span className="text-3xs text-term-text-mute">{rows.length}</span>
                     </div>
                     <div className="divide-y divide-term-border-soft">
-                      <div className="grid grid-cols-[minmax(4.5rem,1fr)_1.5rem_4.75rem_4.25rem_4rem_4rem_3.5rem_3.5rem_3.5rem_4rem_1.25rem_3.5rem] items-center gap-1 px-2 py-1 text-3xs uppercase tracking-wide text-term-text-mute">
-                        <span>Series</span>
-                        <span title="Publication frequency">F</span>
-                        <span className="text-right">Value</span>
-                        <span className="text-right">As of</span>
-                        <span className="text-right" title="Absolute change vs prior print (for YoY series this is the change in the YoY rate, not monthly price change)">Δ Prior</span>
-                        <span className="text-right" title="Percent change vs prior print">Δ% Prior</span>
-                        <span className="text-right" title="Month-over-month percent change from raw level/index values">MoM %</span>
-                        <span className="text-right" title="Quarter-over-quarter percent change from raw level/index values">QoQ %</span>
-                        <span className="text-right" title="Year-over-year percent change from raw level/index values, or the YoY display print">YoY %</span>
-                        <span className="text-right" title="Inflation monthly print derived from index levels">Infl. print</span>
-                        <span className="text-center" title="Data source for this indicator">Src</span>
-                        <span />
+                      <div className={`grid ${gridCols} items-center gap-1 px-2 py-1 text-3xs uppercase tracking-wide text-term-text-mute`}>
+                        {isInflation ? (
+                          <>
+                            <span>Series</span>
+                            <span title="Publication frequency">F</span>
+                            <span className="text-right" title="Month-over-month percent change from raw index levels">MoM %</span>
+                            <span className="text-right" title="Latest raw index level/value">Index</span>
+                            <span className="text-right" title="Absolute change in MoM percent change, in percentage points">Δ MoM</span>
+                            <span className="text-right" title="Year-over-year percent change from raw index levels">YoY %</span>
+                            <span className="text-right" title="Absolute change in YoY percent change, in percentage points">Δ YoY</span>
+                            <span className="text-right">As of</span>
+                            <span className="text-center" title="Data source for this indicator">Src</span>
+                            <span />
+                          </>
+                        ) : (
+                          <>
+                            <span>Series</span>
+                            <span title="Publication frequency">F</span>
+                            <span className="text-right">Value</span>
+                            <span className="text-right">As of</span>
+                            <span className="text-right" title="Absolute change vs prior print (for YoY series this is the change in the YoY rate, not monthly price change)">Δ Prior</span>
+                            <span className="text-right" title="Percent change vs prior print">Δ% Prior</span>
+                            <span className="text-right" title="Month-over-month percent change from raw level/index values">MoM %</span>
+                            <span className="text-right" title="Quarter-over-quarter percent change from raw level/index values">QoQ %</span>
+                            <span className="text-right" title="Year-over-year percent change from raw level/index values, or the YoY display print">YoY %</span>
+                            <span className="text-right" title="Inflation monthly print derived from index levels">Infl. print</span>
+                            <span className="text-center" title="Data source for this indicator">Src</span>
+                            <span />
+                          </>
+                        )}
                       </div>
                       {rows.map((r) => {
                         const e = r.live;
@@ -270,7 +320,7 @@ export default function MacroDashboard() {
                           <div
                             key={r.id}
                             onClick={() => drill(r)}
-                            className="grid cursor-pointer grid-cols-[minmax(4.5rem,1fr)_1.5rem_4.75rem_4.25rem_4rem_4rem_3.5rem_3.5rem_3.5rem_4rem_1.25rem_3.5rem] items-center gap-1 px-2 py-1 text-2xs transition-colors hover:bg-term-panel-2"
+                            className={`grid cursor-pointer ${gridCols} items-center gap-1 px-2 py-1 text-2xs transition-colors hover:bg-term-panel-2`}
                             title={`${r.label} — click to drill 24m`}
                           >
                             <span className="truncate font-semibold text-term-text" title={r.label}>
@@ -279,30 +329,55 @@ export default function MacroDashboard() {
                             <span className="text-3xs text-term-text-mute" title={`${({D:"Daily",W:"Weekly",M:"Monthly",Q:"Quarterly"} as Record<string,string>)[seriesById(r.id)?.freq ?? ""] ?? ""} frequency`}>
                               {seriesById(r.id)?.freq ?? ""}
                             </span>
-                            <span className="tnum text-right text-term-text">
-                              {fmtVal(e.value, r.decimals, r.unit)}
-                            </span>
-                            <span className="tnum truncate text-right text-term-text-mute" title={e.asOf}>
-                              {e.asOf.slice(5)}
-                            </span>
-                            <span className={`tnum text-right ${pnlClass(e.change)}`} title={`Change vs prior print${r.unit.includes("y/y") ? " (change in YoY rate, not monthly)" : ""}: ${fmtSigned(e.change, r.decimals)} ${r.unit}`}>
-                              {fmtSigned(e.change, r.decimals)}
-                            </span>
-                            <span className={`tnum text-right ${e.changePct == null ? "text-term-text-dim" : pnlClass(e.changePct)}`} title="Percent change vs prior print">
-                              {e.changePct == null ? "—" : `${fmtSigned(e.changePct, 2)}%`}
-                            </span>
-                            <span className={`tnum text-right ${e.mom == null ? "text-term-text-dim" : pnlClass(e.mom)}`}>
-                              {e.mom == null ? "—" : `${fmtSigned(e.mom, 2)}%`}
-                            </span>
-                            <span className={`tnum text-right ${e.qoq == null ? "text-term-text-dim" : pnlClass(e.qoq)}`}>
-                              {e.qoq == null ? "—" : `${fmtSigned(e.qoq, 2)}%`}
-                            </span>
-                            <span className={`tnum text-right ${e.yoy == null ? "text-term-text-dim" : pnlClass(e.yoy)}`}>
-                              {e.yoy == null ? "—" : `${fmtSigned(e.yoy, 1)}%`}
-                            </span>
-                            <span className={`tnum text-right ${e.monthlyPrint == null ? "text-term-text-dim" : pnlClass(e.monthlyPrint)}`} title="Inflation monthly print: percent change from raw index level, not a change in the YoY print">
-                              {e.monthlyPrint == null ? "—" : `${fmtSigned(e.monthlyPrint, 2)}%`}
-                            </span>
+                            {isInflation ? (
+                              <>
+                                <span className={`tnum text-right ${metricClass(e.mom)}`} title="Month-over-month percent change from raw index levels">
+                                  {e.mom == null ? "—" : `${fmtSigned(e.mom, 2)}%`}
+                                </span>
+                                <span className="tnum text-right text-term-text" title="Latest raw index level/value">
+                                  {e.indexValue == null ? "—" : fmtNum(e.indexValue, r.decimals)}
+                                </span>
+                                <span className={`tnum text-right ${metricClass(e.momDelta)}`} title="Change in MoM percent change, in percentage points">
+                                  {e.momDelta == null ? "—" : `${fmtSigned(e.momDelta, 2)}pp`}
+                                </span>
+                                <span className={`tnum text-right ${metricClass(e.yoy)}`} title="Year-over-year percent change from raw index levels">
+                                  {e.yoy == null ? "—" : `${fmtSigned(e.yoy, 1)}%`}
+                                </span>
+                                <span className={`tnum text-right ${metricClass(e.yoyDelta)}`} title="Change in YoY percent change, in percentage points">
+                                  {e.yoyDelta == null ? "—" : `${fmtSigned(e.yoyDelta, 2)}pp`}
+                                </span>
+                                <span className="tnum truncate text-right text-term-text-mute" title={e.asOf}>
+                                  {e.asOf.slice(5)}
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                <span className="tnum text-right text-term-text">
+                                  {fmtVal(e.value, r.decimals, r.unit)}
+                                </span>
+                                <span className="tnum truncate text-right text-term-text-mute" title={e.asOf}>
+                                  {e.asOf.slice(5)}
+                                </span>
+                                <span className={`tnum text-right ${pnlClass(e.change)}`} title={`Change vs prior print${r.unit.includes("y/y") ? " (change in YoY rate, not monthly)" : ""}: ${fmtSigned(e.change, r.decimals)} ${r.unit}`}>
+                                  {fmtSigned(e.change, r.decimals)}
+                                </span>
+                                <span className={`tnum text-right ${metricClass(e.changePct)}`} title="Percent change vs prior print">
+                                  {e.changePct == null ? "—" : `${fmtSigned(e.changePct, 2)}%`}
+                                </span>
+                                <span className={`tnum text-right ${metricClass(e.mom)}`}>
+                                  {e.mom == null ? "—" : `${fmtSigned(e.mom, 2)}%`}
+                                </span>
+                                <span className={`tnum text-right ${metricClass(e.qoq)}`}>
+                                  {e.qoq == null ? "—" : `${fmtSigned(e.qoq, 2)}%`}
+                                </span>
+                                <span className={`tnum text-right ${metricClass(e.yoy)}`}>
+                                  {e.yoy == null ? "—" : `${fmtSigned(e.yoy, 1)}%`}
+                                </span>
+                                <span className={`tnum text-right ${metricClass(e.monthlyPrint)}`} title="Inflation monthly print: percent change from raw index level, not a change in the YoY print">
+                                  {e.monthlyPrint == null ? "—" : `${fmtSigned(e.monthlyPrint, 2)}%`}
+                                </span>
+                              </>
+                            )}
                             <span className="flex items-center justify-center" title={`Source: ${e.source}`}>
                               <span className={clsx("h-1.5 w-1.5 rounded-full", e.source === "DB" || e.source === "FRED" ? "bg-term-up" : e.source === "SNAPSHOT" ? "bg-term-violet" : "bg-term-amber")} />
                             </span>

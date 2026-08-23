@@ -1,0 +1,26 @@
+#!/bin/sh
+set -eu
+
+EXPECTED_NAME="Joshua Lutkemuller"
+EXPECTED_EMAIL="110635594+joshualutkemuller@users.noreply.github.com"
+EXPECTED_IDENT="$EXPECTED_NAME <$EXPECTED_EMAIL>"
+
+author_ident="$(git var GIT_AUTHOR_IDENT)"
+case "$author_ident" in
+  "$EXPECTED_IDENT "*)
+    exit 0
+    ;;
+esac
+
+cat >&2 <<EOF
+Commit blocked: Git author must be $EXPECTED_IDENT.
+
+Current author:
+  $author_ident
+
+This repo is configured so Claude/Codex-assisted commits are authored by Joshua
+Lutkemuller, not by the agent. Remove any GIT_AUTHOR_* override or commit with:
+
+  git commit --author="$EXPECTED_IDENT"
+EOF
+exit 1

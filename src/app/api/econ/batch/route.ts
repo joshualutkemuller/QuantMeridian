@@ -38,7 +38,8 @@ function transformColumn(units: string | undefined): string {
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const ids = (url.searchParams.get("ids") ?? "").split(",").map((s) => s.trim()).filter(Boolean).slice(0, 60);
-  const n = Number(url.searchParams.get("n") ?? 15);
+  const requestedN = Number(url.searchParams.get("n") ?? 15);
+  const n = Number.isFinite(requestedN) ? Math.max(1, Math.min(5000, Math.floor(requestedN))) : 15;
   const unitsOverride = url.searchParams.get("units") ?? undefined;
   const allowSim = simFallbackEnabled(req);
   const allowSnapshot = snapshotFallbackEnabled(req);
@@ -54,11 +55,15 @@ export async function GET(req: Request) {
       const table = process.env.MACRO_DB_URL?.startsWith("sqlite") ? "gold_fred_feature_transforms" : "gold.fred_feature_transforms";
       const valueCol = transformColumn(unitsOverride);
       const rows = await store.raw<GoldFeatureRow>(
-        `SELECT series_id, observation_date AS date, ${valueCol} AS value
-         FROM ${table}
-         WHERE series_id IN (${placeholders}) AND ${valueCol} IS NOT NULL
-         ORDER BY series_id, observation_date DESC
-         LIMIT ${n * ids.length}`,
+        `SELECT series_id, date, value
+         FROM (
+           SELECT series_id, observation_date AS date, ${valueCol} AS value,
+             ROW_NUMBER() OVER (PARTITION BY series_id ORDER BY observation_date DESC) AS rn
+           FROM ${table}
+           WHERE series_id IN (${placeholders}) AND ${valueCol} IS NOT NULL
+         ) ranked
+         WHERE rn <= ${n}
+         ORDER BY series_id, date DESC`,
         ids
       );
 

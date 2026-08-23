@@ -59,7 +59,7 @@ const TIME_RANGES = [
 ];
 
 const CORR_GROUPS = [
-  { value: "overnight", label: "Overnight", ids: ["SOFR", "EFFR", "OBFR", "IORB", "BGCR", "TGCR"] },
+  { value: "overnight", label: "Overnight", ids: ["SOFR", "EFFR", "OBFR", "IORB", "BGCR", "TGCRRATE"] },
   { value: "curve", label: "Curve", ids: ["DGS1MO", "DGS3MO", "DGS1", "DGS2", "DGS5", "DGS10", "DGS30"] },
   { value: "credit", label: "Credit", ids: ["BAMLC0A1CAAA", "BAMLC0A0CM", "BAMLC0A4CBBB", "BAMLH0A0HYM2"] },
   { value: "cross", label: "Cross-Asset", ids: ["SOFR", "DGS2", "DGS10", "BAMLH0A0HYM2", "MORTGAGE30US", "DCOILWTICO", "GOLDPMGBD228NLBM"] },

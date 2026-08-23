@@ -43,7 +43,7 @@ export const BENCHMARK_SERIES: BenchmarkDef[] = [
   { id: "OBFR", short: "OBFR", label: "Overnight Bank Funding Rate", category: "Overnight", unit: "%", decimals: 2, hasFred: true, anchor: 4.84, vol: 0.006, drift: 0 },
   { id: "IORB", short: "IORB", label: "Interest on Reserve Balances", category: "Overnight", unit: "%", decimals: 2, hasFred: true, anchor: 4.9, vol: 0.004, drift: 0 },
   { id: "BGCR", short: "BGCR", label: "Broad General Collateral Rate", category: "Overnight", unit: "%", decimals: 2, hasFred: true, anchor: 4.80, vol: 0.018, drift: 0 },
-  { id: "TGCR", short: "TGCR", label: "Tri-Party General Collateral Rate", category: "Overnight", unit: "%", decimals: 2, hasFred: true, anchor: 4.79, vol: 0.018, drift: 0 },
+  { id: "TGCRRATE", short: "TGCR", label: "Tri-Party General Collateral Rate", category: "Overnight", unit: "%", decimals: 2, hasFred: true, anchor: 4.79, vol: 0.018, drift: 0 },
   { id: "DPRIME", short: "Prime", label: "Bank Prime Loan Rate", category: "Overnight", unit: "%", decimals: 2, hasFred: true, anchor: 7.5, vol: 0.005, drift: 0 },
 
   // Treasury yields
