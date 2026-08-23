@@ -21,7 +21,7 @@ Status: Phase 1/2 implementation in progress
 | Server paper ledger | Done for first build | Added in-process server ledger in `src/server/paperLedger.ts` with orders, fills, events, positions, exposure, and P&L |
 | Paper ledger APIs | Done for first build | Added `GET/POST/DELETE /api/trading-assistant/paper/orders` and `GET /api/trading-assistant/paper/positions` |
 | Paper positions and P&L | Done for first build | Computed from server ledger snapshot, with browser local fallback if the paper API is unavailable |
-| Hard paper risk gates | Done for first build | Ticket disabled client-side and recheckeded server-side before simulated fills |
+| Hard paper risk gates | Done for first build | Ticket disabled client-side and rechecked server-side before simulated fills |
 | Paper ledger tests | Done for first build | Added deterministic Vitest coverage for server ledger fills/rejections/reset/P&L, API routes, local fallback, and `TASSIST` nav contract |
 | Live execution | Not started | Must remain disabled until credentials, risk gates, approvals, and kill switch exist |
 
