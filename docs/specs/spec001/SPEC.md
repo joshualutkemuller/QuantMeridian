@@ -103,7 +103,10 @@ Add these first. They are national CPI-U `CUSR0000...` seasonally adjusted group
 
 ### Optional Not-Seasonally-Adjusted National Additions
 
-These `CUUR0000...` rows are useful, but should not be mixed into the default SA CPI table unless the UI adds an `SA / NSA` toggle. They generally mirror many `CUSR0000...` concepts.
+These `CUUR0000...` rows are useful, but should not be mixed into the default
+SA CPI table unless the UI adds an `SA / NSA` toggle. The toggle is now in
+place, and the terminal includes only NSA rows that exist in the FRED/Eco Gold
+DB.
 
 | Series ID | Suggested Label |
 | --- | --- |
@@ -134,6 +137,10 @@ These `CUUR0000...` rows are useful, but should not be mixed into the default SA
 | CUUR0000SETA01 | New Vehicles NSA |
 | CUUR0000SETA02 | Used Cars & Trucks NSA |
 | CUUR0000SETB01 | Gasoline NSA |
+
+Current Gold does not expose NSA counterparts for the terminal's SA Hospital
+Services (`CUSR0000SEMD`) or Airline Fares (`CUSR0000SAS367`) rows, so those are
+not shown in the NSA view.
 
 ### Exclude From Default Item-Level Components
 
@@ -302,7 +309,7 @@ This should come after the static expansion is verified in the UI.
 13. [x] Add table controls for core/expanded.
 14. [x] Add tests for `liveInflationItem`, nullable weights, and contribution filtering.
 15. [x] Verify `/api/econ/batch` returns DB observations for all added default IDs.
-16. [ ] Add SA/NSA toggle after default expansion is stable.
+16. [x] Add SA/NSA toggle after default expansion is stable.
 17. [x] Wire DB-provided relative-importance weights before showing expanded contribution analytics.
 18. [ ] Add missing expanded-component weights to the FRED/Eco Gold pipeline if those weights are required in `market_terminal`.
 
@@ -316,6 +323,9 @@ Explorer `Expanded` mode:
   contribution eligibility metadata.
 - The existing 18 CPI component rows remain the default core view.
 - The 11 curated SA CPI additions are available only in expanded mode.
+- CPI components now have an `SA / NSA` toggle. SA remains the default. NSA uses
+  DB-backed `CUUR...` rows and does not include missing NSA analogues for
+  Hospital Services or Airline Fares.
 - Expanded row weights are not hardcoded in `market_terminal`; the app only
   accepts weights returned by the FRED/Eco Gold DB in `gold_inflation_explorer`.
 - Rows without DB-provided weights render `Weight %` and `Contrib pp` as `-` and
@@ -341,6 +351,9 @@ Local validation:
   11 Phase 1 expanded IDs: `CUSR0000SAF`, `CUSR0000SAG`, and `CUSR0000SAH`.
   The other expanded rows should remain unweighted in `market_terminal` until
   the FRED/Eco pipeline adds weights.
+- `gold_inflation_explorer` has 30 CPI NSA series from `2024-01-01` through
+  `2026-06-01`; the terminal wires 28 non-headline/core NSA component rows
+  behind the toggle.
 - Every Phase 1 ID has a null `2025-10-01` row in
   `gold_fred_latest_observation`; the transform table excludes those null rows.
   This is now safe for market_terminal derived metrics because they are
@@ -413,7 +426,7 @@ Add focused tests if component definition logic is refactored into pure helpers.
 2. Add the phase 1 SA default additions behind an `Expanded` table mode.
 3. Verify live DB values for every added ID locally.
 4. Enable expanded mode in the default CPI table if density remains usable.
-5. Add NSA toggle in a separate follow-up.
+5. Add NSA toggle in a separate follow-up. Done.
 6. Consider a DB-driven component endpoint only after the static expanded list is stable.
 
 ## Open Questions
@@ -421,5 +434,6 @@ Add focused tests if component definition logic is refactored into pure helpers.
 - Should parent groups such as `Housing`, `Services`, and `Commodities` sit beside narrower subcomponents, or should the default table avoid parent/child double counting?
 - Do we want the FRED/Eco pipeline to add broader CPI relative-importance
   coverage before showing expanded contribution analytics for every row?
-- Should NSA rows be hidden by default, or should a seasonality toggle be visible immediately?
+- Should the FRED/Eco pipeline add NSA Hospital Services and Airline Fares rows,
+  or should those remain SA-only in the terminal?
 - Should regional CPI headline rows live in a separate regional CPI module instead of the Inflation Explorer?

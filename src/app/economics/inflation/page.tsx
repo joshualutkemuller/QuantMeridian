@@ -16,6 +16,7 @@ import {
   liveInflationItem,
   type ComponentLevel,
   type InflationItem,
+  type SeasonalAdjustment,
 } from "@/data/inflation";
 import { fmtNum, fmtSigned, fmtSignedPct } from "@/lib/format";
 
@@ -56,6 +57,7 @@ export default function InflationExplorer() {
   const [metric, setMetric] = useState<Metric>("yoy");
   const [basket, setBasket] = useState<Basket>("CPI");
   const [componentLevel, setComponentLevel] = useState<ComponentLevel>("core");
+  const [componentSeasonality, setComponentSeasonality] = useState<SeasonalAdjustment>("SA");
   const [goldData, setGoldData] = useState<any>(null);
 
   // Fetch Gold inflation data
@@ -93,7 +95,7 @@ export default function InflationExplorer() {
   };
 
   // Take headline + component face values fully live from Gold index series.
-  const cpiComps = getInflationComponents("CPI", componentLevel);
+  const cpiComps = getInflationComponents("CPI", componentLevel, componentSeasonality);
   const pceComps = getInflationComponents("PCE", componentLevel);
   const headBase = getInflationHeadlines();
   const cpiWeightedComps = cpiComps.map(applyGoldWeight);
@@ -350,6 +352,9 @@ export default function InflationExplorer() {
             <TermToggleGroup label="Primary Metric" value={metric} onChange={setMetric} options={METRICS.map((m) => ({ value: m.key, label: m.label }))} />
             <TermToggleGroup label="Basket" value={basket} onChange={setBasket} options={[{ value: "CPI" as Basket, label: "CPI" }, { value: "PCE" as Basket, label: "PCE" }]} />
             <TermToggleGroup label="Level" value={componentLevel} onChange={setComponentLevel} options={[{ value: "core" as ComponentLevel, label: "Core View" }, { value: "expanded" as ComponentLevel, label: "Expanded" }]} />
+            {basket === "CPI" && (
+              <TermToggleGroup label="CPI Adj." value={componentSeasonality} onChange={setComponentSeasonality} options={[{ value: "SA" as SeasonalAdjustment, label: "SA" }, { value: "NSA" as SeasonalAdjustment, label: "NSA" }]} />
+            )}
             <div className="space-y-1 border-t border-term-border pt-2 text-3xs text-term-text-mute">
               <p>
                 <span className="text-term-amber">ΔMoM / ΔYoY</span> = change in the % print vs the prior
@@ -371,6 +376,7 @@ export default function InflationExplorer() {
           right={
             <div className="flex items-center gap-2">
               <Tag tone="blue">{components.length} items</Tag>
+              {basket === "CPI" && <Tag tone="violet">{componentSeasonality}</Tag>}
               {componentLevel === "expanded" && <Tag tone="amber">{weightedComponents.length} weighted</Tag>}
               <span className="text-3xs text-term-text-mute">{METRICS.find((m) => m.key === metric)?.label}</span>
             </div>

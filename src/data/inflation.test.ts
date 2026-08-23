@@ -35,6 +35,25 @@ const legacyCoreAliases = [
   "CUSR0000SAE1",
 ];
 
+const nsaCoreIds = [
+  "CUUR0000SAH1",
+  "CUUR0000SEHC",
+  "CUUR0000SEHA",
+  "CUUR0000SAF1",
+  "CUUR0000SAF11",
+  "CUUR0000SEFV",
+  "CUUR0000SA0E",
+  "CUUR0000SETB01",
+  "CUUR0000SEHF01",
+  "CUUR0000SAM",
+  "CUUR0000SETA01",
+  "CUUR0000SETA02",
+  "CUUR0000SAA",
+  "CUUR0000SAT",
+  "CUUR0000SAR",
+  "CUUR0000SAE",
+];
+
 describe("inflation components", () => {
   test("keeps the default CPI view to the existing 18 weighted components", () => {
     const core = getInflationComponents("CPI");
@@ -50,6 +69,28 @@ describe("inflation components", () => {
 
     for (const id of canonicalCoreIds) expect(ids).toContain(id);
     for (const id of legacyCoreAliases) expect(ids).not.toContain(id);
+  });
+
+  test("keeps NSA CPI rows behind the seasonality switch", () => {
+    const saIds = getInflationComponents("CPI").map((item) => item.id);
+    const nsa = getInflationComponents("CPI", "core", "NSA");
+    const nsaIds = nsa.map((item) => item.id);
+
+    expect(nsa).toHaveLength(16);
+    expect(nsaIds.sort()).toEqual([...nsaCoreIds].sort());
+    expect(saIds.some((id) => id.startsWith("CUUR"))).toBe(false);
+    expect(nsa.every((item) => item.seasonalAdjustment === "NSA")).toBe(true);
+    expect(nsa.every((item) => item.weight == null)).toBe(true);
+  });
+
+  test("adds DB-backed NSA expansion rows only in expanded NSA view", () => {
+    const expanded = getInflationComponents("CPI", "expanded", "NSA");
+    const ids = expanded.map((item) => item.id);
+
+    expect(expanded).toHaveLength(28);
+    expect(ids).toContain("CUUR0000SAF116");
+    expect(ids).toContain("CUUR0000SASLE");
+    expect(ids).not.toContain("CUSR0000SASLE");
   });
 
   test("adds phase 1 CPI components only in expanded view without non-DB weights", () => {

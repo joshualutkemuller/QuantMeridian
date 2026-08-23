@@ -115,6 +115,37 @@ const CPI_COMPONENTS: InflationComponentDef[] = [
   component("CUSR0000SASLE", "Core Services ex Energy", "CPI", "services", null, 3.7, false, false),
   component("CUSR0000SEHF02", "Utility Gas Service", "CPI", "energy", null, -0.5, false, false),
   component("CUSR0000SAG", "Other Goods & Services", "CPI", "other", null, 2.0, false, false),
+
+  // NSA CPI-U rows are only exposed behind the CPI SA/NSA toggle. Weights stay
+  // null here and are filled only from gold_inflation_explorer when available.
+  component("CUUR0000SAH1", "Shelter", "CPI", "housing", null, 3.9, true, false, "NSA"),
+  component("CUUR0000SEHC", "Owners' Equiv. Rent", "CPI", "housing", null, 4.1, true, false, "NSA"),
+  component("CUUR0000SEHA", "Rent of Primary Residence", "CPI", "housing", null, 3.8, true, false, "NSA"),
+  component("CUUR0000SAF1", "Food", "CPI", "food", null, 2.2, true, false, "NSA", undefined, "CPIUFDSL"),
+  component("CUUR0000SAF11", "Food at Home", "CPI", "food", null, 1.6, true, false, "NSA"),
+  component("CUUR0000SEFV", "Food Away from Home", "CPI", "food", null, 3.4, true, false, "NSA"),
+  component("CUUR0000SA0E", "Energy", "CPI", "energy", null, -1.8, true, false, "NSA", undefined, "CPIENGSL"),
+  component("CUUR0000SETB01", "Gasoline", "CPI", "energy", null, -4.2, true, false, "NSA"),
+  component("CUUR0000SEHF01", "Electricity", "CPI", "energy", null, 3.1, true, false, "NSA"),
+  component("CUUR0000SAM", "Medical Care", "CPI", "medical", null, 3.0, true, false, "NSA", undefined, "CPIMEDSL"),
+  component("CUUR0000SETA01", "New Vehicles", "CPI", "goods", null, 0.4, true, false, "NSA"),
+  component("CUUR0000SETA02", "Used Cars & Trucks", "CPI", "goods", null, -1.9, true, false, "NSA"),
+  component("CUUR0000SAA", "Apparel", "CPI", "goods", null, 0.7, true, false, "NSA", undefined, "CPIAPPSL"),
+  component("CUUR0000SAT", "Transportation", "CPI", "transportation", null, 4.6, true, false, "NSA", undefined, "CPITRNSL"),
+  component("CUUR0000SAR", "Recreation", "CPI", "other", null, 1.9, true, false, "NSA", undefined, "CPIRECSL"),
+  component("CUUR0000SAE", "Education & Communication", "CPI", "other", null, 1.2, true, false, "NSA", undefined, "CUSR0000SAE1"),
+  component("CUUR0000SAC", "Commodities", "CPI", "goods", null, 0.8, false, false, "NSA"),
+  component("CUUR0000SACL1E", "Core Goods", "CPI", "goods", null, 0.4, false, false, "NSA"),
+  component("CUUR0000SAF", "Food & Beverages", "CPI", "food", null, 2.4, false, false, "NSA"),
+  component("CUUR0000SAF116", "Alcoholic Beverages", "CPI", "food", null, 2.0, false, false, "NSA"),
+  component("CUUR0000SAG", "Other Goods & Services", "CPI", "other", null, 2.0, false, false, "NSA"),
+  component("CUUR0000SAH", "Housing", "CPI", "housing", null, 3.7, false, false, "NSA"),
+  component("CUUR0000SAH2", "Fuels & Utilities", "CPI", "housing", null, 2.2, false, false, "NSA"),
+  component("CUUR0000SAM1", "Medical Care Commodities", "CPI", "medical", null, 2.1, false, false, "NSA"),
+  component("CUUR0000SAM2", "Medical Care Services", "CPI", "medical", null, 3.4, false, false, "NSA"),
+  component("CUUR0000SAS", "Services", "CPI", "services", null, 3.6, false, false, "NSA"),
+  component("CUUR0000SASLE", "Core Services ex Energy", "CPI", "services", null, 3.7, false, false, "NSA"),
+  component("CUUR0000SEHF02", "Utility Gas Service", "CPI", "energy", null, -0.5, false, false, "NSA"),
 ];
 
 const PCE_COMPONENTS: InflationComponentDef[] = [
@@ -205,9 +236,10 @@ export function liveInflationItem(base: InflationItem, obs: { date: string; valu
   };
 }
 
-export function getInflationComponents(group: "CPI" | "PCE", level: ComponentLevel = "core"): InflationItem[] {
+export function getInflationComponents(group: "CPI" | "PCE", level: ComponentLevel = "core", seasonality: SeasonalAdjustment = "SA"): InflationItem[] {
   const defs = group === "CPI" ? CPI_COMPONENTS : PCE_COMPONENTS;
   return defs
+    .filter((def) => def.seasonalAdjustment === (group === "CPI" ? seasonality : "SA"))
     .filter((def) => level === "expanded" || def.includeInDefault)
     .map((def) => makeItem(def.id, def.label, group === "CPI" ? "CPI" : "PCE", "COMPONENT", def.weight, def.baseYoY, def))
     .sort((a, b) => (b.weight ?? -1) - (a.weight ?? -1));
