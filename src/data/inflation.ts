@@ -98,20 +98,19 @@ const CPI_COMPONENTS: InflationComponentDef[] = [
   component("CPIRECSL", "Recreation", "CPI", "other", 5.2, 1.9),
   component("CUSR0000SAE1", "Education & Communication", "CPI", "other", 5.8, 1.2),
 
-  // Phase 1 expanded SA national CPI additions. Weights are omitted until
-  // verified relative-importance data is wired, so these do not enter weighted
-  // contribution analytics by default.
-  component("CUSR0000SAC", "Commodities", "CPI", "goods", null, 0.8, false, false),
-  component("CUSR0000SACL1E", "Core Goods", "CPI", "goods", null, 0.4, false, false),
-  component("CUSR0000SAF", "Food & Beverages", "CPI", "food", null, 2.4, false, false),
-  component("CUSR0000SAH", "Housing", "CPI", "housing", null, 3.7, false, false),
-  component("CUSR0000SAH2", "Fuels & Utilities", "CPI", "housing", null, 2.2, false, false),
-  component("CUSR0000SAM1", "Medical Care Commodities", "CPI", "medical", null, 2.1, false, false),
-  component("CUSR0000SAM2", "Medical Care Services", "CPI", "medical", null, 3.4, false, false),
-  component("CUSR0000SAS", "Services", "CPI", "services", null, 3.6, false, false),
-  component("CUSR0000SASLE", "Core Services ex Energy", "CPI", "services", null, 3.7, false, false),
-  component("CUSR0000SEHF02", "Utility Gas Service", "CPI", "energy", null, -0.5, false, false),
-  component("CUSR0000SAG", "Other Goods & Services", "CPI", "other", null, 2.0, false, false),
+  // Phase 1 expanded SA national CPI additions. Weights are CPI-U relative
+  // importance, U.S. city average, December 2025 (BLS table 1, 2024 weights).
+  component("CUSR0000SAC", "Commodities", "CPI", "goods", 35.994, 0.8, false),
+  component("CUSR0000SACL1E", "Core Goods", "CPI", "goods", 19.176, 0.4, false),
+  component("CUSR0000SAF", "Food & Beverages", "CPI", "food", 14.539, 2.4, false),
+  component("CUSR0000SAH", "Housing", "CPI", "housing", 44.469, 3.7, false),
+  component("CUSR0000SAH2", "Fuels & Utilities", "CPI", "housing", 4.546, 2.2, false),
+  component("CUSR0000SAM1", "Medical Care Commodities", "CPI", "medical", 1.489, 2.1, false),
+  component("CUSR0000SAM2", "Medical Care Services", "CPI", "medical", 6.935, 3.4, false),
+  component("CUSR0000SAS", "Services", "CPI", "services", 64.006, 3.6, false),
+  component("CUSR0000SASLE", "Core Services ex Energy", "CPI", "services", 60.744, 3.7, false),
+  component("CUSR0000SEHF02", "Utility Gas Service", "CPI", "energy", 0.773, -0.5, false),
+  component("CUSR0000SAG", "Other Goods & Services", "CPI", "other", 2.902, 2.0, false),
 ];
 
 const PCE_COMPONENTS: InflationComponentDef[] = [
@@ -157,6 +156,14 @@ export function getInflationHeadlines(): InflationItem[] {
   return HEADLINES.map(([id, label, group, base]) => makeItem(id, label, group, "HEADLINE", 100, base, { subgroup: "headline", seasonalAdjustment: "SA", contributionEligible: false }));
 }
 
+function shiftMonth(date: string, delta: number): string {
+  const [year, month] = date.slice(0, 7).split("-").map(Number);
+  const zeroBased = (year * 12) + (month - 1) + delta;
+  const shiftedYear = Math.floor(zeroBased / 12);
+  const shiftedMonth = (zeroBased % 12) + 1;
+  return `${shiftedYear}-${String(shiftedMonth).padStart(2, "0")}-01`;
+}
+
 /**
  * Recompute an inflation item from a live FRED *index-level* series (units=lin),
  * deriving the index reading, MoM %, YoY % and their accelerations. Falls back to
@@ -164,18 +171,25 @@ export function getInflationHeadlines(): InflationItem[] {
  * fully live on the face values, not just the drill-down.
  */
 export function liveInflationItem(base: InflationItem, obs: { date: string; value: number }[]): InflationItem {
-  const v = obs.map((o) => o.value);
-  if (v.length < 14) return base;
-  const n = v.length;
   const pct = (a: number, b: number) => (b ? (a / b - 1) * 100 : 0);
-  const index = v[n - 1];
-  const mom = pct(v[n - 1], v[n - 2]);
-  const priorMom = pct(v[n - 2], v[n - 3]);
-  const yoy = pct(v[n - 1], v[n - 13]);
-  const priorYoy = pct(v[n - 2], v[n - 14]);
+  const byDate = new Map(obs.filter((o) => Number.isFinite(o.value)).map((o) => [o.date, o.value]));
+  const latest = [...obs].reverse().find((o) => Number.isFinite(o.value));
+  if (!latest) return base;
+
+  const current = latest.value;
+  const prevMonth = byDate.get(shiftMonth(latest.date, -1));
+  const prevTwoMonths = byDate.get(shiftMonth(latest.date, -2));
+  const yearAgo = byDate.get(shiftMonth(latest.date, -12));
+  const prevMonthYearAgo = byDate.get(shiftMonth(latest.date, -13));
+  if (prevMonth == null || prevTwoMonths == null || yearAgo == null || prevMonthYearAgo == null) return base;
+
+  const mom = pct(current, prevMonth);
+  const priorMom = pct(prevMonth, prevTwoMonths);
+  const yoy = pct(current, yearAgo);
+  const priorYoy = pct(prevMonth, prevMonthYearAgo);
   return {
     ...base,
-    index: Number(index.toFixed(2)),
+    index: Number(current.toFixed(2)),
     mom: Number(mom.toFixed(2)),
     priorMom: Number(priorMom.toFixed(2)),
     yoy: Number(yoy.toFixed(2)),

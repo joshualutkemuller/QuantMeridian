@@ -302,7 +302,7 @@ This should come after the static expansion is verified in the UI.
 14. [x] Add tests for `liveInflationItem`, nullable weights, and contribution filtering.
 15. [x] Verify `/api/econ/batch` returns DB observations for all added default IDs.
 16. [ ] Add SA/NSA toggle after default expansion is stable.
-17. [ ] Wire verified relative-importance weights before showing expanded contribution analytics.
+17. [x] Wire verified relative-importance weights before showing expanded contribution analytics.
 
 ## Implementation Status
 
@@ -313,26 +313,33 @@ Explorer `Expanded` mode:
   subgroup, seasonal adjustment, nullable weight, default-inclusion, and
   contribution eligibility metadata.
 - The existing 18 CPI component rows remain the default core view.
-- The 11 curated SA CPI additions are available only in expanded mode until
-  verified relative-importance weights are available.
-- Expanded rows with missing weights render `Weight %` and `Contrib pp` as `-`
-  and are excluded from the YoY contribution bar chart.
+- The 11 curated SA CPI additions are available only in expanded mode.
+- Expanded rows use CPI-U relative-importance weights from the official BLS
+  December 2025 table, Table 1 (2024 weights), U.S. city average, last modified
+  July 1, 2026: `https://www.bls.gov/cpi/tables/relative-importance/2025.htm`.
+- Rows with missing weights still render `Weight %` and `Contrib pp` as `-` and
+  are excluded from the YoY contribution bar chart.
 - `src/data/econSeries.ts` has matching `FRED_CATALOG` entries so the batch
   endpoint and drill-through can resolve the new IDs.
 - `src/data/inflation.test.ts` covers default-vs-expanded component counts,
-  nullable weights, contribution eligibility, and live-value derivation.
+  verified expanded weights, contribution eligibility, and live-value derivation.
+- `liveInflationItem` derives MoM/YoY and acceleration by calendar month lags
+  instead of array position, so sparse monthly windows do not silently compare
+  the wrong months.
 
 Local validation:
 
 - `gold_fred_latest_observation` has all 11 Phase 1 IDs with 30 rows each
   through `2026-06-01`.
-- `gold_fred_feature_transforms` has all 11 Phase 1 IDs with 29 rows each
+- `gold_fred_feature_transforms` has all 11 Phase 1 IDs with 29 non-null rows
   through `2026-06-01`.
 - `/api/econ/batch?units=lin&n=15` returned `source: DB` and 15 observations
   for every Phase 1 ID.
-- The returned batch window is sufficient for live MoM/YoY derivation, but the
-  transformed series currently skip `2025-10-01`; track that as a Gold pipeline
-  calendar-continuity follow-up.
+- Every Phase 1 ID has a null `2025-10-01` row in
+  `gold_fred_latest_observation`; the transform table excludes those null rows.
+  This is now safe for market_terminal derived metrics because they are
+  calendar-lag based, but the upstream Gold pipeline should still track the null
+  observation as a data-continuity issue.
 
 ## Candidate Phase 1 Default Additions
 
