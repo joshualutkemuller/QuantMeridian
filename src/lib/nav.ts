@@ -40,7 +40,7 @@ export interface NavItem {
   href: string;
   icon: LucideIcon;
   desc: string;
-  group: "MARKETS" | "FINANCE" | "OPTIMIZATION" | "DESK" | "ECONOMICS" | "INTELLIGENCE";
+  group: "MARKETS" | "FINANCE" | "OPTIMIZATION" | "DESK" | "TRADING_ASSISTANT" | "ECONOMICS" | "INTELLIGENCE";
 }
 
 const ALL_NAV: NavItem[] = [
@@ -61,6 +61,7 @@ const ALL_NAV: NavItem[] = [
   { code: "SXU", label: "Sources & Uses", href: "/sources-uses", icon: GitMerge, desc: "Matching & internalization engine", group: "OPTIMIZATION" },
   { code: "OPT", label: "Optimization Center", href: "/optimization", icon: Cpu, desc: "Solver runs & impact analysis", group: "OPTIMIZATION" },
   { code: "DESK", label: "Trading Desk", href: "/trading-desk", icon: LineChart, desc: "Scorecards & execution analytics", group: "DESK" },
+  { code: "TASSIST", label: "Trading Assistant", href: "/trading-assistant", icon: Bot, desc: "Bot selector, signals & paper trading", group: "TRADING_ASSISTANT" },
   { code: "ECON", label: "Macro Dashboard", href: "/economics", icon: Globe, desc: "FRED-connected economic analytics", group: "ECONOMICS" },
   { code: "CURV", label: "Treasury Curve Lab", href: "/economics/curve", icon: Spline, desc: "Curve shape, history & inversions", group: "ECONOMICS" },
   { code: "INFL", label: "Inflation Explorer", href: "/economics/inflation", icon: Flame, desc: "CPI/PCE to item level, MoM & YoY", group: "ECONOMICS" },
@@ -98,6 +99,7 @@ export const NAV_GROUPS: { id: NavItem["group"]; label: string }[] = [
   { id: "FINANCE", label: "Financing" },
   { id: "OPTIMIZATION", label: "Optimization" },
   { id: "DESK", label: "Trading Desk" },
+  { id: "TRADING_ASSISTANT", label: "Trading Assistant" },
   { id: "ECONOMICS", label: "Economics & Macro" },
   { id: "INTELLIGENCE", label: "Intelligence" },
 ];
