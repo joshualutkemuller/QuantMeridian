@@ -125,11 +125,14 @@ export function buildSimBook(market: PolyMarket): PolyOrderBook {
 
 export function normalizeBook(levels: PolyBookLevel[], source: PolyOrderBook["source"], tokenId?: string, hash?: string): PolyOrderBook {
   const clean = levels
-    .filter((l) => isFinite(l.bid) && isFinite(l.ask) && l.bid > 0 && l.ask > 0)
+    .filter((l) => {
+      const hasBid = isFinite(l.bid) && l.bid > 0;
+      const hasAsk = isFinite(l.ask) && l.ask > 0;
+      return hasBid || hasAsk;
+    })
     .sort((a, b) => a.level - b.level);
-  const top = clean[0];
-  const bestBid = top?.bid ?? 0;
-  const bestAsk = top?.ask ?? 0;
+  const bestBid = clean.find((l) => l.bid > 0)?.bid ?? 0;
+  const bestAsk = clean.find((l) => l.ask > 0)?.ask ?? 0;
   const midpoint = bestBid && bestAsk ? (bestBid + bestAsk) / 2 : bestAsk || bestBid || 0;
   const spread = bestBid && bestAsk ? Math.max(0, bestAsk - bestBid) : 0;
   const depthUsd = clean.reduce((sum, l) => sum + l.bid * l.bidSize + l.ask * l.askSize, 0);
