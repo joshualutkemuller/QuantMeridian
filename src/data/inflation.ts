@@ -25,6 +25,7 @@ export interface InflationComponentDef {
   includeInDefault: boolean;
   contributionEligible: boolean;
   preferredOver?: string;
+  legacyId?: string;
 }
 
 export interface InflationItem {
@@ -44,6 +45,7 @@ export interface InflationItem {
   subgroup?: InflationSubgroup;
   seasonalAdjustment?: SeasonalAdjustment;
   contributionEligible: boolean;
+  legacyId?: string;
 }
 
 // [fredId, label, group, weight%, baseYoY, baseIndex]
@@ -64,7 +66,8 @@ const component = (
   includeInDefault = true,
   contributionEligible = weight != null,
   seasonalAdjustment: SeasonalAdjustment = "SA",
-  preferredOver?: string
+  preferredOver?: string,
+  legacyId?: string
 ): InflationComponentDef => ({
   id,
   label,
@@ -76,27 +79,28 @@ const component = (
   includeInDefault,
   contributionEligible,
   preferredOver,
+  legacyId,
 });
 
 const CPI_COMPONENTS: InflationComponentDef[] = [
   component("CUSR0000SAH1", "Shelter", "CPI", "housing", 34.8, 3.9),
   component("CUSR0000SEHC", "Owners' Equiv. Rent", "CPI", "housing", 26.8, 4.1),
   component("CUSR0000SEHA", "Rent of Primary Residence", "CPI", "housing", 7.6, 3.8),
-  component("CPIUFDSL", "Food", "CPI", "food", 13.4, 2.2),
+  component("CUSR0000SAF1", "Food", "CPI", "food", 13.4, 2.2, true, true, "SA", undefined, "CPIUFDSL"),
   component("CUSR0000SAF11", "Food at Home", "CPI", "food", 8.1, 1.6),
   component("CUSR0000SEFV", "Food Away from Home", "CPI", "food", 5.3, 3.4),
-  component("CPIENGSL", "Energy", "CPI", "energy", 6.8, -1.8),
+  component("CUSR0000SA0E", "Energy", "CPI", "energy", 6.8, -1.8, true, true, "SA", undefined, "CPIENGSL"),
   component("CUSR0000SETB01", "Gasoline", "CPI", "energy", 3.3, -4.2),
   component("CUSR0000SEHF01", "Electricity", "CPI", "energy", 2.5, 3.1),
-  component("CPIMEDSL", "Medical Care", "CPI", "medical", 8.1, 3.0),
+  component("CUSR0000SAM", "Medical Care", "CPI", "medical", 8.1, 3.0, true, true, "SA", undefined, "CPIMEDSL"),
   component("CUSR0000SETA01", "New Vehicles", "CPI", "goods", 4.1, 0.4),
   component("CUSR0000SETA02", "Used Cars & Trucks", "CPI", "goods", 2.6, -1.9),
-  component("CPIAPPSL", "Apparel", "CPI", "goods", 2.5, 0.7),
-  component("CPITRNSL", "Transportation Services", "CPI", "transportation", 5.9, 4.6),
+  component("CUSR0000SAA", "Apparel", "CPI", "goods", 2.5, 0.7, true, true, "SA", undefined, "CPIAPPSL"),
+  component("CUSR0000SAT", "Transportation", "CPI", "transportation", 5.9, 4.6, true, true, "SA", undefined, "CPITRNSL"),
   component("CUSR0000SEMD", "Hospital Services", "CPI", "medical", 1.9, 4.0),
   component("CUSR0000SAS367", "Airline Fares", "CPI", "transportation", 0.8, -2.4),
-  component("CPIRECSL", "Recreation", "CPI", "other", 5.2, 1.9),
-  component("CUSR0000SAE1", "Education & Communication", "CPI", "other", 5.8, 1.2),
+  component("CUSR0000SAR", "Recreation", "CPI", "other", 5.2, 1.9, true, true, "SA", undefined, "CPIRECSL"),
+  component("CUSR0000SAE", "Education & Communication", "CPI", "other", 5.8, 1.2, true, true, "SA", undefined, "CUSR0000SAE1"),
 
   // Phase 1 expanded SA national CPI additions. Weights are intentionally null
   // here; market_terminal must only accept expanded weights from the Gold DB.
@@ -131,7 +135,7 @@ function makeItem(
   kind: InflationItem["kind"],
   weight: number | null,
   baseYoY: number,
-  meta?: Pick<InflationComponentDef, "subgroup" | "seasonalAdjustment" | "contributionEligible">
+  meta?: Pick<InflationComponentDef, "subgroup" | "seasonalAdjustment" | "contributionEligible" | "legacyId">
 ): InflationItem {
   const rng = new Rng(`infl-${id}`);
   const yoy = Number((baseYoY + rng.normal(0, 0.15)).toFixed(2));
@@ -149,6 +153,7 @@ function makeItem(
     subgroup: meta?.subgroup,
     seasonalAdjustment: meta?.seasonalAdjustment,
     contributionEligible: meta?.contributionEligible ?? weight != null,
+    legacyId: meta?.legacyId,
   };
 }
 

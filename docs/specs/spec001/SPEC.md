@@ -46,28 +46,31 @@ Integrate additional CPI component series in the same user-facing pattern as the
 
 ## Current 18 CPI Components
 
-These are currently wired in `src/data/inflation.ts` and `src/data/econSeries.ts`:
+These are currently wired in `src/data/inflation.ts` and `src/data/econSeries.ts`.
+Where the prior terminal row used a FRED convenience alias, the active ID now
+uses the canonical FRED/Eco Gold DB `CUSR...` row and carries the old ID as
+`legacyId` metadata only.
 
-| Series ID | Label |
-| --- | --- |
-| CUSR0000SAH1 | Shelter |
-| CUSR0000SEHC | Owners' Equiv. Rent |
-| CUSR0000SEHA | Rent of Primary Residence |
-| CPIUFDSL | Food |
-| CUSR0000SAF11 | Food at Home |
-| CUSR0000SEFV | Food Away from Home |
-| CPIENGSL | Energy |
-| CUSR0000SETB01 | Gasoline |
-| CUSR0000SEHF01 | Electricity |
-| CPIMEDSL | Medical Care |
-| CUSR0000SETA01 | New Vehicles |
-| CUSR0000SETA02 | Used Cars & Trucks |
-| CPIAPPSL | Apparel |
-| CPITRNSL | Transportation Services |
-| CUSR0000SEMD | Hospital Services |
-| CUSR0000SAS367 | Airline Fares |
-| CPIRECSL | Recreation |
-| CUSR0000SAE1 | Education & Communication |
+| Active Series ID | Label | Legacy ID |
+| --- | --- | --- |
+| CUSR0000SAH1 | Shelter |  |
+| CUSR0000SEHC | Owners' Equiv. Rent |  |
+| CUSR0000SEHA | Rent of Primary Residence |  |
+| CUSR0000SAF1 | Food | CPIUFDSL |
+| CUSR0000SAF11 | Food at Home |  |
+| CUSR0000SEFV | Food Away from Home |  |
+| CUSR0000SA0E | Energy | CPIENGSL |
+| CUSR0000SETB01 | Gasoline |  |
+| CUSR0000SEHF01 | Electricity |  |
+| CUSR0000SAM | Medical Care | CPIMEDSL |
+| CUSR0000SETA01 | New Vehicles |  |
+| CUSR0000SETA02 | Used Cars & Trucks |  |
+| CUSR0000SAA | Apparel | CPIAPPSL |
+| CUSR0000SAT | Transportation | CPITRNSL |
+| CUSR0000SEMD | Hospital Services |  |
+| CUSR0000SAS367 | Airline Fares |  |
+| CUSR0000SAR | Recreation | CPIRECSL |
+| CUSR0000SAE | Education & Communication | CUSR0000SAE1 |
 
 ## Additional DB Inventory
 
@@ -78,24 +81,24 @@ Add these first. They are national CPI-U `CUSR0000...` seasonally adjusted group
 | Series ID | DB Title | Suggested Label | Notes |
 | --- | --- | --- | --- |
 | CUSR0000SA0 | CPI-U All Items (SA) | All Items | Headline duplicate; use only as reference, not default component |
-| CUSR0000SA0E | CPI-U Energy (SA) | Energy | Duplicate of existing energy concept; evaluate against `CPIENGSL` |
+| CUSR0000SA0E | CPI-U Energy (SA) | Energy | Canonical replacement for legacy `CPIENGSL` |
 | CUSR0000SA0L1E | CPI-U All Items Less Food and Energy / Core (SA) | Core CPI | Headline/core duplicate; use only as reference |
-| CUSR0000SAA | CPI-U Apparel (SA) | Apparel | SA alternative to existing `CPIAPPSL` |
+| CUSR0000SAA | CPI-U Apparel (SA) | Apparel | Canonical replacement for legacy `CPIAPPSL` |
 | CUSR0000SAC | CPI-U Commodities (SA) | Commodities | New group |
 | CUSR0000SACL1E | CPI-U Commodities Less Food and Energy Commodities (SA) | Core Goods | New group |
-| CUSR0000SAE | CPI-U Education and Communication (SA) | Education & Communication | SA parent of existing `CUSR0000SAE1` |
+| CUSR0000SAE | CPI-U Education and Communication (SA) | Education & Communication | Canonical replacement for legacy `CUSR0000SAE1` |
 | CUSR0000SAF | CPI-U Food and Beverages (SA) | Food & Beverages | New group |
-| CUSR0000SAF1 | CPI-U Food (SA) | Food | SA alternative to existing `CPIUFDSL` |
+| CUSR0000SAF1 | CPI-U Food (SA) | Food | Canonical replacement for legacy `CPIUFDSL` |
 | CUSR0000SAG | CPI-U Other Goods and Services (SA) | Other Goods & Services | New group |
 | CUSR0000SAH | CPI-U Housing (SA) | Housing | New parent group |
 | CUSR0000SAH2 | CPI-U Fuels and Utilities (SA) | Fuels & Utilities | New component |
-| CUSR0000SAM | CPI-U Medical Care (SA) | Medical Care | SA parent of existing `CPIMEDSL` |
+| CUSR0000SAM | CPI-U Medical Care (SA) | Medical Care | Canonical replacement for legacy `CPIMEDSL` |
 | CUSR0000SAM1 | CPI-U Medical Care Commodities (SA) | Medical Care Commodities | New component |
 | CUSR0000SAM2 | CPI-U Medical Care Services (SA) | Medical Care Services | New component |
-| CUSR0000SAR | CPI-U Recreation (SA) | Recreation | SA parent/alternative to existing `CPIRECSL` |
+| CUSR0000SAR | CPI-U Recreation (SA) | Recreation | Canonical replacement for legacy `CPIRECSL` |
 | CUSR0000SAS | CPI-U Services (SA) | Services | New group |
 | CUSR0000SASLE | CPI-U Services Less Energy Services (SA) | Core Services ex Energy | New group |
-| CUSR0000SAT | CPI-U Transportation (SA) | Transportation | SA parent/alternative to existing `CPITRNSL` |
+| CUSR0000SAT | CPI-U Transportation (SA) | Transportation | Canonical parent replacement for legacy `CPITRNSL` |
 | CUSR0000SEHF02 | CPI-U Utility (Piped) Gas Service (SA) | Utility Gas Service | New component |
 
 ### Optional Not-Seasonally-Adjusted National Additions

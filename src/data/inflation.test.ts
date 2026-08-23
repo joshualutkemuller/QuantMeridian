@@ -15,6 +15,26 @@ const expandedCpiIds = [
   "CUSR0000SAG",
 ];
 
+const canonicalCoreIds = [
+  "CUSR0000SA0E",
+  "CUSR0000SAA",
+  "CUSR0000SAE",
+  "CUSR0000SAF1",
+  "CUSR0000SAM",
+  "CUSR0000SAR",
+  "CUSR0000SAT",
+];
+
+const legacyCoreAliases = [
+  "CPIUFDSL",
+  "CPIENGSL",
+  "CPIMEDSL",
+  "CPIAPPSL",
+  "CPITRNSL",
+  "CPIRECSL",
+  "CUSR0000SAE1",
+];
+
 describe("inflation components", () => {
   test("keeps the default CPI view to the existing 18 weighted components", () => {
     const core = getInflationComponents("CPI");
@@ -23,6 +43,13 @@ describe("inflation components", () => {
     expect(core.every((item) => item.weight != null)).toBe(true);
     expect(core.every((item) => item.contribution != null)).toBe(true);
     expect(core.every((item) => item.contributionEligible)).toBe(true);
+  });
+
+  test("uses canonical Gold CPI ids instead of legacy alias ids in the default view", () => {
+    const ids = getInflationComponents("CPI").map((item) => item.id);
+
+    for (const id of canonicalCoreIds) expect(ids).toContain(id);
+    for (const id of legacyCoreAliases) expect(ids).not.toContain(id);
   });
 
   test("adds phase 1 CPI components only in expanded view without non-DB weights", () => {
