@@ -98,19 +98,19 @@ const CPI_COMPONENTS: InflationComponentDef[] = [
   component("CPIRECSL", "Recreation", "CPI", "other", 5.2, 1.9),
   component("CUSR0000SAE1", "Education & Communication", "CPI", "other", 5.8, 1.2),
 
-  // Phase 1 expanded SA national CPI additions. Weights are CPI-U relative
-  // importance, U.S. city average, December 2025 (BLS table 1, 2024 weights).
-  component("CUSR0000SAC", "Commodities", "CPI", "goods", 35.994, 0.8, false),
-  component("CUSR0000SACL1E", "Core Goods", "CPI", "goods", 19.176, 0.4, false),
-  component("CUSR0000SAF", "Food & Beverages", "CPI", "food", 14.539, 2.4, false),
-  component("CUSR0000SAH", "Housing", "CPI", "housing", 44.469, 3.7, false),
-  component("CUSR0000SAH2", "Fuels & Utilities", "CPI", "housing", 4.546, 2.2, false),
-  component("CUSR0000SAM1", "Medical Care Commodities", "CPI", "medical", 1.489, 2.1, false),
-  component("CUSR0000SAM2", "Medical Care Services", "CPI", "medical", 6.935, 3.4, false),
-  component("CUSR0000SAS", "Services", "CPI", "services", 64.006, 3.6, false),
-  component("CUSR0000SASLE", "Core Services ex Energy", "CPI", "services", 60.744, 3.7, false),
-  component("CUSR0000SEHF02", "Utility Gas Service", "CPI", "energy", 0.773, -0.5, false),
-  component("CUSR0000SAG", "Other Goods & Services", "CPI", "other", 2.902, 2.0, false),
+  // Phase 1 expanded SA national CPI additions. Weights are intentionally null
+  // here; market_terminal must only accept expanded weights from the Gold DB.
+  component("CUSR0000SAC", "Commodities", "CPI", "goods", null, 0.8, false, false),
+  component("CUSR0000SACL1E", "Core Goods", "CPI", "goods", null, 0.4, false, false),
+  component("CUSR0000SAF", "Food & Beverages", "CPI", "food", null, 2.4, false, false),
+  component("CUSR0000SAH", "Housing", "CPI", "housing", null, 3.7, false, false),
+  component("CUSR0000SAH2", "Fuels & Utilities", "CPI", "housing", null, 2.2, false, false),
+  component("CUSR0000SAM1", "Medical Care Commodities", "CPI", "medical", null, 2.1, false, false),
+  component("CUSR0000SAM2", "Medical Care Services", "CPI", "medical", null, 3.4, false, false),
+  component("CUSR0000SAS", "Services", "CPI", "services", null, 3.6, false, false),
+  component("CUSR0000SASLE", "Core Services ex Energy", "CPI", "services", null, 3.7, false, false),
+  component("CUSR0000SEHF02", "Utility Gas Service", "CPI", "energy", null, -0.5, false, false),
+  component("CUSR0000SAG", "Other Goods & Services", "CPI", "other", null, 2.0, false, false),
 ];
 
 const PCE_COMPONENTS: InflationComponentDef[] = [

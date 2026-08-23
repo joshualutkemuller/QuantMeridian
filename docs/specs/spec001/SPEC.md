@@ -248,11 +248,9 @@ For new components without verified weights:
 - include in hot/cool acceleration lists
 - include in drill-through
 
-Add verified weights later through either:
-
-- BLS relative importance data
-- a local static weight map
-- a Gold DB table if the pipeline adds CPI relative importance
+Add verified weights later only through the FRED/Eco Gold DB. Do not add a
+market_terminal-local static weight map or any direct external data source
+without explicit owner approval.
 
 ## API Plan
 
@@ -302,7 +300,8 @@ This should come after the static expansion is verified in the UI.
 14. [x] Add tests for `liveInflationItem`, nullable weights, and contribution filtering.
 15. [x] Verify `/api/econ/batch` returns DB observations for all added default IDs.
 16. [ ] Add SA/NSA toggle after default expansion is stable.
-17. [x] Wire verified relative-importance weights before showing expanded contribution analytics.
+17. [x] Wire DB-provided relative-importance weights before showing expanded contribution analytics.
+18. [ ] Add missing expanded-component weights to the FRED/Eco Gold pipeline if those weights are required in `market_terminal`.
 
 ## Implementation Status
 
@@ -314,15 +313,15 @@ Explorer `Expanded` mode:
   contribution eligibility metadata.
 - The existing 18 CPI component rows remain the default core view.
 - The 11 curated SA CPI additions are available only in expanded mode.
-- Expanded rows use CPI-U relative-importance weights from the official BLS
-  December 2025 table, Table 1 (2024 weights), U.S. city average, last modified
-  July 1, 2026: `https://www.bls.gov/cpi/tables/relative-importance/2025.htm`.
-- Rows with missing weights still render `Weight %` and `Contrib pp` as `-` and
+- Expanded row weights are not hardcoded in `market_terminal`; the app only
+  accepts weights returned by the FRED/Eco Gold DB in `gold_inflation_explorer`.
+- Rows without DB-provided weights render `Weight %` and `Contrib pp` as `-` and
   are excluded from the YoY contribution bar chart.
 - `src/data/econSeries.ts` has matching `FRED_CATALOG` entries so the batch
   endpoint and drill-through can resolve the new IDs.
 - `src/data/inflation.test.ts` covers default-vs-expanded component counts,
-  verified expanded weights, contribution eligibility, and live-value derivation.
+  nullable expanded weights, DB-provided weight handling, contribution
+  eligibility, and live-value derivation.
 - `liveInflationItem` derives MoM/YoY and acceleration by calendar month lags
   instead of array position, so sparse monthly windows do not silently compare
   the wrong months.
@@ -335,6 +334,10 @@ Local validation:
   through `2026-06-01`.
 - `/api/econ/batch?units=lin&n=15` returned `source: DB` and 15 observations
   for every Phase 1 ID.
+- `gold_inflation_explorer` currently has DB-provided weights for only 3 of the
+  11 Phase 1 expanded IDs: `CUSR0000SAF`, `CUSR0000SAG`, and `CUSR0000SAH`.
+  The other expanded rows should remain unweighted in `market_terminal` until
+  the FRED/Eco pipeline adds weights.
 - Every Phase 1 ID has a null `2025-10-01` row in
   `gold_fred_latest_observation`; the transform table excludes those null rows.
   This is now safe for market_terminal derived metrics because they are
@@ -413,6 +416,7 @@ Add focused tests if component definition logic is refactored into pure helpers.
 ## Open Questions
 
 - Should parent groups such as `Housing`, `Services`, and `Commodities` sit beside narrower subcomponents, or should the default table avoid parent/child double counting?
-- Do we want verified BLS relative-importance weights before showing any expanded contribution analytics?
+- Do we want the FRED/Eco pipeline to add broader CPI relative-importance
+  coverage before showing expanded contribution analytics for every row?
 - Should NSA rows be hidden by default, or should a seasonality toggle be visible immediately?
 - Should regional CPI headline rows live in a separate regional CPI module instead of the Inflation Explorer?

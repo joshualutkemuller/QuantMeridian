@@ -31,11 +31,23 @@ const METRICS: { key: Metric; label: string }[] = [
 
 type Basket = "CPI" | "PCE";
 
+interface GoldInflationRow {
+  series_id: string;
+  basket?: string;
+  sa_nsa?: string;
+  observation_date?: string;
+  weight?: number | null;
+}
+
 /** Inflation sense: hotter/rising prices read red (down tone), cooling reads green (up). */
 function inflClass(n: number): string {
   if (n > 0) return "text-term-down";
   if (n < 0) return "text-term-up";
   return "text-term-text-dim";
+}
+
+function contributionFromWeight(weight: number | null, yoy: number): number | null {
+  return weight == null ? null : Number(((weight / 100) * yoy).toFixed(2));
 }
 
 export default function InflationExplorer() {
@@ -60,11 +72,33 @@ export default function InflationExplorer() {
     return () => { alive = false; };
   }, []);
 
-  // Take headline + component face values fully live from FRED index series.
+  const goldWeightById = new Map<string, GoldInflationRow>();
+  for (const row of (Array.isArray(goldData?.explorer) ? goldData.explorer as GoldInflationRow[] : [])) {
+    if (row.weight == null || !Number.isFinite(row.weight)) continue;
+    const current = goldWeightById.get(row.series_id);
+    if (!current || (row.observation_date ?? "") > (current.observation_date ?? "")) {
+      goldWeightById.set(row.series_id, row);
+    }
+  }
+
+  const applyGoldWeight = (it: InflationItem): InflationItem => {
+    const row = goldWeightById.get(it.id);
+    if (!row) return it;
+    return {
+      ...it,
+      weight: row.weight ?? null,
+      contribution: contributionFromWeight(row.weight ?? null, it.yoy),
+      contributionEligible: it.kind === "COMPONENT" && row.weight != null,
+    };
+  };
+
+  // Take headline + component face values fully live from Gold index series.
   const cpiComps = getInflationComponents("CPI", componentLevel);
   const pceComps = getInflationComponents("PCE", componentLevel);
   const headBase = getInflationHeadlines();
-  const allIds = [...headBase, ...cpiComps, ...pceComps].map((i) => i.id);
+  const cpiWeightedComps = cpiComps.map(applyGoldWeight);
+  const pceWeightedComps = pceComps.map(applyGoldWeight);
+  const allIds = [...headBase, ...cpiWeightedComps, ...pceWeightedComps].map((i) => i.id);
   const { data: liveMap, source } = useLiveSeriesSet(allIds, "lin", 15);
   const merge = (it: InflationItem) => {
     const L = liveMap[it.id];
@@ -72,8 +106,8 @@ export default function InflationExplorer() {
   };
 
   const headlines = headBase.map(merge);
-  const cpiMerged = cpiComps.map(merge);
-  const components = (basket === "CPI" ? cpiMerged : pceComps.map(merge));
+  const cpiMerged = cpiWeightedComps.map(merge);
+  const components = (basket === "CPI" ? cpiMerged : pceWeightedComps.map(merge));
   const weightedComponents = components.filter((c) => c.contributionEligible && c.contribution != null);
   const head = (g: string) => headlines.find((h) => h.group === g)!;
 
