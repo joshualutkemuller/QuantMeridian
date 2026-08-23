@@ -26,7 +26,7 @@ function saveLocalOrders(orders: PaperOrder[]) {
   window.localStorage.setItem(PAPER_LEDGER_LOCAL_STORAGE_KEY, JSON.stringify(orders.slice(0, 50)));
 }
 
-function localFills(orders: PaperOrder[]): PaperFill[] {
+export function localPaperFills(orders: PaperOrder[]): PaperFill[] {
   return orders.map((order) => ({
     id: `local-fill-${order.id}`,
     orderId: order.id,
@@ -41,7 +41,7 @@ function localFills(orders: PaperOrder[]): PaperFill[] {
   }));
 }
 
-function buildLocalSnapshot(orders: PaperOrder[], markets: PolyMarket[]): PaperLedgerSnapshot {
+export function buildLocalPaperLedgerSnapshot(orders: PaperOrder[], markets: PolyMarket[]): PaperLedgerSnapshot {
   const positions = computePaperPositions(orders, markets);
   return {
     source: "LOCAL",
@@ -49,7 +49,7 @@ function buildLocalSnapshot(orders: PaperOrder[], markets: PolyMarket[]): PaperL
     botCode: "POLYBOT",
     asOf: new Date().toISOString(),
     orders,
-    fills: localFills(orders),
+    fills: localPaperFills(orders),
     positions,
     events: [],
     exposureUsd: positions.reduce((sum, position) => sum + position.costBasis, 0),
@@ -57,7 +57,7 @@ function buildLocalSnapshot(orders: PaperOrder[], markets: PolyMarket[]): PaperL
   };
 }
 
-function fallbackOrder(intent: PaperOrderIntent): PaperOrder | null {
+export function createLocalFallbackOrder(intent: PaperOrderIntent): PaperOrder | null {
   if (intent.side !== "BUY_YES" && intent.side !== "BUY_NO") return null;
   const market = intent.market;
   const marketId = intent.marketId || market?.id;
@@ -87,7 +87,7 @@ export function usePaperLedger(markets: PolyMarket[]): {
   refresh: () => Promise<void>;
 } {
   const [localOrders, setLocalOrders] = useState<PaperOrder[]>([]);
-  const localSnapshot = useMemo(() => buildLocalSnapshot(localOrders, markets), [localOrders, markets]);
+  const localSnapshot = useMemo(() => buildLocalPaperLedgerSnapshot(localOrders, markets), [localOrders, markets]);
   const [snapshot, setSnapshot] = useState<PaperLedgerSnapshot>(localSnapshot);
   const [status, setStatus] = useState<PaperLedgerStatus>("LOADING");
 
@@ -137,12 +137,12 @@ export function usePaperLedger(markets: PolyMarket[]): {
       }
       throw new Error("paper ledger order rejected without snapshot");
     } catch {
-      const order = fallbackOrder(intent);
+      const order = createLocalFallbackOrder(intent);
       if (!order) return { accepted: false, reason: "Invalid local paper order" };
       setStatus("LOCAL");
       setLocalOrders((prev) => {
         const next = [order, ...prev].slice(0, 50);
-        setSnapshot(buildLocalSnapshot(next, markets));
+        setSnapshot(buildLocalPaperLedgerSnapshot(next, markets));
         return next;
       });
       return { accepted: true, reason: "Recorded in local fallback ledger" };
@@ -161,7 +161,7 @@ export function usePaperLedger(markets: PolyMarket[]): {
       throw new Error("paper ledger reset unavailable");
     } catch {
       setLocalOrders([]);
-      setSnapshot(buildLocalSnapshot([], markets));
+      setSnapshot(buildLocalPaperLedgerSnapshot([], markets));
       setStatus("LOCAL");
     }
   }, [markets]);
