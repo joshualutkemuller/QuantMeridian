@@ -246,6 +246,7 @@ export function resetPaperLedger(): PaperLedgerSnapshot {
   const st = state();
   st.orders = [];
   st.fills = [];
+  st.events = [];
   st.markets = {};
   recordEvent({ type: "LEDGER_RESET", message: "Paper ledger reset" });
   return snapshot();
