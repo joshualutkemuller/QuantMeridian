@@ -26,6 +26,10 @@ export interface PolyMarket {
   endDate: string;
   spark: number[];
   active: boolean;
+  eventId?: string;
+  slug?: string;
+  yesTokenId?: string;
+  noTokenId?: string;
 }
 
 export interface PolyEvent {
@@ -46,6 +50,8 @@ interface CategoryStat {
   count: number;
   volume: number;
 }
+
+type UnknownRecord = Record<string, unknown>;
 
 const MARKET_DEFS: { q: string; cat: PolyCategory; anchor: number; endOff: number }[] = [
   { q: "Will the Republicans win the 2026 US midterm House?", cat: "Politics", anchor: 0.58, endOff: 130 },
@@ -92,19 +98,73 @@ function endDate(daysOut: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+function clamp(n: number, lo = 0.01, hi = 0.99): number {
+  return Math.max(lo, Math.min(hi, n));
+}
+
+function asRecord(value: unknown): UnknownRecord {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as UnknownRecord : {};
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function asNumber(value: unknown, fallback = 0): number {
+  if (typeof value === "number" && isFinite(value)) return value;
+  if (typeof value === "string") {
+    const n = Number(value.replace(/,/g, ""));
+    if (isFinite(n)) return n;
+  }
+  return fallback;
+}
+
+function asArray(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function inferCategory(event: UnknownRecord, market: UnknownRecord): PolyCategory {
+  const blob = JSON.stringify([event.title, event.category, event.tags, market.question, market.description]).toLowerCase();
+  if (blob.includes("bitcoin") || blob.includes("btc") || blob.includes("ethereum") || blob.includes("crypto") || blob.includes("solana")) return "Crypto";
+  if (blob.includes("fed") || blob.includes("rate") || blob.includes("cpi") || blob.includes("inflation") || blob.includes("econom") || blob.includes("recession") || blob.includes("gdp")) return "Economics";
+  if (blob.includes("election") || blob.includes("trump") || blob.includes("senate") || blob.includes("house") || blob.includes("government") || blob.includes("politic")) return "Politics";
+  if (blob.includes("nba") || blob.includes("fifa") || blob.includes("world cup") || blob.includes("sports")) return "Sports";
+  if (blob.includes("climate") || blob.includes("temperature") || blob.includes("hurricane") || blob.includes("arctic")) return "Climate";
+  if (blob.includes("ai") || blob.includes("apple") || blob.includes("openai") || blob.includes("tech") || blob.includes("nvidia")) return "Tech";
+  if (blob.includes("vaccine") || blob.includes("science") || blob.includes("pandemic")) return "Science";
+  return "Culture";
+}
+
+function parseTokenIds(value: unknown): string[] {
+  return asArray(value).map((v) => String(v)).filter(Boolean);
+}
+
+function sparkAround(anchor: number, seed: string, points = 30): number[] {
+  const rng = new Rng(seed);
+  const spark: number[] = [];
+  let p = anchor - rng.float(0.03, 0.12) * (rng.bool() ? 1 : -1);
+  for (let i = 0; i < points; i++) {
+    p = clamp(p + (anchor - p) * 0.08 + rng.normal(0, 0.012), 0.02, 0.98);
+    spark.push(Number(p.toFixed(3)));
+  }
+  return spark;
+}
+
 function buildMarket(def: typeof MARKET_DEFS[number], rng: Rng, idx: number): PolyMarket {
   const prob = Math.max(0.02, Math.min(0.98, def.anchor + rng.normal(0, 0.04)));
   const spread = rng.float(0.01, 0.04);
   const yesPrice = Number(prob.toFixed(2));
   const noPrice = Number(Math.max(0.01, 1 - prob - spread * 0.5).toFixed(2));
   const chg24h = Number(rng.normal(0, 0.03).toFixed(3));
-
-  const spark: number[] = [];
-  let p = prob - rng.float(0.05, 0.15) * (rng.bool() ? 1 : -1);
-  for (let i = 0; i < 30; i++) {
-    p = Math.max(0.02, Math.min(0.98, p + (prob - p) * 0.06 + rng.normal(0, 0.02)));
-    spark.push(Number(p.toFixed(3)));
-  }
 
   return {
     id: `poly-${idx.toString().padStart(3, "0")}`,
@@ -118,9 +178,80 @@ function buildMarket(def: typeof MARKET_DEFS[number], rng: Rng, idx: number): Po
     liquidity: Math.round(rng.float(20_000, 3_000_000)),
     chg24h,
     endDate: endDate(def.endOff),
-    spark,
+    spark: sparkAround(prob, `poly-spark-${idx}`),
     active: true,
+    eventId: `evt-sim-${Math.floor(idx / 4)}`,
+    slug: `sim-${idx}`,
+    yesTokenId: `sim-yes-${idx}`,
+    noTokenId: `sim-no-${idx}`,
   };
+}
+
+export function mapGammaEventsToMarkets(eventsPayload: unknown, limit = 100): PolyMarket[] {
+  const events = asArray(eventsPayload);
+  const markets: PolyMarket[] = [];
+
+  for (const eventRaw of events) {
+    const event = asRecord(eventRaw);
+    const eventMarkets = asArray(event.markets);
+    for (const marketRaw of eventMarkets) {
+      const market = asRecord(marketRaw);
+      const id = String(market.id ?? market.conditionId ?? market.slug ?? `${event.id ?? "evt"}-${markets.length}`);
+      const question = asString(market.question) ?? asString(event.title) ?? "Untitled Polymarket market";
+      const outcomePrices = asArray(market.outcomePrices).map((v) => asNumber(v, NaN)).filter((n) => isFinite(n));
+      const yesPrice = clamp(asNumber(market.lastTradePrice, outcomePrices[0] ?? asNumber(market.bestAsk, 0.5)));
+      const noPrice = clamp(outcomePrices[1] ?? 1 - yesPrice);
+      const bestBid = asNumber(market.bestBid, Math.max(0.01, yesPrice - 0.01));
+      const bestAsk = asNumber(market.bestAsk, Math.min(0.99, yesPrice + 0.01));
+      const spread = clamp(Math.max(0.005, bestAsk - bestBid), 0.005, 0.25);
+      const volume24h = asNumber(market.volume24hr, asNumber(market.volume24h, asNumber(market.volume, 0)));
+      const totalVolume = asNumber(market.volume, asNumber(market.totalVolume, volume24h));
+      const liquidity = asNumber(market.liquidity, asNumber(market.liquidityNum, Math.max(10_000, totalVolume * 0.05)));
+      const chg24h = asNumber(market.oneDayPriceChange, asNumber(market.priceChange24h, 0));
+      const end = asString(market.endDate) ?? asString(market.endDateIso) ?? asString(event.endDate) ?? new Date(Date.now() + 30 * 86_400_000).toISOString();
+      const tokenIds = parseTokenIds(market.clobTokenIds ?? market.clobTokenId ?? market.tokenIds);
+
+      markets.push({
+        id,
+        question,
+        category: inferCategory(event, market),
+        yesPrice: Number(yesPrice.toFixed(4)),
+        noPrice: Number(noPrice.toFixed(4)),
+        spread: Number(spread.toFixed(4)),
+        volume24h: Math.round(volume24h),
+        totalVolume: Math.round(totalVolume),
+        liquidity: Math.round(liquidity),
+        chg24h: Number(chg24h.toFixed(4)),
+        endDate: end.slice(0, 10),
+        spark: sparkAround(yesPrice, `gamma-${id}`),
+        active: market.active !== false && market.closed !== true,
+        eventId: String(event.id ?? ""),
+        slug: asString(market.slug) ?? asString(event.slug),
+        yesTokenId: tokenIds[0],
+        noTokenId: tokenIds[1],
+      });
+
+      if (markets.length >= limit) return markets;
+    }
+  }
+
+  return markets;
+}
+
+export function mapGammaEventsToPolyEvents(eventsPayload: unknown, limit = 100): PolyEvent[] {
+  const events = asArray(eventsPayload).slice(0, limit);
+  return events.map((eventRaw, idx) => {
+    const event = asRecord(eventRaw);
+    const markets = mapGammaEventsToMarkets([event], 50);
+    const totalVolume = markets.reduce((sum, m) => sum + m.totalVolume, 0);
+    return {
+      id: String(event.id ?? `evt-live-${idx}`),
+      title: asString(event.title) ?? asString(event.slug) ?? `Polymarket Event ${idx + 1}`,
+      category: markets[0]?.category ?? inferCategory(event, {}),
+      markets,
+      totalVolume,
+    };
+  }).filter((event) => event.markets.length > 0);
 }
 
 let _cache: PolyMarket[] | null = null;
