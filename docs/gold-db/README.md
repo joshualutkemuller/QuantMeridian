@@ -5,6 +5,7 @@ handoffs, and gap analysis.
 
 | Document | Purpose |
 | --- | --- |
+| [CPI_2025_10_NULL_OBSERVATION_HANDOFF.md](./CPI_2025_10_NULL_OBSERVATION_HANDOFF.md) | Pipeline-side handoff explaining the October 2025 CPI null observation source gap and validation SQL. |
 | [CPI_EXPANDED_WEIGHT_PIPELINE_HANDOFF.md](./CPI_EXPANDED_WEIGHT_PIPELINE_HANDOFF.md) | Pipeline-side handoff to add missing Gold DB weights for 8 expanded CPI component rows. |
 | [MODULE_DATA_AUDIT.md](./MODULE_DATA_AUDIT.md) | Terminal-side module audit, migration status, remaining Phase 6 work, and test matrix. |
 | [market_terminal_gold_views.md](./market_terminal_gold_views.md) | Pipeline-side Gold analytical views plan for recreating terminal macro surfaces. |

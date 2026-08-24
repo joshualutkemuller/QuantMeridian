@@ -391,9 +391,11 @@ Local validation:
   observation row, and 39 series missing DB-provided weights.
 - Every Phase 1 ID has a null `2025-10-01` row in
   `gold_fred_latest_observation`; the transform table excludes those null rows.
-  This is now safe for market_terminal derived metrics because they are
-  calendar-lag based, but the upstream Gold pipeline should still track the null
-  observation as a data-continuity issue.
+  This is now explained as an upstream October 2025 source gap. BLS-shaped
+  `CUSR...` / `CUUR...` payloads carry footnote code `X` for the 2025 lapse in
+  appropriations. This is safe for `market_terminal` derived metrics because
+  they are calendar-lag based, and the terminal should not locally impute or
+  override the missing month.
 
 ## Candidate Phase 1 Default Additions
 
