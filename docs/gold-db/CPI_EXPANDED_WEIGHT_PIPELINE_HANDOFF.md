@@ -136,10 +136,14 @@ The relevant terminal-side files are:
 No `market_terminal` change should be needed once the pipeline emits weights for
 these 8 IDs.
 
-## Related Known Issue
+## Related Known Source Gap
 
 All 11 Phase 1 expanded CPI IDs currently have a null `2025-10-01` observation
 in `gold_fred_latest_observation`, and `gold_fred_feature_transforms` excludes
-that null month. `market_terminal` derives MoM/YoY by calendar lag to avoid
-array-position errors, but the pipeline should still treat that null month as a
-data-continuity issue if it is not expected.
+that null month. This has been traced to upstream source payloads for October
+2025, including BLS footnote code `X` for `CUSR...` / `CUUR...` rows.
+
+See [CPI_2025_10_NULL_OBSERVATION_HANDOFF.md](./CPI_2025_10_NULL_OBSERVATION_HANDOFF.md)
+for the evidence, validation SQL, and pipeline acceptance criteria.
+`market_terminal` derives MoM/YoY by calendar lag to avoid array-position
+errors and should not locally impute or override the missing month.
