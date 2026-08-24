@@ -40,6 +40,32 @@ interface GoldInflationRow {
   weight?: number | null;
 }
 
+interface CpiCoverageRow {
+  series_id: string;
+  seasonality: SeasonalAdjustment;
+  level: ComponentLevel;
+  latest_transform_date: string | null;
+  null_observation_rows: number;
+  latest_null_observation_date: string | null;
+  has_transform: boolean;
+  has_null_observation: boolean;
+  has_weight: boolean;
+}
+
+interface CpiCoverageData {
+  ok?: boolean;
+  coverage?: {
+    summary: {
+      total_series: number;
+      transform_missing: number;
+      null_observation_series: number;
+      missing_weight_series: number;
+      latest_transform_date: string | null;
+    };
+    rows: CpiCoverageRow[];
+  };
+}
+
 /** Inflation sense: hotter/rising prices read red (down tone), cooling reads green (up). */
 function inflClass(n: number): string {
   if (n > 0) return "text-term-down";
@@ -59,6 +85,7 @@ export default function InflationExplorer() {
   const [componentLevel, setComponentLevel] = useState<ComponentLevel>("core");
   const [componentSeasonality, setComponentSeasonality] = useState<SeasonalAdjustment>("SA");
   const [goldData, setGoldData] = useState<any>(null);
+  const [coverageData, setCoverageData] = useState<CpiCoverageData | null>(null);
 
   // Fetch Gold inflation data
   useEffect(() => {
@@ -74,6 +101,17 @@ export default function InflationExplorer() {
     return () => { alive = false; };
   }, []);
 
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/econ/inflation/coverage")
+      .then((r) => r.json())
+      .then((data) => {
+        if (alive) setCoverageData(data);
+      })
+      .catch(() => setCoverageData(null));
+    return () => { alive = false; };
+  }, []);
+
   const goldWeightById = new Map<string, GoldInflationRow>();
   for (const row of (Array.isArray(goldData?.explorer) ? goldData.explorer as GoldInflationRow[] : [])) {
     if (row.weight == null || !Number.isFinite(row.weight)) continue;
@@ -85,7 +123,12 @@ export default function InflationExplorer() {
 
   const applyGoldWeight = (it: InflationItem): InflationItem => {
     const row = goldWeightById.get(it.id);
-    if (!row) return it;
+    if (!row) {
+      if (goldData?.ok && it.group === "CPI" && it.kind === "COMPONENT") {
+        return { ...it, weight: null, contribution: null, contributionEligible: false };
+      }
+      return it;
+    }
     return {
       ...it,
       weight: row.weight ?? null,
@@ -94,8 +137,13 @@ export default function InflationExplorer() {
     };
   };
 
+  const coverageRows = coverageData?.ok && coverageData.coverage ? coverageData.coverage.rows : [];
+  const cpiCoverageById = new Map(coverageRows.map((row) => [row.series_id, row]));
+  const coverageReady = coverageRows.length > 0;
+
   // Take headline + component face values fully live from Gold index series.
-  const cpiComps = getInflationComponents("CPI", componentLevel, componentSeasonality);
+  const cpiBaseComps = getInflationComponents("CPI", componentLevel, componentSeasonality);
+  const cpiComps = coverageReady ? cpiBaseComps.filter((item) => cpiCoverageById.get(item.id)?.has_transform) : cpiBaseComps;
   const pceComps = getInflationComponents("PCE", componentLevel);
   const headBase = getInflationHeadlines();
   const cpiWeightedComps = cpiComps.map(applyGoldWeight);
@@ -111,6 +159,10 @@ export default function InflationExplorer() {
   const cpiMerged = cpiWeightedComps.map(merge);
   const components = (basket === "CPI" ? cpiMerged : pceWeightedComps.map(merge));
   const weightedComponents = components.filter((c) => c.contributionEligible && c.contribution != null);
+  const currentCoverageRows = basket === "CPI" ? components.map((item) => cpiCoverageById.get(item.id)).filter(Boolean) as CpiCoverageRow[] : [];
+  const dbCoveredCount = currentCoverageRows.filter((row) => row.has_transform).length;
+  const nullObservationCount = currentCoverageRows.filter((row) => row.has_null_observation).length;
+  const latestNullDate = currentCoverageRows.map((row) => row.latest_null_observation_date).filter(Boolean).sort().at(-1);
   const head = (g: string) => headlines.find((h) => h.group === g)!;
 
   // Determine page source: prefer Gold if available, otherwise FRED/SIM
@@ -201,6 +253,18 @@ export default function InflationExplorer() {
       header: "Component",
       render: (r) => <span className="font-semibold text-term-text">{r.label}</span>,
       sortVal: (r) => r.label,
+    },
+    {
+      key: "id",
+      header: "Series ID",
+      width: "150px",
+      render: (r) => (
+        <div className="flex flex-col leading-tight">
+          <span className="text-term-text-mute">{r.id}</span>
+          {r.legacyId && <span className="text-3xs text-term-text-dim">legacy {r.legacyId}</span>}
+        </div>
+      ),
+      sortVal: (r) => r.id,
     },
     {
       key: "weight",
@@ -355,6 +419,16 @@ export default function InflationExplorer() {
             {basket === "CPI" && (
               <TermToggleGroup label="CPI Adj." value={componentSeasonality} onChange={setComponentSeasonality} options={[{ value: "SA" as SeasonalAdjustment, label: "SA" }, { value: "NSA" as SeasonalAdjustment, label: "NSA" }]} />
             )}
+            {basket === "CPI" && (
+              <div className="flex flex-wrap items-center gap-1 border-t border-term-border pt-2">
+                <span className="term-label">Coverage</span>
+                <Tag tone={coverageReady && dbCoveredCount === components.length ? "up" : "amber"}>{dbCoveredCount}/{components.length} DB</Tag>
+                <Tag tone={weightedComponents.length ? "blue" : "neutral"}>{weightedComponents.length} weighted</Tag>
+                {nullObservationCount > 0 && <Tag tone="amber">{nullObservationCount} null obs</Tag>}
+                {componentSeasonality === "NSA" && <Tag tone="violet">CUUR</Tag>}
+                {latestNullDate && <span className="text-3xs text-term-text-mute">latest null {latestNullDate}</span>}
+              </div>
+            )}
             <div className="space-y-1 border-t border-term-border pt-2 text-3xs text-term-text-mute">
               <p>
                 <span className="text-term-amber">ΔMoM / ΔYoY</span> = change in the % print vs the prior
@@ -363,6 +437,9 @@ export default function InflationExplorer() {
               <p>
                 Click any item to drill to raw index levels with derived <span className="text-term-amber">MoM / YoY / ΔMoM / ΔYoY</span>.
               </p>
+              {basket === "CPI" && componentSeasonality === "NSA" && (
+                <p>NSA shows DB-backed CUUR rows only; SA-only detail rows stay out of this view.</p>
+              )}
             </div>
           </div>
         </Panel>
@@ -377,7 +454,9 @@ export default function InflationExplorer() {
             <div className="flex items-center gap-2">
               <Tag tone="blue">{components.length} items</Tag>
               {basket === "CPI" && <Tag tone="violet">{componentSeasonality}</Tag>}
+              {basket === "CPI" && coverageReady && <Tag tone={dbCoveredCount === components.length ? "up" : "amber"}>{dbCoveredCount} DB</Tag>}
               {componentLevel === "expanded" && <Tag tone="amber">{weightedComponents.length} weighted</Tag>}
+              {nullObservationCount > 0 && <Tag tone="amber">{nullObservationCount} nulls</Tag>}
               <span className="text-3xs text-term-text-mute">{METRICS.find((m) => m.key === metric)?.label}</span>
             </div>
           }
