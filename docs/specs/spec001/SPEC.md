@@ -278,7 +278,26 @@ without explicit owner approval.
 - Delta MoM
 - Delta YoY
 
-No new endpoint is required for phase 1.
+No new value-fetch endpoint is required for phase 1.
+
+### Coverage Diagnostics Endpoint
+
+`/api/econ/inflation/coverage` now exposes terminal-side CPI coverage
+diagnostics from the FRED/Eco Gold DB only. It compares the curated CPI
+component universe against:
+
+- `gold_fred_feature_transforms` for usable transform coverage
+- `gold_fred_latest_observation` for null observation gaps
+- `gold_inflation_explorer` for DB-provided weights and contribution coverage
+
+The Inflation Explorer uses this endpoint to:
+
+- hide CPI component rows without transform coverage once diagnostics load
+- show DB coverage, weighted-row count, and null-observation flags
+- expose active canonical series IDs and legacy ID mappings in the component
+  table
+- keep expanded CPI weights DB-only by clearing component weights when Gold is
+  available but `gold_inflation_explorer.weight` is missing
 
 ### Optional Future Endpoint
 
@@ -312,6 +331,9 @@ This should come after the static expansion is verified in the UI.
 16. [x] Add SA/NSA toggle after default expansion is stable.
 17. [x] Wire DB-provided relative-importance weights before showing expanded contribution analytics.
 18. [ ] Add missing expanded-component weights to the FRED/Eco Gold pipeline if those weights are required in `market_terminal`.
+19. [x] Add DB-backed CPI coverage diagnostics for transforms, null observations, and weights.
+20. [x] Add component-table source identity for canonical and legacy CPI IDs.
+21. [x] Use DB transform coverage to suppress CPI rows that are declared but not usable in Gold.
 
 ## Implementation Status
 
@@ -330,11 +352,21 @@ Explorer `Expanded` mode:
   accepts weights returned by the FRED/Eco Gold DB in `gold_inflation_explorer`.
 - Rows without DB-provided weights render `Weight %` and `Contrib pp` as `-` and
   are excluded from the YoY contribution bar chart.
+- The Inflation Explorer fetches `/api/econ/inflation/coverage` and shows CPI
+  DB coverage, weighted-row count, null-observation count, latest null date,
+  SA/NSA identity, and active canonical series IDs.
+- CPI component rows are filtered by Gold transform coverage once coverage
+  diagnostics load, so a declared catalog row does not appear as a stale or
+  blank component unless Gold has usable transforms for it.
+- When Gold inflation data is available, `market_terminal` only treats CPI
+  weights as present if `gold_inflation_explorer.weight` is non-null.
 - `src/data/econSeries.ts` has matching `FRED_CATALOG` entries so the batch
   endpoint and drill-through can resolve the new IDs.
 - `src/data/inflation.test.ts` covers default-vs-expanded component counts,
   nullable expanded weights, DB-provided weight handling, contribution
   eligibility, and live-value derivation.
+- `src/lib/server/inflationCoverage.test.ts` covers the CPI coverage diagnostic
+  summary, missing transforms, null observations, and missing weights.
 - `liveInflationItem` derives MoM/YoY and acceleration by calendar month lags
   instead of array position, so sparse monthly windows do not silently compare
   the wrong months.
@@ -354,6 +386,9 @@ Local validation:
 - `gold_inflation_explorer` has 30 CPI NSA series from `2024-01-01` through
   `2026-06-01`; the terminal wires 28 non-headline/core NSA component rows
   behind the toggle.
+- `/api/econ/inflation/coverage` currently reports 57 curated CPI component
+  series, transform coverage for all 57, 51 series with at least one null
+  observation row, and 39 series missing DB-provided weights.
 - Every Phase 1 ID has a null `2025-10-01` row in
   `gold_fred_latest_observation`; the transform table excludes those null rows.
   This is now safe for market_terminal derived metrics because they are

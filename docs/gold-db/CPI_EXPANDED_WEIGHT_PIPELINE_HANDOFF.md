@@ -99,6 +99,27 @@ Acceptance criteria:
 - Contribution bars in `market_terminal` should include those rows only when
   `gold_inflation_explorer.weight` is present.
 
+## Market Terminal Coverage Check
+
+After rebuilding the Gold DB and pointing `market_terminal` at it, the terminal
+can report CPI component coverage directly:
+
+```bash
+curl http://127.0.0.1:5174/api/econ/inflation/coverage
+```
+
+The response is DB-only and summarizes:
+
+- transform coverage from `gold_fred_feature_transforms`
+- null observation gaps from `gold_fred_latest_observation`
+- weight coverage from `gold_inflation_explorer`
+
+Current local terminal diagnostics show 57 curated CPI component series, all 57
+with transform coverage, 51 series with at least one null observation row, and
+39 series missing DB-provided weights. Once the 8 expanded SA weights above are
+added in the pipeline, `missing_weight_series` should decline and the
+corresponding rows should show `has_weight: true`.
+
 ## Market Terminal Dependency
 
 The relevant terminal-side files are:
@@ -106,6 +127,10 @@ The relevant terminal-side files are:
 - `src/data/inflation.ts`: declares the expanded CPI rows with `weight: null`.
 - `src/app/economics/inflation/page.tsx`: merges DB-provided weights from
   `/api/econ/inflation` / `gold_inflation_explorer`.
+- `src/app/api/econ/inflation/coverage/route.ts`: exposes DB-backed CPI
+  transform, null-observation, and weight coverage diagnostics.
+- `src/lib/server/inflationCoverage.ts`: builds the coverage summary used by
+  the API route and Inflation Explorer coverage tags.
 - `docs/specs/spec001/SPEC.md`: records the DB-only policy and spec status.
 
 No `market_terminal` change should be needed once the pipeline emits weights for
