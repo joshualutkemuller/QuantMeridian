@@ -2,7 +2,6 @@ import { json } from "@/lib/server/http";
 import { goldEnabled, goldStore, goldTable, goldParam, type GoldStore } from "@/lib/server/goldStore";
 import { buildEdaFromGold } from "@/lib/server/goldEda";
 import {
-  PRICE_SNAPSHOTS,
   SNAPSHOTS,
   type MarketView,
   type ReturnBasis,
@@ -35,19 +34,6 @@ function asOfDate(req: Request): string | null {
   const raw = new URL(req.url).searchParams.get("asof");
   return raw && /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : null;
 }
-
-function snapshotFallbackEnabled(req: Request): boolean {
-  const requested = new URL(req.url).searchParams.get("snapshot");
-  if (requested === "1" || requested === "true") return true;
-  return process.env.MARKET_SNAPSHOT_FALLBACK === "1";
-}
-
-
-function snapshotFor(view: MarketView, basis: ReturnBasis): unknown {
-  if (basis === "price" && view in PRICE_SNAPSHOTS) return PRICE_SNAPSHOTS[view as keyof typeof PRICE_SNAPSHOTS];
-  return SNAPSHOTS[view];
-}
-
 
 interface MarketObservation {
   series_id: string;
@@ -658,8 +644,7 @@ function filterSnapshotByAsOf(data: unknown, view: MarketView, asof: string): un
 /**
  * GET /api/market/[view]
  *
- * Reads market views from the Gold DB (MACRO_DB_URL) via goldStore, then falls
- * back to the committed build-time snapshot when explicitly enabled.
+ * Reads market views from the Gold DB (MACRO_DB_URL) via goldStore.
  * Always 200 with a `source` field so the UI renders uniformly and never blocks.
  */
 export async function GET(req: Request, { params }: { params: { view: string } }) {
@@ -761,20 +746,13 @@ export async function GET(req: Request, { params }: { params: { view: string } }
     }
   }
 
-  // Committed build-time snapshot fallback
-  if (!snapshotFallbackEnabled(req)) {
-    return json({
-      source: "SNAPSHOT_DISABLED",
-      view,
-      basis,
-      ...(asof ? { asof } : {}),
-      earliestAsOf: null,
-      data: null,
-      detail: "Snapshot fallback is off by default. Add snapshot=1 or set MARKET_SNAPSHOT_FALLBACK=1 to enable committed snapshots.",
-    });
-  }
-  const snapData = snapshotFor(view, basis);
-  const earliestAsOf = extractEarliestAsOf(snapData, view);
-  const filtered = asof ? filterSnapshotByAsOf(snapData, view, asof) : snapData;
-  return json({ source: "SNAPSHOT", view, basis, ...(asof ? { asof } : {}), earliestAsOf, data: filtered });
+  return json({
+    source: "ERR",
+    view,
+    basis,
+    ...(asof ? { asof } : {}),
+    earliestAsOf: null,
+    data: null,
+    error: goldEnabled() ? "No Gold DB market rows found." : "MACRO_DB_URL not configured.",
+  });
 }

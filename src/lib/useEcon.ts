@@ -1,14 +1,8 @@
 
 import { useEffect, useState } from "react";
 import { fetchJson, peekFresh } from "@/lib/fetchCache";
-import { getSeriesHistory, type Observation } from "@/data/econSeries";
-import { getSnapshotObservations, getSnapshotRawObservations } from "@/data/econSnapshot";
+import { type Observation } from "@/data/econSeries";
 import {
-  getCurrentCurve,
-  getCurveSnapshots,
-  getInversionsForSpread,
-  getInversionStats,
-  getSpreadSeriesFor,
   type CurveSnapshot,
   type Inversion,
 } from "@/data/econCurve";
@@ -37,10 +31,9 @@ function mapSource(s: unknown): DataSource {
   return "SIM";
 }
 
-function withFallbackParams(url: string, opts: { simEnabled: boolean; snapshotFallbackEnabled: boolean }): string {
+function withFallbackParams(url: string, opts: { simEnabled: boolean }): string {
   const params: string[] = [];
   if (opts.simEnabled) params.push("sim=1");
-  if (opts.snapshotFallbackEnabled) params.push("snapshot=1");
   if (!params.length) return url;
   const sep = url.includes("?") ? "&" : "?";
   return `${url}${sep}${params.join("&")}`;
@@ -61,11 +54,10 @@ function useEconResource<T>(
   fallbackSource: DataSource = "SIM",
   emptyValue?: T,
 ): { data: T; source: DataSource } {
-  const { simEnabled, snapshotFallbackEnabled } = useSimMode();
-  const requestUrl = withFallbackParams(url, { simEnabled, snapshotFallbackEnabled });
-  const suppressSnapshot = (source: DataSource) => source === "SNAPSHOT" && !snapshotFallbackEnabled;
+  const { simEnabled } = useSimMode();
+  const requestUrl = withFallbackParams(url, { simEnabled });
   const suppressSim = (source: DataSource) => source === "SIM" && !simEnabled;
-  const shouldSuppress = (source: DataSource) => suppressSnapshot(source) || suppressSim(source);
+  const shouldSuppress = (source: DataSource) => suppressSim(source);
   const suppressedData = () => (emptyValue !== undefined ? emptyValue : fallback);
   const suppressedSource = (source: DataSource) => source === "SIM" ? "ERR" : emptyValue !== undefined || fallbackSource === "SNAPSHOT" ? "LOADING" : fallbackSource;
   const cached = peekFresh<any>(requestUrl);
@@ -112,37 +104,36 @@ function useEconResource<T>(
     return () => {
       alive = false;
     };
-  }, [requestUrl, snapshotFallbackEnabled, simEnabled]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [requestUrl, simEnabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return { data: rawData, source: rawSource };
 }
 
 export function useEconSeries(id: string, n = 120): { data: Observation[]; source: DataSource } {
-  const snap = getSnapshotObservations(id, n);
   return useEconResource<Observation[]>(
     `/api/econ/series?id=${id}&n=${n}`,
-    snap ?? getSeriesHistory(id, n),
+    [],
     (j) => j.observations ?? [],
-    snap ? "SNAPSHOT" : "SIM",
+    "LOADING",
     [],
   );
 }
 
 export function useLiveCurve(): { data: CurveSnapshot | null; source: DataSource } {
-  return useEconResource<CurveSnapshot | null>(`/api/econ/curve`, getCurrentCurve(), (j) => j.curve, "SIM", null);
+  return useEconResource<CurveSnapshot | null>(`/api/econ/curve`, null, (j) => j.curve, "LOADING", null);
 }
 
 /**
  * Real point-in-time curve snapshots (Today + 1M/3M/6M/1Y/2Y ago + deep
  * reference curves), assembled server-side from each tenor's FRED daily
- * history. Falls back to the simulated presets without a key.
+ * history. Returns an empty list until Gold responds.
  */
 export function useCurveSnapshots(years = 7): { data: CurveSnapshot[]; source: DataSource } {
   return useEconResource<CurveSnapshot[]>(
     `/api/econ/curve-history?years=${years}`,
-    getCurveSnapshots(),
+    [],
     (j) => (Array.isArray(j.snapshots) ? j.snapshots : []),
-    "SIM",
+    "LOADING",
     [],
   );
 }
@@ -153,29 +144,33 @@ export function useEconCalendar(): { data: EconEvent[]; source: DataSource } {
 
 export interface InversionData {
   inversions: Inversion[];
-  stats: ReturnType<typeof getInversionStats>;
+  stats: {
+    total: number;
+    recessionRate: number;
+    avgLeadMonths: number;
+    minLeadMonths: number;
+    maxLeadMonths: number;
+    avgDepthBps: number;
+    deepestBps: number;
+    longestMonths: number;
+  } | null;
   timeline: { date: string; value: number; recession: boolean }[];
 }
 
 /**
  * Live inversion detection for any curve spread — pulls the spread's real daily
- * FRED history server-side and detects every unique inversion period. Falls back
- * to the curated/simulated record without a key.
+ * Gold history server-side and returns every unique inversion period.
  */
 export function useInversions(spreadId: string): { data: InversionData | null; source: DataSource } {
   return useEconResource<InversionData | null>(
     `/api/econ/inversions?spread=${encodeURIComponent(spreadId)}`,
-    {
-      inversions: getInversionsForSpread(spreadId),
-      stats: getInversionStats(spreadId),
-      timeline: getSpreadSeriesFor(spreadId),
-    },
+    null,
     (j) => ({
       inversions: j.inversions ?? [],
       stats: j.stats ?? null,
       timeline: j.timeline ?? [],
     }),
-    "SIM",
+    "LOADING",
     null,
   );
 }
@@ -205,7 +200,7 @@ export function useLiveIndicators(): { data: Record<string, LiveIndicator>; sour
     `/api/econ/indicators`,
     {},
     (j) => Object.fromEntries((j.indicators ?? []).map((i: LiveIndicator) => [i.id, i])),
-    "SIM",
+    "LOADING",
     {},
   );
   return { data, source };
@@ -219,8 +214,7 @@ export interface SeriesObs {
 /**
  * Batch-fetch many series (one request). Returns a map keyed by id of the raw
  * observations + per-series source. Pass `units: "lin"` to get raw index levels
- * so the page can derive MoM/YoY/acceleration itself. Empty map until loaded;
- * callers keep their simulation values unless a series reports a real source.
+ * so the page can derive MoM/YoY/acceleration itself.
  */
 export function useLiveSeriesSet(
   ids: string[],
@@ -229,24 +223,14 @@ export function useLiveSeriesSet(
 ): { data: Record<string, SeriesObs>; source: DataSource } {
   const key = ids.join(",");
   const url = `/api/econ/batch?ids=${encodeURIComponent(key)}${units ? `&units=${units}` : ""}&n=${n}`;
-  // Seed from the committed snapshot so a static-only deploy still shows real
-  // frozen series (labelled SNAPSHOT) rather than nothing/SIM.
-  const seeded = Object.fromEntries(
-    ids
-      .map((id) => {
-        const obs = units === "lin" ? getSnapshotRawObservations(id, n) ?? getSnapshotObservations(id, n) : getSnapshotObservations(id, n);
-        return obs ? ([id, { observations: obs, source: "SNAPSHOT" as const }] as const) : null;
-      })
-      .filter((e): e is NonNullable<typeof e> => e !== null)
-  );
   return useEconResource(
     url,
-    seeded as Record<string, SeriesObs>,
+    {} as Record<string, SeriesObs>,
     (j) => Object.fromEntries((j.series ?? []).map((s: { id: string; observations: { date: string; value: number }[]; source: unknown }) => {
       const mapped = mapSource(s.source);
       return [s.id, { observations: s.observations, source: isRealEconSource(mapped) || mapped === "ERR" ? mapped : "SIM" }];
     })),
-    Object.keys(seeded).length ? "SNAPSHOT" : "SIM",
+    "LOADING",
     {},
   );
 }

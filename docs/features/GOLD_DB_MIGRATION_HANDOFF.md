@@ -392,6 +392,16 @@ Delete `src/lib/server/fred.ts` from the prod path, all `*Snapshot*` files, all
 SIM generators for Tier A. Add the CI grep gate (§11). Update `ARCHITECTURE.md`,
 `docs/data/DATA_PIPELINE_OVERVIEW.md`, `docs/gold-db/MODULE_DATA_AUDIT.md`.
 
+**Status as of 2026-08-25:** Tier A production API routes and direct Tier A
+client helpers have been hardened to return Gold DB rows or explicit `ERR`/empty
+states instead of falling through to live FRED, committed snapshots, or SIM.
+`scripts/check-gold-db-policy.sh` is wired as `npm run check:gold-policy` and
+blocks the old fallback imports/annotations in `src/app/api/econ`,
+`src/app/api/chart`, and `src/app/api/market`, with documented exceptions for
+calendar, FOMC, and macro-input synthetic-book/model paths. Physical deletion of
+legacy fixture files and SIM generators remains pending because tests, Tier B/C
+exceptions, and offline helpers still reference them.
+
 Phases 1–5 are independently shippable (a module reads Gold or, until its phase
 lands, keeps the old chain — no big-bang cutover).
 
@@ -399,25 +409,26 @@ lands, keeps the old chain — no big-bang cutover).
 
 ## 11. Removal / enforcement checklist
 
-- [ ] No Tier A/C route imports `@/lib/server/fred`, `getSnapshotObservations`,
-      `getSeriesHistory`, `simStatFull`, or any `Rng`-based generator.
+- [x] No Tier A production route imports `@/lib/server/fred`,
+      `getSnapshotObservations`, `getSeriesHistory`, `simStatFull`, or any
+      `Rng`-based generator. Documented exceptions: `econ/calendar` until
+      `gold.release_calendar`; `econ/fomc` and `econ/macro-inputs` for explicit
+      synthetic model/book behavior.
 - [ ] `FRED_API_KEY`, `MARKET_PIPELINE_URL`, `MARKET_LENS_URL`, `CHART_DB_URL`,
       `MARKET_DATA_DIR`, `AAII_SENTIMENT_URL` removed from deploy config and
       `.env.example`; only `MACRO_DB_URL` (+ Databricks vars) + Tier-B keys remain.
 - [ ] `econSnapshot.json` / `econSnapshot.ts` / `sentimentAaiiSnapshot.*` deleted
       (or the last kept only for the Tier-B AAII survey, explicitly).
-- [ ] **CI grep gate:** fail the build if `fredSeries|fredLatest|getSeriesHistory|
-      getSnapshotObservations` appears under `src/app/api/econ`, `.../market`,
-      `.../chart` (Tier A dirs). Encodes "no fallback" as a test.
-- [ ] **Runtime fallback gate:** Tier A/C routes must only use `SIM` when the
-      request explicitly opts in (`sim=1`, driven by the top-ribbon SIM toggle).
-      With SIM off, missing data returns an empty/error payload so gaps are
-      visible during testing.
-- [ ] **Snapshot fallback gate:** Tier A/C routes must only use committed
-      snapshots when the request explicitly opts in (`snapshot=1`, driven by the
-      top-ribbon Snapshot Fallback toggle). Direct endpoints such as
-      `/api/econ/series` and `/api/chart/series` need the same server-side
-      guard as `/api/market/[view]`.
+- [x] **CI grep gate:** `npm run check:gold-policy` fails the build if forbidden
+      fallback imports, calls, or `MIGRATION FALLBACK` annotations appear under
+      `src/app/api/econ`, `.../market`, or `.../chart`, excluding documented
+      exception files.
+- [x] **Runtime fallback gate:** Tier A routes now return Gold DB rows or
+      explicit `ERR`/empty payloads. `SIM` remains available only in documented
+      synthetic-book/model exception paths.
+- [x] **Snapshot fallback gate:** Tier A routes no longer serve committed
+      snapshots as a fallback. Snapshot files may remain as tests/offline
+      fixtures until the final deletion task is completed.
 - [ ] Hard-coded `source="SIM"` badges are allowed only for modules that are
       explicitly deterministic-book Tier C surfaces; the badge must render as
       unavailable/error when SIM mode is off.
@@ -460,7 +471,7 @@ These are not new product requirements; they are cleanup items surfaced while
 testing the deploy with SIM OFF and Snapshot Fallback OFF. They should be worked
 before declaring the Gold cutover complete.
 
-#### 1. Snapshot fallback needs the same explicit gate as SIM
+#### 1. Snapshot fallback needs the same explicit gate as SIM — completed for Tier A routes on 2026-08-25
 
 **Problem:** The shared client hooks suppress snapshots when Snapshot Fallback is
 off, but some direct routes can still return `SNAPSHOT` without a request opt-in.
@@ -478,9 +489,10 @@ especially:
 - `/api/econ/inversions`
 - `/api/econ/stats`
 
-**Acceptance:** With Snapshot Fallback OFF, a missing DB/live read produces an
-explicit empty/error payload, not a committed snapshot. With Snapshot Fallback
-ON, snapshots may fill gaps for testing.
+**Acceptance:** Tier A routes now produce explicit empty/error payloads rather
+than committed snapshots. The old `snapshot=1` production fallback has been
+removed from these routes; remaining snapshot references are tests/offline
+fixtures or documented non-Tier-A exceptions.
 
 #### 2. Deterministic-book modules need explicit empty/not-wired states
 
@@ -522,7 +534,7 @@ series may require the BEA manifest noted in the PCE item-level decision below.
 **Acceptance:** INFL displays CPI rows from Gold and clearly marks PCE rows that
 are unavailable until pipeline coverage is added.
 
-#### 4. Client-side fallback helpers must stop masking gaps
+#### 4. Client-side fallback helpers must stop masking gaps — Tier A direct helpers completed on 2026-08-25
 
 **Problem:** A few pages still call client-side deterministic helpers such as
 `getSeriesHistory()` / `getSocialIntel()` / `getPolymarkets()` directly. The
@@ -531,16 +543,18 @@ behavior is to return empty rows in audit mode.
 
 **Known examples from audit:**
 
-- Economics overview selected-history fallback
-- Sec-Finance rate array fallbacks
+- Economics overview selected-history fallback — completed; selected chart uses
+  live/Gold hook history or empty state
+- Sec-Finance rate array fallbacks — completed; rate arrays use live/Gold hook
+  observations or empty state
 - Sentiment social/AAII-derived fallback paths
 - Polymarket/news/social hook initial states
 
 **Fix:** Route these through the shared hooks or check `useSimMode()` before
 using local generators.
 
-**Acceptance:** With SIM OFF, local deterministic helpers do not populate module
-bodies unless explicitly enabled.
+**Acceptance:** With SIM OFF, local deterministic helpers do not populate Tier A
+module bodies unless explicitly enabled or documented as Tier B/C.
 
 #### 5. Copy, docs, and DataOps labels need to match the new policy
 

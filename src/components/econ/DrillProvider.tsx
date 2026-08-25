@@ -6,7 +6,6 @@ import { SourceBadge } from "./SourceBadge";
 import { ChartLink } from "@/components/charting/ChartLink";
 import { Modal } from "@/components/ui/Modal";
 import type { DataSource } from "@/lib/useEcon";
-import { useSimMode } from "@/lib/simMode";
 import { fmtSigned, fmtNum, pnlClass } from "@/lib/format";
 
 export interface DrillTarget {
@@ -38,11 +37,10 @@ interface Obs {
 
 /**
  * Provides the drill-down modal to all econ pages. Clicking an indicator opens a
- * panel showing the rolling 24 months of observations (live from FRED when a key
- * is set, otherwise the simulation) as a chart + a month-over-month table.
+ * panel showing the rolling 24 months of Gold DB observations as a chart plus
+ * a month-over-month table.
  */
 export function DrillProvider({ children }: { children: ReactNode }) {
-  const { simEnabled, snapshotFallbackEnabled } = useSimMode();
   const [target, setTarget] = useState<DrillTarget | null>(null);
   const [obs, setObs] = useState<Obs[]>([]);
   const [source, setSource] = useState<DataSource>("LOADING");
@@ -59,18 +57,18 @@ export function DrillProvider({ children }: { children: ReactNode }) {
     const units = target.growthMetrics || target.qoqAnnualizedMetrics ? "lin" : target.units;
     const n = target.growthMetrics ? 37 : target.qoqAnnualizedMetrics ? 40 : 24;
     const u = units ? `&units=${units}` : "";
-    fetch(`/api/econ/series?id=${encodeURIComponent(target.id)}&n=${n}${u}${simEnabled ? "&sim=1" : ""}${snapshotFallbackEnabled ? "&snapshot=1" : ""}`)
+    fetch(`/api/econ/series?id=${encodeURIComponent(target.id)}&n=${n}${u}`)
       .then((r) => r.json())
       .then((j) => {
         if (!alive) return;
         setObs(j.observations ?? []);
         setSource(j.source === "FRED" ? "FRED" : j.source === "SNAPSHOT" ? "SNAPSHOT" : j.source === "ETL" ? "ETL" : j.source === "DB" ? "DB" : j.source === "ERR" ? "ERR" : "SIM");
       })
-      .catch(() => alive && setSource(simEnabled ? "SIM" : "ERR"));
+      .catch(() => alive && setSource("ERR"));
     return () => {
       alive = false;
     };
-  }, [target, simEnabled, snapshotFallbackEnabled]);
+  }, [target]);
 
   const dp = target?.decimals ?? 2;
   const values = obs.map((o) => o.value);

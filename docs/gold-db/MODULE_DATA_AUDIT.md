@@ -1,18 +1,18 @@
 # Module Data Audit & Test Plan
 
 **Generated**: 2026-06-25
-**Updated**: 2026-07-18 — Gold DB migration (see `docs/features/GOLD_DB_MIGRATION_HANDOFF.md`)
+**Updated**: 2026-08-25 — Gold DB migration hardening (see `docs/features/GOLD_DB_MIGRATION_HANDOFF.md`)
 **Scope**: All 38 modules — data sourcing, SIM vs live accuracy, bugs, provenance transparency
 
 ---
 
 ## Gold DB Migration Status (as of 2026-07-18)
 
-The terminal has migrated from a 3-tier FRED→SNAPSHOT→SIM fallback chain to a single **Gold DB** source of truth for Tier A (series/econ) modules. The previous fallback chain is preserved with `// MIGRATION FALLBACK — remove in Phase 6` annotations during phased rollout.
+The terminal has migrated from a 3-tier FRED→SNAPSHOT→SIM fallback chain to a single **Gold DB** source of truth for Tier A (series/econ/market/chart) routes. Tier A API routes now return Gold rows or explicit `ERR` empty states; the old silent FRED/SNAPSHOT/SIM ladder has been removed from those production paths and is enforced by `npm run check:gold-policy`.
 
 | Tier | Scope | Status |
 |------|-------|--------|
-| **A** | Econ/market series — `econ/*`, `chart/*`, `market/*` | **Migrated** — Gold DB is tier-0; FRED/SNAPSHOT fallbacks annotated for Phase 6 removal |
+| **A** | Econ/market series — `econ/*`, `chart/*`, `market/*` | **Hardened** — Gold DB only in production Tier A routes; missing data returns explicit `ERR`; CI grep gate blocks fallback reintroduction |
 | **B** | Live feeds — `news`, `social`, `polymarket`, `copilot`, `calendar` | **Exempt** — deliberate exceptions (non-series real-time feeds), documented per §7 D1 |
 | **C** | Synthetic book — `economics/*` pages, Tier C data modules | **Wired** — `getMacroInputs()` / `useMacroInputs()` + `buildFallbackWithAnchors()` provide Gold-backed rate anchors; book stays synthetic |
 
@@ -26,9 +26,11 @@ The terminal has migrated from a 3-tier FRED→SNAPSHOT→SIM fallback chain to 
 - `GET /api/ml` — ML outputs (recession probability, inflation forecast, factor scores, anomaly, attribution)
 
 ### Open items / Phase 6 prerequisites
-- [ ] Delete `src/data/econSnapshot.json`, `src/data/econSnapshot.ts`, `src/data/sentimentAaiiSnapshot.json`
-- [ ] Delete SIM generators from `src/data/econSeries.ts` (`getSeriesHistory*`, `getIndicators`, `Rng` usage)
-- [ ] Remove `src/lib/server/fred.ts` from prod path (demote to ingestion helper)
+- [x] Remove FRED/SNAPSHOT/SIM fallback imports from Tier A production routes (`src/app/api/econ`, `src/app/api/chart`, `src/app/api/market`)
+- [x] Add policy gate: `npm run check:gold-policy` / `scripts/check-gold-db-policy.sh`
+- [ ] Delete `src/data/econSnapshot.json`, `src/data/econSnapshot.ts`, `src/data/sentimentAaiiSnapshot.json` once tests/offline fixtures are replaced or explicitly retained
+- [ ] Delete SIM generators from `src/data/econSeries.ts` (`getSeriesHistory*`, `getIndicators`, `Rng` usage) after all non-route callers are audited
+- [x] Remove `src/lib/server/fred.ts` from Tier A prod path; keep only for documented exceptions/offline ingestion helpers
 - [ ] Prune `simMode.tsx` — collapse provenance to DB + staleness (§8)
 - [ ] Add `gold.release_calendar` to pipeline → wire `econ/calendar` (§12 decision)
 - [ ] `gold.powerbi_catalog` join test: every Tier A module has ≥1 mapped Gold object
