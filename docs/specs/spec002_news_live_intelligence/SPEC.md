@@ -87,14 +87,19 @@ Existing source docs:
   event-study dataset exists.
 - Do not promote generated rows as live data.
 
-## Next Work
+## Completed
 
 ### Phase 1: Diagnostics Polish
 
-- Add copy-to-clipboard/download controls to the NEWS diagnostics drawer.
-- Add keyboard close behavior for the drawer.
-- Decide whether the drawer should also fetch `/api/news/diagnostics` and
-  `/api/social/diagnostics` directly for newest smoke-check timestamps.
+- The NEWS diagnostics drawer fetches `/api/news/diagnostics` and
+  `/api/social/diagnostics` directly when opened, so the raw payload includes
+  fresh route-time smoke-check timestamps and provider attempts.
+- The drawer supports refresh, copy-to-clipboard, JSON download, and Escape-key
+  close behavior.
+- Drawer summary counts read from the same raw diagnostics payload shown in the
+  JSON body.
+
+## Next Work
 
 ### Phase 2: NEWS_NLP Health Contract
 

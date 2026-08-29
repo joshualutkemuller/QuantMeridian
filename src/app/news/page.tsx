@@ -1,7 +1,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
-import { Activity, X } from "lucide-react";
+import { Activity, Check, Copy, Download, RefreshCw, X } from "lucide-react";
 import { PageHeader, KpiStrip } from "@/components/ui/PageHeader";
 import { Panel, Stat, Tag } from "@/components/ui/Panel";
 import { ProvenanceBadge } from "@/components/ui/ProvenanceBadge";
@@ -51,6 +51,26 @@ function Bar({ pct, color = "#FF8C00" }: { pct: number; color?: string }) {
   );
 }
 
+interface DiagnosticsPayload {
+  news?: {
+    source?: unknown;
+    attempts?: unknown[];
+    nlp?: { configured?: unknown; ok?: unknown; model?: unknown };
+  };
+  social?: {
+    source?: unknown;
+    attempts?: unknown[];
+  };
+}
+
+function asDiagnosticsPayload(value: unknown): DiagnosticsPayload {
+  return value && typeof value === "object" ? value as DiagnosticsPayload : {};
+}
+
+function countOk(attempts: unknown[]): number {
+  return attempts.filter((attempt) => Boolean((attempt as { ok?: unknown }).ok)).length;
+}
+
 export default function NewsTerminal() {
   const [view, setView] = useState<View>("TAPE");
   const [acFilter, setAcFilter] = useState<AssetClass | "ALL">("ALL");
@@ -59,6 +79,8 @@ export default function NewsTerminal() {
   const [drawerDiagnostics, setDrawerDiagnostics] = useState<unknown | null>(null);
   const [drawerDiagnosticsLoading, setDrawerDiagnosticsLoading] = useState(false);
   const [drawerDiagnosticsError, setDrawerDiagnosticsError] = useState<string | null>(null);
+  const [drawerRefreshKey, setDrawerRefreshKey] = useState(0);
+  const [diagnosticsCopied, setDiagnosticsCopied] = useState(false);
 
   const { headlines, source: newsSource, clusters, diagnostics, nlp } = useNews(60);
   const { intel: social, source: socialSource, diagnostics: socialDiagnostics } = useSocial();
@@ -80,6 +102,14 @@ export default function NewsTerminal() {
     social: { source: socialSource, attempts: socialDiagnostics },
   }), [diagnostics, newsSource, nlp, socialDiagnostics, socialSource]);
   const rawDiagnostics = drawerDiagnostics ?? hookDiagnostics;
+  const diagnosticsPayload = asDiagnosticsPayload(rawDiagnostics);
+  const drawerNewsAttempts = Array.isArray(diagnosticsPayload.news?.attempts) ? diagnosticsPayload.news.attempts : diagnostics;
+  const drawerSocialAttempts = Array.isArray(diagnosticsPayload.social?.attempts) ? diagnosticsPayload.social.attempts : socialDiagnostics;
+  const drawerNewsSource = String(diagnosticsPayload.news?.source ?? newsSource);
+  const drawerSocialSource = String(diagnosticsPayload.social?.source ?? socialSource);
+  const drawerNlp = diagnosticsPayload.news?.nlp;
+  const drawerNlpLabel = drawerNlp?.ok ? String(drawerNlp.model ?? "NLP") : drawerNlp?.configured ? "NLP ERR" : "NLP OFF";
+  const diagnosticsJson = useMemo(() => JSON.stringify(rawDiagnostics, null, 2), [rawDiagnostics]);
 
   useEffect(() => {
     if (!diagnosticsOpen) return;
@@ -102,7 +132,39 @@ export default function NewsTerminal() {
         if (!ctrl.signal.aborted) setDrawerDiagnosticsLoading(false);
       });
     return () => ctrl.abort();
-  }, [diagnosticsOpen, hookDiagnostics]);
+  }, [diagnosticsOpen, drawerRefreshKey, hookDiagnostics]);
+
+  useEffect(() => {
+    if (!diagnosticsOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDiagnosticsOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [diagnosticsOpen]);
+
+  function downloadDiagnostics() {
+    const blob = new Blob([diagnosticsJson], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `news_diagnostics_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function copyDiagnostics() {
+    if (!navigator.clipboard?.writeText) {
+      setDrawerDiagnosticsError("Clipboard API is unavailable in this browser context.");
+      return;
+    }
+    void navigator.clipboard.writeText(diagnosticsJson).then(() => {
+      setDiagnosticsCopied(true);
+      window.setTimeout(() => setDiagnosticsCopied(false), 1600);
+    }).catch((err) => {
+      setDrawerDiagnosticsError(err instanceof Error ? err.message : String(err));
+    });
+  }
 
   return (
     <div className="flex min-h-full flex-col">
@@ -418,23 +480,37 @@ export default function NewsTerminal() {
                 {drawerDiagnosticsLoading && <Tag tone="neutral">LOADING</Tag>}
                 {drawerDiagnosticsError && <Tag tone="down">FETCH ERR</Tag>}
               </div>
-              <button className="term-btn inline-flex items-center gap-1" onClick={() => setDiagnosticsOpen(false)} title="Close diagnostics">
-                <X className="h-3 w-3" />
-                Close
-              </button>
+              <div className="flex items-center gap-1">
+                <button className="term-btn inline-flex items-center gap-1" onClick={() => setDrawerRefreshKey((key) => key + 1)} title="Refresh provider diagnostics">
+                  <RefreshCw className={clsx("h-3 w-3", drawerDiagnosticsLoading && "animate-spin")} />
+                  Refresh
+                </button>
+                <button className="term-btn inline-flex items-center gap-1" onClick={copyDiagnostics} title="Copy diagnostics JSON">
+                  {diagnosticsCopied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                  {diagnosticsCopied ? "Copied" : "Copy"}
+                </button>
+                <button className="term-btn inline-flex items-center gap-1" onClick={downloadDiagnostics} title="Download diagnostics JSON">
+                  <Download className="h-3 w-3" />
+                  JSON
+                </button>
+                <button className="term-btn inline-flex items-center gap-1" onClick={() => setDiagnosticsOpen(false)} title="Close diagnostics">
+                  <X className="h-3 w-3" />
+                  Close
+                </button>
+              </div>
             </div>
             <div className="grid grid-cols-1 gap-px border-b border-term-border bg-term-border text-2xs sm:grid-cols-2">
               <div className="bg-term-panel-2 p-2">
                 <div className="term-label">NEWS</div>
-                <div className="mt-1 truncate text-term-text" title={newsSource}>{newsSource}</div>
-                <div className="text-term-text-mute">{diagnostics.filter((attempt) => attempt.ok).length}/{diagnostics.length} providers ok</div>
+                <div className="mt-1 truncate text-term-text" title={drawerNewsSource}>{drawerNewsSource}</div>
+                <div className="text-term-text-mute">{countOk(drawerNewsAttempts)}/{drawerNewsAttempts.length} providers ok</div>
               </div>
               <div className="bg-term-panel-2 p-2">
                 <div className="term-label">SOCIAL / NLP</div>
-                <div className="mt-1 truncate text-term-text" title={`${socialSource} · ${nlp.health?.model ?? ""}`}>
-                  {socialSource} · {nlp.health?.ok ? nlp.health.model ?? "NLP" : nlp.health?.configured ? "NLP ERR" : "NLP OFF"}
+                <div className="mt-1 truncate text-term-text" title={`${drawerSocialSource} · ${drawerNlpLabel}`}>
+                  {drawerSocialSource} · {drawerNlpLabel}
                 </div>
-                <div className="text-term-text-mute">{socialDiagnostics.filter((attempt) => attempt.ok).length}/{socialDiagnostics.length} social providers ok · {clusterSourceLabel}</div>
+                <div className="text-term-text-mute">{countOk(drawerSocialAttempts)}/{drawerSocialAttempts.length} social providers ok · {clusterSourceLabel}</div>
               </div>
             </div>
             <div className="min-h-0 flex-1 overflow-auto p-3">
@@ -444,7 +520,7 @@ export default function NewsTerminal() {
                 </div>
               )}
               <pre className="whitespace-pre-wrap break-words rounded border border-term-border bg-term-panel-3 p-3 font-mono text-3xs leading-relaxed text-term-text-dim">
-                {JSON.stringify(rawDiagnostics, null, 2)}
+                {diagnosticsJson}
               </pre>
             </div>
           </div>
