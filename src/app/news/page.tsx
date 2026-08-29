@@ -55,7 +55,7 @@ export default function NewsTerminal() {
   const [acFilter, setAcFilter] = useState<AssetClass | "ALL">("ALL");
   const [impactEvent, setImpactEvent] = useState(0);
 
-  const { headlines, source: newsSource, clusters } = useNews(60);
+  const { headlines, source: newsSource, clusters, diagnostics, nlp } = useNews(60);
   const { intel: social, source: socialSource } = useSocial();
   const narratives = useMemo(() => narrativesFromHeadlines(headlines), [headlines]);
   const attention = useMemo(() => attentionFromHeadlines(headlines), [headlines]);
@@ -64,6 +64,8 @@ export default function NewsTerminal() {
   // Prefer transformer clusters from the FinBERT stage; else keyword clustering.
   const events = useMemo(() => (clusters.length ? clusters : eventsFromHeadlines(headlines)), [clusters, headlines]);
   const signals = useMemo(() => signalsFromHeadlines(narratives, attention, social, headlines), [narratives, attention, social, headlines]);
+  const clusterSourceLabel = nlp.clusterSource === "FINBERT" ? "FinBERT clusters" : nlp.clusterSource === "KEYWORD" ? "Keyword clusters" : "No clusters";
+  const nlpTone = nlp.health?.ok ? "up" : nlp.health?.configured ? "down" : "neutral";
 
   const tape = acFilter === "ALL" ? headlines : headlines.filter((h) => h.assetClass === acFilter);
   const maxNarr = Math.max(...narratives.map((n) => n.mentions));
@@ -75,7 +77,7 @@ export default function NewsTerminal() {
         code="NEWS"
         title="Market News & Signal Intelligence"
         desc="Signal extraction · narratives · social · impact"
-        right={<ProvenanceBadge source={newsSource} />}
+        right={<span className="flex items-center gap-1"><ProvenanceBadge source={newsSource} /><Tag tone={nlpTone}>{nlp.health?.ok ? `NLP ${nlp.health.model ?? "UP"}` : nlp.health?.configured ? "NLP ERR" : "NLP OFF"}</Tag><Tag tone={nlp.clusterSource === "FINBERT" ? "up" : nlp.clusterSource === "KEYWORD" ? "amber" : "neutral"}>{clusterSourceLabel}</Tag></span>}
       />
 
       <KpiStrip>
@@ -99,6 +101,26 @@ export default function NewsTerminal() {
             {v.label}
           </button>
         ))}
+      </div>
+
+      <div className="flex min-w-0 flex-wrap items-center gap-1 border-b border-term-border bg-term-panel-2 px-3 py-1.5">
+        <span className="term-label mr-1">Provider Chain</span>
+        {diagnostics.length ? diagnostics.map((attempt) => (
+          <Tag
+            key={attempt.provider}
+            tone={attempt.ok ? "up" : attempt.configured ? "down" : "neutral"}
+            className="max-w-full"
+          >
+            <span
+              className="max-w-[14rem] truncate"
+              title={`${attempt.provider}: ${attempt.ok ? `${attempt.headlineCount} headlines in ${attempt.latencyMs}ms` : attempt.error ?? "no headlines"}`}
+            >
+              {attempt.provider} {attempt.ok ? `${attempt.headlineCount}/${attempt.latencyMs}ms` : attempt.configured ? "ERR" : "OFF"}
+            </span>
+          </Tag>
+        )) : (
+          <Tag tone="neutral">PROBING</Tag>
+        )}
       </div>
 
       <div className="flex flex-1 flex-col gap-2 p-2">
@@ -275,7 +297,7 @@ export default function NewsTerminal() {
         {view === "EVENTS" && (
           <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
             {events.map((e) => (
-              <Panel key={e.id} title={e.title} code="NEWS-6" right={<Tag tone={AC_TONE[e.assetClass]}>{e.assetClass}</Tag>}>
+              <Panel key={e.id} title={e.title} code="NEWS-6" right={<span className="flex items-center gap-1"><Tag tone={nlp.clusterSource === "FINBERT" ? "up" : "amber"}>{nlp.clusterSource === "FINBERT" ? "FINBERT" : "KEYWORD"}</Tag><Tag tone={AC_TONE[e.assetClass]}>{e.assetClass}</Tag></span>}>
                 <div className="flex flex-col gap-2 p-3">
                   <div className="flex items-center gap-3 text-3xs">
                     <span className="text-term-text-mute">Related <span className="tnum font-semibold text-term-text">{e.relatedCount}</span></span>
@@ -339,7 +361,7 @@ export default function NewsTerminal() {
       </div>
 
       <div className="border-t border-term-border bg-term-panel px-3 py-1.5 text-3xs text-term-text-mute">
-        <span className="text-term-amber">NEWS</span> — deterministic intelligence engine (SIM). Wire Alpha Vantage / Marketaux / Reddit / SEC EDGAR via the pipeline for live ingestion; views, scoring and signal shapes are unchanged.
+        <span className="text-term-amber">NEWS</span> — source {newsSource}; clusters {clusterSourceLabel}; sentiment {nlp.sentiment ? "FinBERT" : "provider/heuristic"}; social {socialSource}.
       </div>
     </div>
   );

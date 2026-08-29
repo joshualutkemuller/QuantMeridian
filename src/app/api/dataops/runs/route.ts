@@ -1,6 +1,8 @@
 import { json } from "@/lib/server/http";
 import { fetchPipelineManifest } from "@/lib/server/marketManifest";
+import { fetchIntelligenceFeedManifest } from "@/lib/server/intelligenceFeedManifest";
 import { goldEnabled, goldStore } from "@/lib/server/goldStore";
+import type { LineageRun, ProviderRun, SeriesRunResult } from "@/data/dataOps";
 
 interface GoldEtlRunRow {
   run_id: string;
@@ -39,6 +41,11 @@ interface GoldDqRow {
  *   3. Empty fixture
  */
 export async function GET() {
+  const intelligence = await fetchIntelligenceFeedManifest().catch((err) => {
+    console.warn("[dataops/runs] intelligence feed manifest failed:", (err as Error).message);
+    return null;
+  });
+
   // 1. Gold DB audit tables
   if (goldEnabled()) {
     try {
@@ -64,7 +71,13 @@ export async function GET() {
           checked_at: r.checked_at,
         }));
 
-        return json({ source: "DB", live: true, runs, series: seriesRuns, lineage });
+        return json({
+          source: intelligence ? "DB+INTELLIGENCE_FEEDS" : "DB",
+          live: true,
+          runs: [...runs, ...(intelligence?.runs ?? [])],
+          series: [...seriesRuns, ...(intelligence?.series ?? [])],
+          lineage: [...lineage, ...(intelligence?.lineage ?? [])],
+        });
       }
     } catch (err) {
       console.warn("[dataops/runs] Gold audit DB read failed:", (err as Error).message);
@@ -73,7 +86,18 @@ export async function GET() {
 
   // 2. MARKET_PIPELINE_URL manifest (legacy fallback)
   const data = await fetchPipelineManifest().catch(() => null);
-  if (data) return json({ source: "PIPELINE", live: true, ...data });
+  const merged = {
+    runs: [...(data?.runs ?? []), ...(intelligence?.runs ?? [])] as ProviderRun[],
+    series: [...(data?.series ?? []), ...(intelligence?.series ?? [])] as SeriesRunResult[],
+    lineage: [...(data?.lineage ?? []), ...(intelligence?.lineage ?? [])] as LineageRun[],
+  };
+  if (merged.runs.length) {
+    return json({
+      source: data && intelligence ? "PIPELINE+INTELLIGENCE_FEEDS" : data ? "PIPELINE" : "INTELLIGENCE_FEEDS",
+      live: true,
+      ...merged,
+    });
+  }
 
   // 3. Empty fixture
   return json({ source: "NONE", live: false, runs: [], series: [], lineage: [] });

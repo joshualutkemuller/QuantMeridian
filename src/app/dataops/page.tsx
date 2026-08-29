@@ -65,9 +65,12 @@ const MODULE_ITEM_TONE: Record<ModuleDataStatus, "up" | "blue" | "amber" | "down
   STALE: "down",
 };
 
-function providerTone(provider: ProviderName): "up" | "blue" | "amber" | "neutral" {
+function providerTone(provider: ProviderName): "up" | "blue" | "amber" | "neutral" | "violet" {
   if (provider === "FRED") return "up";
   if (provider === "YAHOO") return "blue";
+  if (provider === "INTELLIGENCE_FEEDS") return "blue";
+  if (provider === "NEWS") return "amber";
+  if (provider === "SOCIAL") return "violet";
   if (provider === "SYNTHETIC") return "neutral";
   return "amber";
 }

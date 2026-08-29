@@ -33,6 +33,8 @@ describe("/api/news", () => {
     expect(body.source).toBe("ERR");
     expect(body.headlines).toEqual([]);
     expect(body.clusters).toEqual([]);
+    expect(body.clusterSource).toBe("NONE");
+    expect(body.nlp.clusterSource).toBe("NONE");
     expect(body.error).toMatch(/No configured news provider returned headlines/);
     expect(body.diagnostics.map((d: { provider: string; configured: boolean; ok: boolean }) => [d.provider, d.configured, d.ok])).toEqual([
       ["Alpha Vantage", false, false],
@@ -47,6 +49,7 @@ describe("/api/news", () => {
 
     expect(body.source).toBe("SIM");
     expect(body.headlines).toHaveLength(10);
+    expect(body.clusterSource).toBe("KEYWORD");
     expect(body.diagnostics).toHaveLength(4);
   });
 
@@ -68,6 +71,7 @@ describe("/api/news", () => {
 
     expect(body.source).toBe("Alpha Vantage");
     expect(body.headlines).toHaveLength(1);
+    expect(body.clusterSource).toBe("KEYWORD");
     expect(body.headlines[0].tickers).toEqual(["NVDA"]);
     expect(body.diagnostics[0]).toMatchObject({
       provider: "Alpha Vantage",

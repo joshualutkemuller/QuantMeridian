@@ -1,8 +1,8 @@
 # Market Terminal Handoff
 
-**Updated:** 2026-08-28
+**Updated:** 2026-08-29
 **Branch:** `spec001_expand_cpi_component_coverage`
-**Latest pushed commit:** `454ae4d` — `Wire econ calendar to Gold release calendar`
+**Latest pushed commit:** `9e32af6` — `Harden live news provider diagnostics`
 
 ## Current Focus
 
@@ -55,25 +55,48 @@ git diff --check
 
 Only Vite's existing large-chunk warning appeared during the client build.
 
-## Current Uncommitted Work
+## NEWS Status
 
-NEWS provider hardening is implemented locally but not yet committed:
+NEWS provider hardening is pushed in `9e32af6`:
 
-- `src/lib/server/newsProviders.ts` now uses the documented provider priority:
+- `src/lib/server/newsProviders.ts` uses the documented provider priority:
   Alpha Vantage -> Marketaux -> Finnhub -> NewsAPI.
 - `fetchLiveNews()` returns per-provider diagnostics: configured, ok, headline
   count, latency, and error.
 - `src/app/api/news/route.ts` returns `ERR` when no provider returns headlines
   unless `sim=1` explicitly opts into generated demo headlines.
-- `src/lib/useNews.ts` comments now describe the SIM-gated behavior.
-- Tests were added:
-  - `src/lib/server/newsProviders.test.ts`
-  - `src/app/api/news/route.test.ts`
+- `src/lib/useNews.ts` comments describe the SIM-gated behavior.
 
-Validation for this uncommitted NEWS slice:
+Current local NEWS work expands DataOps and module-facing diagnostics:
+
+- `src/lib/server/newsDiagnostics.ts` wraps the provider chain plus NEWS_NLP
+  health into one diagnostics object.
+- `src/app/api/news/diagnostics/route.ts` exposes `/api/news/diagnostics?n=20`
+  with provider attempts, winning provider, newest headline age, and NLP health.
+- `src/app/api/dataops/health/route.ts` adds a distinct `providers.NEWS`
+  status row so real headline availability is visible from DataOps.
+- `src/data/dataOps.ts` adds NEWS fixture/run metadata so the DataOps provider
+  table has a stable row before the live probe overlays it.
+- `src/lib/useNews.ts` now preserves `/api/news` provider diagnostics, and
+  `src/app/news/page.tsx` renders a compact provider-chain strip above the tape.
+- `src/lib/server/socialProviders.ts` now emits Reddit/StockTwits attempt
+  diagnostics; `src/app/api/social/diagnostics/route.ts` exposes the social
+  smoke check without falling back to generated rows.
+- `src/lib/server/intelligenceFeedManifest.ts` builds a shared
+  NEWS/SOCIAL/NEWS_NLP DataOps manifest, and `src/app/api/dataops/runs/route.ts`
+  appends those DataOps-shaped run/series/lineage rows under
+  `INTELLIGENCE_FEEDS`.
+- `src/app/api/dataops/health/route.ts` reports the umbrella
+  `INTELLIGENCE_FEEDS` status plus separate `NEWS`, `SOCIAL`, and `NEWS_NLP`
+  statuses.
+- `/api/news` now returns `clusterSource` and `nlp` runtime metadata so
+  `src/app/news/page.tsx` can label NEWS-6 as FinBERT clusters, keyword
+  clusters, or no clusters, and show NLP health in the header.
+
+Validation for the NEWS slices:
 
 ```bash
-npm test -- src/lib/server/newsProviders.test.ts src/app/api/news/route.test.ts
+npm test -- src/lib/server/newsProviders.test.ts src/app/api/news/route.test.ts src/app/api/news/diagnostics/route.test.ts src/app/api/social/diagnostics/route.test.ts src/app/api/dataops/runs/route.test.ts src/app/api/dataops/health/route.test.ts
 npm run check:gold-policy
 npm run build:client
 npm run build:server
@@ -98,8 +121,9 @@ the Gold calendar or NEWS provider work and should be reviewed separately.
 4. Continue CPI expansion from `docs/specs/spec001/`, keeping Market Terminal
    DB-only: no new external data source should be added here without explicit
    owner approval.
-5. Commit the NEWS provider hardening slice after review, excluding the unrelated
-   `TESTING_HANDOFF.md` move unless the owner confirms it should be included.
-6. Add a DataOps-facing `/api/news` live smoke/diagnostics surface so provider
-   health, winning provider, newest headline timestamp, and NLP enrichment are
-   visible without opening the NEWS module.
+5. Review and commit the expanded NEWS/SOCIAL/NLP diagnostics slice, excluding
+   the unrelated `TESTING_HANDOFF.md` move unless the owner confirms it should
+   be included.
+6. Next NEWS pass: add a compact diagnostics drawer/modal with the raw
+   provider-attempt payloads, then decide whether `news_nlp` should expose a
+   richer `/health` payload for scoring and clustering model versions separately.

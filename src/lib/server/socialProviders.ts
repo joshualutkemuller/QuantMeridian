@@ -19,6 +19,18 @@ import { scoreText } from "@/lib/server/sentimentNlp";
 export interface LiveSocial {
   source: string;
   intel: SocialIntel;
+  diagnostics: SocialProviderAttempt[];
+}
+
+export interface SocialProviderAttempt {
+  provider: string;
+  configured: boolean;
+  ok: boolean;
+  postCount: number;
+  tickerCount: number;
+  themeCount: number;
+  latencyMs: number;
+  error?: string;
 }
 
 const FETCH_TIMEOUT_MS = 6000;
@@ -142,10 +154,78 @@ async function stocktwits(): Promise<{ tickers: Map<string, Acc>; posts: number 
   }
 }
 
-/** Merge configured social providers into a SocialIntel, or null → SIM. */
-export async function fetchLiveSocial(): Promise<LiveSocial | null> {
-  const [rd, st] = await Promise.all([reddit().catch(() => null), stocktwits().catch(() => null)]);
-  if (!rd && !st) return null;
+const PROVIDERS: { name: string; configured: () => boolean; fn: () => Promise<any | null> }[] = [
+  { name: "Reddit", configured: () => Boolean(process.env.REDDIT_USER_AGENT), fn: reddit },
+  { name: "StockTwits", configured: () => Boolean(process.env.STOCKTWITS_ACCESS_TOKEN || process.env.STOCKTWITS_ENABLED === "1"), fn: stocktwits },
+];
+
+async function attemptSocialProvider(provider: typeof PROVIDERS[number]): Promise<{ provider: string; data: any | null; attempt: SocialProviderAttempt }> {
+  const configured = provider.configured();
+  if (!configured) {
+    return {
+      provider: provider.name,
+      data: null,
+      attempt: {
+        provider: provider.name,
+        configured: false,
+        ok: false,
+        postCount: 0,
+        tickerCount: 0,
+        themeCount: 0,
+        latencyMs: 0,
+        error: `${provider.name} not configured`,
+      },
+    };
+  }
+  const started = Date.now();
+  try {
+    const data = await provider.fn();
+    const postCount = Number(data?.posts ?? 0);
+    const tickerCount = data?.tickers instanceof Map ? data.tickers.size : 0;
+    const themeCount = data?.themes instanceof Map ? data.themes.size : 0;
+    const ok = Boolean(data && postCount > 0);
+    return {
+      provider: provider.name,
+      data,
+      attempt: {
+        provider: provider.name,
+        configured: true,
+        ok,
+        postCount,
+        tickerCount,
+        themeCount,
+        latencyMs: Date.now() - started,
+        error: ok ? undefined : "provider returned no social rows",
+      },
+    };
+  } catch (err) {
+    return {
+      provider: provider.name,
+      data: null,
+      attempt: {
+        provider: provider.name,
+        configured: true,
+        ok: false,
+        postCount: 0,
+        tickerCount: 0,
+        themeCount: 0,
+        latencyMs: Date.now() - started,
+        error: err instanceof Error ? err.message : String(err),
+      },
+    };
+  }
+}
+
+const emptySocial = (): SocialIntel => ({ tickers: [], sectors: [], themes: [], totalPosts: 0, platforms: [] });
+
+/** Merge configured social providers into a SocialIntel, or ERR when no real rows are available. */
+export async function fetchLiveSocial(): Promise<LiveSocial> {
+  const attempts = await Promise.all(PROVIDERS.map((provider) => attemptSocialProvider(provider)));
+  const rd = attempts.find((attempt) => attempt.provider === "Reddit")?.data as Awaited<ReturnType<typeof reddit>> | null;
+  const st = attempts.find((attempt) => attempt.provider === "StockTwits")?.data as Awaited<ReturnType<typeof stocktwits>> | null;
+  const diagnostics = attempts.map((attempt) => attempt.attempt);
+
+  if (!rd && !st) return { source: "ERR", intel: emptySocial(), diagnostics };
 
   const tickers = new Map<string, Acc>();
   const platforms: { name: string; posts: number; sentiment: number }[] = [];
@@ -171,13 +251,10 @@ export async function fetchLiveSocial(): Promise<LiveSocial | null> {
     totalPosts: totalPosts || seeded.totalPosts,
     platforms: platforms.length ? platforms : seeded.platforms,
   };
-  return { source: platforms.map((p) => p.name).join(" + "), intel };
+  return { source: platforms.map((p) => p.name).join(" + "), intel, diagnostics };
 }
 
 /** Social providers configured in this environment (for DATAOPS / diagnostics). */
 export function configuredSocialProviders(): string[] {
-  const out: string[] = [];
-  if (process.env.REDDIT_USER_AGENT) out.push("Reddit");
-  if (process.env.STOCKTWITS_ACCESS_TOKEN || process.env.STOCKTWITS_ENABLED === "1") out.push("StockTwits");
-  return out;
+  return PROVIDERS.filter((provider) => provider.configured()).map((provider) => provider.name);
 }

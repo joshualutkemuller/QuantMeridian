@@ -12,6 +12,7 @@ export interface ProviderProbe {
   backend?: string;
   target?: string;
   explicitStatus?: string;
+  diagnostics?: unknown;
 }
 interface HealthResponse {
   probedAt: string;

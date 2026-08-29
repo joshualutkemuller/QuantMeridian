@@ -1,6 +1,6 @@
 import { json } from "@/lib/server/http";
 import { fredProbe } from "@/lib/server/fred";
-import { configuredNewsProviders } from "@/lib/server/newsProviders";
+import { getIntelligenceFeedDiagnostics } from "@/lib/server/intelligenceFeedManifest";
 import { configuredSocialProviders } from "@/lib/server/socialProviders";
 import { goldConfigStatus, goldEnabled, goldStore } from "@/lib/server/goldStore";
 
@@ -15,6 +15,7 @@ interface ProviderProbe {
   backend?: string;
   target?: string;
   explicitStatus?: string;
+  diagnostics?: unknown;
 }
 
 /** Reachability probe for URL-based upstreams (news_nlp, market pipeline). */
@@ -144,20 +145,97 @@ export async function GET() {
 
   // News/social provider chains — Tier B (kept live, deliberate exception to DB-only policy).
   // Exception to DB-only policy: non-series real-time feed, see GOLD_DB_MIGRATION_HANDOFF §7 D1.
-  const newsP = configuredNewsProviders();
   const socialP = configuredSocialProviders();
-  const feeds = [...newsP, ...socialP];
-  const nlpUrl = process.env.NEWS_NLP_URL;
-  if (nlpUrl) {
-    const p = await probe(nlpUrl);
-    const model = (p.body?.model as string) ?? "?";
-    providers.NEWS_NLP = p.ok
-      ? { status: "LIVE", detail: `FinBERT service up (model=${model})${feeds.length ? ` · feeds: ${feeds.join(", ")}` : ""}`, live: true }
-      : { status: "STALE", detail: "NEWS_NLP_URL set but /health unreachable", live: false };
+  const intelligence = await getIntelligenceFeedDiagnostics();
+  const news = intelligence.news;
+  const social = intelligence.social;
+  const feeds = [...news.configuredProviders, ...socialP];
+  providers.INTELLIGENCE_FEEDS = intelligence.live
+    ? {
+        status: "LIVE",
+        detail: intelligence.detail,
+        live: true,
+        configured: intelligence.configured,
+        readSuccessfully: true,
+        explicitStatus: "At least one real intelligence feed is available",
+        diagnostics: intelligence,
+      }
+    : {
+        status: "ERROR",
+        detail: intelligence.configured
+          ? `${intelligence.detail}; configured feed paths returned no usable rows`
+          : "No NEWS, SOCIAL, or NEWS_NLP providers configured; routes return ERR unless sim=1 is requested",
+        live: false,
+        configured: intelligence.configured,
+        readSuccessfully: false,
+        explicitStatus: "No real intelligence feeds available",
+        diagnostics: intelligence,
+      };
+
+  try {
+    providers.NEWS = news.live
+      ? {
+          status: "LIVE",
+          detail: `${news.source}: ${news.headlineCount} headlines; newest ${news.newestMinutesAgo ?? "?"}m ago${news.nlp.ok ? `; NLP ${news.nlp.model ?? "up"}` : ""}`,
+          live: true,
+          configured: news.configuredProviders.length > 0,
+          readSuccessfully: true,
+          latencyMs: news.attempts.find((attempt) => attempt.ok)?.latencyMs,
+          explicitStatus: "Real news provider returned headlines",
+          diagnostics: news,
+        }
+      : {
+          status: "ERROR",
+          detail: news.configuredProviders.length
+            ? `Configured providers returned no headlines: ${news.attempts.map((attempt) => `${attempt.provider}=${attempt.error ?? "no headlines"}`).join("; ")}`
+            : "No news provider keys configured; /api/news returns ERR unless sim=1 is requested",
+          live: false,
+          configured: news.configuredProviders.length > 0,
+          readSuccessfully: false,
+          explicitStatus: "No real news headlines available",
+          diagnostics: news,
+        };
+  } catch (err) {
+    providers.NEWS = {
+      status: "ERROR",
+      detail: `News diagnostics failed — ${err instanceof Error ? err.message : String(err)}`,
+      live: false,
+      configured: news.configuredProviders.length > 0,
+      readSuccessfully: false,
+      explicitStatus: "News diagnostics failed",
+    };
+  }
+  providers.SOCIAL = social.live
+    ? {
+        status: "LIVE",
+        detail: `${social.source}: ${social.totalPosts} posts across ${social.platformCount} platforms${social.topTicker ? `; top ticker ${social.topTicker.label}` : ""}`,
+        live: true,
+        configured: social.configuredProviders.length > 0,
+        readSuccessfully: true,
+        latencyMs: social.attempts.find((attempt) => attempt.ok)?.latencyMs,
+        explicitStatus: "Real social provider returned posts",
+        diagnostics: social,
+      }
+    : {
+        status: "ERROR",
+        detail: social.configuredProviders.length
+          ? `Configured social providers returned no posts: ${social.attempts.map((attempt) => `${attempt.provider}=${attempt.error ?? "no posts"}`).join("; ")}`
+          : "No social provider keys configured; /api/social returns ERR unless sim=1 is requested",
+        live: false,
+        configured: social.configuredProviders.length > 0,
+        readSuccessfully: false,
+        explicitStatus: "No real social posts available",
+        diagnostics: social,
+      };
+
+  if (news.nlp.configured) {
+    providers.NEWS_NLP = news.nlp.ok
+      ? { status: "LIVE", detail: `FinBERT service up (model=${news.nlp.model ?? "?"})${feeds.length ? ` · feeds: ${feeds.join(", ")}` : ""}`, live: true, diagnostics: news.nlp }
+      : { status: "STALE", detail: `NEWS_NLP_URL set but /health unreachable — ${news.nlp.error ?? "unknown error"}`, live: false, diagnostics: news.nlp };
   } else if (feeds.length) {
-    providers.NEWS_NLP = { status: "CACHED", detail: `provider sentiment + in-house heuristic · feeds: ${feeds.join(", ")}`, live: false };
+    providers.NEWS_NLP = { status: "CACHED", detail: `provider sentiment + in-house heuristic · feeds: ${feeds.join(", ")}`, live: false, diagnostics: news.nlp };
   } else {
-    providers.NEWS_NLP = { status: "SIM", detail: "no news/social keys, no NEWS_NLP_URL — heuristic/SIM", live: false };
+    providers.NEWS_NLP = { status: "SIM", detail: "no news/social keys, no NEWS_NLP_URL — heuristic/SIM", live: false, diagnostics: news.nlp };
   }
 
   // Internal books — Tier C: book stays synthetic; macro inputs wired to Gold DB.

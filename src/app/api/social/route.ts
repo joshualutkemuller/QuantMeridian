@@ -8,11 +8,13 @@ import { simFallbackEnabled } from "@/lib/server/fallbacks";
 /**
  * GET /api/social
  * Returns aggregated social sentiment (Reddit + StockTwits) when configured,
- * falling back to the SIM engine. Always 200 with a `source` provenance field.
+ * returning ERR when no real posts are available unless `sim=1` explicitly opts
+ * into generated social rows. Always 200 with a `source` provenance field.
  */
 export async function GET(req: Request) {
   const live = await fetchLiveSocial().catch(() => null);
-  if (live) return json({ source: live.source, ...live.intel });
-  if (!simFallbackEnabled(req)) return json({ source: "ERR", tickers: [], sectors: [], themes: [], totalPosts: 0, platforms: [] });
-  return json({ source: "SIM", ...getSocialIntel() });
+  if (live && live.source !== "ERR") return json({ source: live.source, ...live.intel, diagnostics: live.diagnostics });
+  const diagnostics = live?.diagnostics ?? [];
+  if (!simFallbackEnabled(req)) return json({ source: "ERR", tickers: [], sectors: [], themes: [], totalPosts: 0, platforms: [], diagnostics });
+  return json({ source: "SIM", ...getSocialIntel(), diagnostics });
 }

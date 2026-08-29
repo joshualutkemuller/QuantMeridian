@@ -11,9 +11,11 @@ interface RunsResponse {
 }
 
 /**
- * Live DATAOPS runs/series/lineage from the market pipeline manifest. Returns
- * null until a live (non-empty) response arrives, so the page keeps its fixture
- * baseline and overlays real ingestion history when MARKET_PIPELINE_URL is wired.
+ * Live DATAOPS runs/series/lineage from the market pipeline manifest plus the
+ * terminal's NEWS/SOCIAL/NLP diagnostics manifest. Returns null until a live
+ * (non-empty) response arrives, so the page keeps its fixture baseline and
+ * overlays real ingestion history when a manifest is wired or feed diagnostics
+ * are available.
  */
 export function useLiveRuns(): RunsResponse | null {
   const url = "/api/dataops/runs";
