@@ -108,7 +108,7 @@ function logGoldConfigured(backend: Backend): void {
 function logGoldMissing(): void {
   if (loggedConfigState === "missing") return;
   loggedConfigState = "missing";
-  console.warn("[goldStore] MACRO_DB_URL not configured — Gold DB routes will use fallback data");
+  console.warn("[goldStore] MACRO_DB_URL not configured — Gold DB routes will return explicit empty/error states");
 }
 
 function logGoldReadSuccess(operation: string, backend: Backend, rowCount: number): void {

@@ -1,11 +1,7 @@
 import { json } from "@/lib/server/http";
-import { fredEnabled, fredSeries } from "@/lib/server/fred"; // MIGRATION FALLBACK — remove in Phase 6
-import { resolveFred } from "@/data/econSeries";
-import { STAT_SERIES, simStatFull, monthlyDate } from "@/data/statsConfig";
-import { getSnapshotObservations, getSnapshotRawObservations } from "@/data/econSnapshot"; // MIGRATION FALLBACK — remove in Phase 6
+import { STAT_SERIES, monthlyDate } from "@/data/statsConfig";
 import type { Obs } from "@/lib/stats";
-import { goldEnabled, goldStore } from "@/lib/server/goldStore";
-import { simFallbackEnabled, snapshotFallbackEnabled } from "@/lib/server/fallbacks";
+import { goldEnabled, goldParam, goldStore, goldTable } from "@/lib/server/goldStore";
 
 interface GoldObsRow {
   series_id: string;
@@ -29,29 +25,20 @@ function toMonthly(obs: { date: string; value: number | null }[], start: string,
  *
  * Resolution order:
  *   1. Gold DB — gold.fred_feature_transforms (raw obs, monthly resampled client-side)
- *   2. Live FRED API
- *   3. Committed snapshot
- *   4. Deterministic SIM
+ *   2. Explicit empty/error state
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const start = url.searchParams.get("start") ?? monthlyDate(240);
   const end = url.searchParams.get("end") ?? monthlyDate(0);
-  const sim = simStatFull(320);
   const ids = STAT_SERIES.map(([id]) => id);
-  const allowSim = simFallbackEnabled(req);
-  const allowSnapshot = snapshotFallbackEnabled(req);
 
-  // 1. Gold DB
   if (goldEnabled()) {
     try {
       const store = goldStore();
-      const isPg = /^postgres/.test(process.env.MACRO_DB_URL ?? "");
-      const isSqlite = !isPg && process.env.MACRO_DB_BACKEND !== "databricks";
-      const phys = isSqlite ? "gold_fred_feature_transforms" : "gold.fred_feature_transforms";
-      const placeholders = ids.map((_, i) => isPg ? `$${i + 3}` : "?").join(",");
+      const placeholders = ids.map((_, i) => goldParam(i + 3)).join(",");
       const rows = await store.raw<GoldObsRow>(
-        `SELECT series_id, observation_date AS date, value FROM ${phys} WHERE observation_date >= ${isPg ? "$1" : "?"} AND observation_date <= ${isPg ? "$2" : "?"} AND series_id IN (${placeholders}) ORDER BY series_id, observation_date`,
+        `SELECT series_id, observation_date AS date, value FROM ${goldTable("fred_feature_transforms")} WHERE observation_date >= ${goldParam(1)} AND observation_date <= ${goldParam(2)} AND series_id IN (${placeholders}) ORDER BY series_id, observation_date`,
         [start, end, ...ids]
       );
 
@@ -63,54 +50,19 @@ export async function GET(req: Request) {
           byId.set(row.series_id, arr);
         }
 
-        const series = STAT_SERIES.map(([id, label], idx) => {
+        const series = STAT_SERIES.map(([id, label]) => {
           const obs = byId.get(id);
           if (obs?.length) return { id, label, points: toMonthly(obs, start, end) };
-          if (!allowSim) return { id, label, points: [] };
-          return { id, label, points: sim[idx].points.filter((p) => p.date >= start && p.date <= end) };
+          return { id, label, points: [] };
         });
 
         return json({ source: "DB", start, end, series });
       }
     } catch (err) {
       console.warn("[stats] Gold DB read failed:", (err as Error).message);
+      return json({ source: "ERR", start, end, series: [], error: (err as Error).message });
     }
   }
 
-  // 2. FRED → 3. SNAPSHOT → 4. SIM
-  const live = fredEnabled();
-  let anyFred = false;
-  let anySnapshot = false;
-
-  const series = await Promise.all(
-    STAT_SERIES.map(async ([id, label], idx) => {
-      const r = resolveFred(id);
-      if (live && !r.simOnly) {
-        try {
-          const obs = await fredSeries(id, { start, end, units: "lin", scale: r.scale }); // MIGRATION FALLBACK — remove in Phase 6
-          const pts = toMonthly(obs, start, end);
-          if (pts.length > 6) {
-            anyFred = true;
-            return { id, label, points: pts };
-          }
-        } catch {
-          /* fall through */
-        }
-      }
-      if (allowSnapshot) {
-        const snap = getSnapshotRawObservations(id) ?? getSnapshotObservations(id); // MIGRATION FALLBACK — remove in Phase 6
-        if (snap) {
-          const pts = toMonthly(snap, start, end);
-          if (pts.length > 6) {
-            anySnapshot = true;
-            return { id, label, points: pts };
-          }
-        }
-      }
-      if (!allowSim) return { id, label, points: [] };
-      return { id, label, points: sim[idx].points.filter((p) => p.date >= start && p.date <= end) };
-    })
-  );
-
-  return json({ source: anyFred ? "FRED" : anySnapshot ? "SNAPSHOT" : allowSim ? "SIM" : "ERR", start, end, series });
+  return json({ source: "ERR", start, end, series: [], error: goldEnabled() ? "No Gold DB stats rows found." : "MACRO_DB_URL not configured." });
 }

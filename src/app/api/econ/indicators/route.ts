@@ -1,10 +1,6 @@
 import { json } from "@/lib/server/http";
-import { fredEnabled, fredSeries } from "@/lib/server/fred"; // MIGRATION FALLBACK — remove in Phase 6
-import { FRED_CATALOG, getSeriesHistory, getSeriesHistoryRaw, resolveFred, type FredSeries } from "@/data/econSeries"; // MIGRATION FALLBACK — remove in Phase 6
-import { getSnapshotObservations, getSnapshotRawObservations } from "@/data/econSnapshot"; // MIGRATION FALLBACK — remove in Phase 6
-import { worstSource } from "@/lib/provenance";
+import { FRED_CATALOG, resolveFred, type FredSeries } from "@/data/econSeries";
 import { goldEnabled, goldParam, goldStore, goldTable } from "@/lib/server/goldStore";
-import { simFallbackEnabled, snapshotFallbackEnabled } from "@/lib/server/fallbacks";
 
 type EconSource = "FRED" | "SNAPSHOT" | "SIM" | "DB" | "ERR";
 
@@ -74,59 +70,6 @@ const yearLag = (freq: FredSeries["freq"]): number | null =>
 
 const annualPeriods = (freq: FredSeries["freq"]): number =>
   freq === "M" ? 12 : freq === "Q" ? 4 : freq === "W" ? 52 : freq === "D" ? 252 : 1;
-
-function buildPoint(
-  s: FredSeries,
-  hist: { date: string; value: number }[],
-  source: EconSource,
-  rawHist?: { date: string; value: number }[]
-): LiveIndicator {
-  const values = hist.map((h) => h.value);
-  const rawValues = rawHist?.map((h) => h.value) ?? values;
-  const value = values[values.length - 1] ?? s.level;
-  const prior = values[values.length - 2] ?? value;
-  const rawValue = rawValues[rawValues.length - 1];
-  const priorRaw = rawValues[rawValues.length - 2];
-  const qoqRaw = s.freq === "M" ? rawValues[rawValues.length - 4] : s.freq === "Q" ? priorRaw : undefined;
-  const yoyRaw = s.freq === "M" ? rawValues[rawValues.length - 13] : s.freq === "Q" ? rawValues[rawValues.length - 5] : undefined;
-  const priorQoqRaw = s.freq === "M" ? rawValues[rawValues.length - 5] : s.freq === "Q" ? rawValues[rawValues.length - 3] : undefined;
-  const priorYoyRaw = s.freq === "M" ? rawValues[rawValues.length - 14] : s.freq === "Q" ? rawValues[rawValues.length - 6] : undefined;
-  const canDerivePeriodRates = rawHist != null || (!s.unit.includes("y/y") && !s.unit.includes("m/m"));
-  const mom = canDerivePeriodRates && (s.freq === "M" || s.freq === "Q") ? pct(rawValue, priorRaw, 2) : null;
-  const priorMom = canDerivePeriodRates && (s.freq === "M" || s.freq === "Q") ? pct(priorRaw, rawValues[rawValues.length - 3], 2) : null;
-  const qoq = canDerivePeriodRates ? s.freq === "M" ? pct(rawValue, qoqRaw, 2) : s.freq === "Q" ? pct(rawValue, qoqRaw, 2) : null : null;
-  const priorQoq = canDerivePeriodRates ? s.freq === "M" ? pct(priorRaw, priorQoqRaw, 2) : s.freq === "Q" ? pct(priorRaw, priorQoqRaw, 2) : null : null;
-  const yoy = s.unit.includes("y/y") && !rawHist
-    ? Number(value.toFixed(s.decimals))
-    : s.freq === "M" && rawValues.length >= 13
-    ? pct(rawValue, rawValues[rawValues.length - 13], 1)
-    : s.freq === "Q" && rawValues.length >= 5
-    ? pct(rawValue, rawValues[rawValues.length - 5], 1)
-    : null;
-  const priorYoy = canDerivePeriodRates && s.freq === "M" && rawValues.length >= 14
-    ? pct(priorRaw, priorYoyRaw, 1)
-    : canDerivePeriodRates && s.freq === "Q" && rawValues.length >= 6
-    ? pct(priorRaw, priorYoyRaw, 1)
-    : null;
-  return {
-    id: s.id,
-    value: Number(value.toFixed(s.decimals)),
-    prior: Number(prior.toFixed(s.decimals)),
-    change: Number((value - prior).toFixed(s.decimals)),
-    changePct: pct(value, prior, 2),
-    mom,
-    momDelta: ppDelta(mom, priorMom),
-    qoq,
-    qoqDelta: ppDelta(qoq, priorQoq),
-    yoy,
-    yoyDelta: ppDelta(yoy, priorYoy),
-    monthlyPrint: s.category === "INFLATION" && (s.freq === "M" || s.freq === "Q") ? mom : null,
-    indexValue: s.category === "INFLATION" && rawValue != null ? Number(rawValue.toFixed(s.decimals)) : null,
-    asOf: hist[hist.length - 1]?.date ?? "",
-    history: values.map((v) => Number(v.toFixed(s.decimals))),
-    source,
-  };
-}
 
 function buildInflationMetrics(
   s: FredSeries,
@@ -279,15 +222,9 @@ function buildTransformedGoldPoint(
  *
  * Resolution order:
  *   1. Gold DB (MACRO_DB_URL) — gold.macro_indicator_dashboard + macro_indicator_sparkline
- *   2. Live FRED API (FRED_API_KEY)
- *   3. Committed snapshot
- *   4. Deterministic SIM
+ *   2. Explicit empty/error state
  */
-export async function GET(req: Request) {
-  const allowSim = simFallbackEnabled(req);
-  const allowSnapshot = snapshotFallbackEnabled(req);
-
-  // 1. Gold DB
+export async function GET() {
   if (goldEnabled()) {
     try {
       const store = goldStore();
@@ -360,9 +297,7 @@ export async function GET(req: Request) {
               const rawPoint = buildRawGoldPoint(s, rawRows, resolved.scale);
               if (rawPoint) return [rawPoint];
             }
-            if (!allowSim) return [];
-            const simHist = getSeriesHistory(s.id, 24); // MIGRATION FALLBACK — remove in Phase 6
-            return [buildPoint(s, simHist, "SIM")];
+            return [];
           }
           const latest = r.latest_value ?? s.level;
           const prior = r.prior_value ?? latest;
@@ -409,48 +344,9 @@ export async function GET(req: Request) {
       }
     } catch (err) {
       console.warn("[indicators] Gold DB read failed:", (err as Error).message);
+      return json({ source: "ERR", indicators: [], error: (err as Error).message });
     }
   }
 
-  // 2. FRED → 3. SNAPSHOT → 4. SIM
-  const live = fredEnabled();
-  const resolved = await Promise.all(
-    FRED_CATALOG.map(async (s) => {
-      const r = resolveFred(s.id);
-      if (live && !r.simOnly) {
-        try {
-          const hist = await fredSeries(s.id, { limit: 24, units: r.units, scale: r.scale }); // MIGRATION FALLBACK — remove in Phase 6
-          if (hist.length) {
-            const needsRaw = s.freq === "M" || s.freq === "Q";
-            const rawHist = needsRaw && r.units !== "lin"
-              ? await fredSeries(s.id, { limit: 24, units: "lin", scale: r.scale }) // MIGRATION FALLBACK — remove in Phase 6
-              : hist;
-            return buildPoint(s, hist as { date: string; value: number }[], "FRED", rawHist as { date: string; value: number }[]);
-          }
-        } catch {
-          /* fall back */
-        }
-      }
-      if (allowSnapshot) {
-        const snap = getSnapshotObservations(s.id, 24); // MIGRATION FALLBACK — remove in Phase 6
-        if (snap) {
-          const rawSnap = getSnapshotRawObservations(s.id, 24);
-          return buildPoint(
-            s,
-            snap as { date: string; value: number }[],
-            "SNAPSHOT",
-            rawSnap ? rawSnap as { date: string; value: number }[] : undefined
-          );
-        }
-      }
-      if (!allowSim) return null;
-      const simHist = getSeriesHistory(s.id, 24); // MIGRATION FALLBACK — remove in Phase 6
-      const resolved = resolveFred(s.id);
-      const simRaw = resolved.units !== "lin" ? getSeriesHistoryRaw(s.id, 24) ?? undefined : undefined; // MIGRATION FALLBACK — remove in Phase 6
-      return buildPoint(s, simHist, "SIM", simRaw);
-    })
-  );
-  const out = resolved.filter((i): i is LiveIndicator => i !== null);
-  const source: EconSource = out.length ? worstSource(out.map((o) => o.source)) : "ERR";
-  return json({ source, indicators: out });
+  return json({ source: "ERR", indicators: [], error: goldEnabled() ? "No Gold DB indicator rows found." : "MACRO_DB_URL not configured." });
 }

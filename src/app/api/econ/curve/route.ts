@@ -1,9 +1,6 @@
 import { json } from "@/lib/server/http";
-import { fredEnabled, fredLatest } from "@/lib/server/fred"; // MIGRATION FALLBACK — remove in Phase 6
 import { getCurrentCurve } from "@/data/econCurve";
-import { getSnapshotObservations, getSnapshotRawObservations } from "@/data/econSnapshot"; // MIGRATION FALLBACK — remove in Phase 6
 import { goldEnabled, goldStore } from "@/lib/server/goldStore";
-import { simFallbackEnabled, snapshotFallbackEnabled } from "@/lib/server/fallbacks";
 
 interface GoldCurveRow {
   as_of_date: string;
@@ -22,36 +19,16 @@ interface GoldCurveMetricsRow {
   curve_move: string | null;
 }
 
-function snapshotCurve() {
-  const sim = getCurrentCurve();
-  let matched = false;
-  let asOf = sim.date;
-  const points = sim.points.map((p) => {
-    const obs = getSnapshotRawObservations(p.fredId, 1) ?? getSnapshotObservations(p.fredId, 1); // MIGRATION FALLBACK — remove in Phase 6
-    const latest = obs?.[obs.length - 1];
-    if (!latest) return p;
-    matched = true;
-    if (latest.date > asOf) asOf = latest.date;
-    return { ...p, yield: Number(latest.value.toFixed(2)) };
-  });
-  return matched ? { ...sim, label: `Snapshot · ${asOf}`, date: asOf, points } : null;
-}
-
 /**
  * GET /api/econ/curve
  *
  * Resolution order:
  *   1. Gold DB — gold.treasury_curve (latest as-of)
- *   2. Live FRED API
- *   3. Committed snapshot
- *   4. Deterministic SIM
+ *   2. Explicit empty/error state
  */
-export async function GET(req: Request) {
-  const allowSim = simFallbackEnabled(req);
-  const allowSnapshot = snapshotFallbackEnabled(req);
+export async function GET() {
   const sim = getCurrentCurve();
 
-  // 1. Gold DB
   if (goldEnabled()) {
     try {
       const store = goldStore();
@@ -94,38 +71,9 @@ export async function GET(req: Request) {
       }
     } catch (err) {
       console.warn("[curve] Gold DB read failed:", (err as Error).message);
+      return json({ source: "ERR", curve: null, error: (err as Error).message });
     }
   }
 
-  // 2. FRED
-  const snap = allowSnapshot ? snapshotCurve() : null;
-  if (!fredEnabled()) {
-    return snap
-      ? json({ source: "SNAPSHOT", asOf: snap.date, curve: snap })
-      : allowSim
-        ? json({ source: "SIM", curve: sim })
-        : json({ source: "ERR", curve: null, error: "No DB/FRED/snapshot curve data available; enable SIM in the ribbon to use generated fallback data." });
-  }
-  try {
-    const resolved = await Promise.all(
-      sim.points.map(async (p) => {
-        const latest = await fredLatest(p.fredId); // MIGRATION FALLBACK — remove in Phase 6
-        return { point: { ...p, yield: latest?.value ?? p.yield }, date: latest?.date ?? null };
-      })
-    );
-    const points = resolved.map((r) => r.point);
-    const dates = resolved.map((r) => r.date).filter((d): d is string => !!d).sort();
-    const asOf = dates.length ? dates[dates.length - 1] : sim.date;
-    return json({
-      source: "FRED",
-      asOf,
-      curve: { ...sim, label: `Live · ${asOf}`, date: asOf, points },
-    });
-  } catch (err) {
-    return snap
-      ? json({ source: "SNAPSHOT", note: err instanceof Error ? err.message : "FRED error", asOf: snap.date, curve: snap })
-      : allowSim
-        ? json({ source: "SIM", note: err instanceof Error ? err.message : "FRED error", curve: sim })
-        : json({ source: "ERR", note: err instanceof Error ? err.message : "FRED error", curve: null });
-  }
+  return json({ source: "ERR", curve: null, error: goldEnabled() ? "No Gold DB curve rows found." : "MACRO_DB_URL not configured." });
 }

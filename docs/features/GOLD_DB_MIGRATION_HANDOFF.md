@@ -211,7 +211,7 @@ live/SIM branches removed.
 | `GET /api/econ/indicators` | FRED→SNAP→SIM over `FRED_CATALOG` | `gold.macro_indicator_dashboard` (+ `macro_indicator_sparkline` for `history`) | Columns already match `LiveIndicator`; map `zscore`/`percentile`/`surprise`/`staleness_days` straight through. |
 | `GET /api/econ/batch` | per-id FRED→SNAP→SIM | `gold.fred_feature_transforms` (or `macro_feature_daily`) filtered by id + transform | `resolveFred(id).units` → `default_transform` from `dim_series`. |
 | `GET /api/econ/series` | per-id FRED→SIM, 24m | `gold.fred_latest_observation` (levels) / `fred_feature_transforms` (transformed) | Point-in-time drill can use `v_point_in_time`. |
-| `GET /api/econ/calendar` | `fredReleaseDates` + Finnhub + SIM | **See §7 Tier B-adjacent** — release *dates* aren't a Gold series. Option: pipeline adds a `gold.release_calendar` (FRED `/releases/dates` ingested); until then this route is a flagged exception or reads a pipeline-provided calendar table. **Decision needed (§12).** |
+| `GET /api/econ/calendar` | Gold DB only | `gold.release_calendar` | Curated forward release schedule from FRED `/releases/dates` + `config/release_calendar.yml`; no live FRED/Finnhub call in the terminal. |
 | `GET /api/econ/benchmark` | FRED→SNAP→SIM over `BENCHMARK_SERIES` | `gold.benchmark_rate_board` | trend/spread/regime/z precomputed — route just shapes. |
 | `GET /api/econ/curve` | `fredLatest` per tenor → SNAP → SIM | `gold.treasury_curve` (latest as-of) | |
 | `GET /api/econ/curve-history` | `fredSeries` per tenor → SNAP → SIM | `gold.treasury_curve` (as-of overlays) + `treasury_curve_metrics` | The "1M/3M/6M/1Y/2Y ago" overlays = distinct `as_of_date` rows. |
@@ -238,9 +238,8 @@ client TS off `src/data/*.ts`; point them at these instead.)
 
 ### Tier A — series-backed, full DB cutover (remove FRED/Yahoo/SNAP/SIM)
 
-`ECON, CAL*, STAT, EDA, CURV, YCURV, RVOL, BMRK, BRA, FUND, CRDT, INFL, GCPI,
+`ECON, CAL, STAT, EDA, CURV, YCURV, RVOL, BMRK, BRA, FUND, CRDT, INFL, GCPI,
 GPOL, REGIME, EML, MKT, SNAP, QUILT, IRET, LENS, MKC, MGC, MOTN`
-(*CAL depends on the release-calendar decision, §12.*)
 
 These read Gold **only**. Client hooks (`useEcon`, `useMarket`) drop the
 "render SIM, then upgrade" pattern — they render DB or an empty/error state.
@@ -338,9 +337,6 @@ is largely *consumption*, not ingestion:
 - **PCE item level** — pipeline ships headline/core PCE only; item drill needs a
   BEA manifest (deferred there). INFL PCE-basket toggle shows headline/core until
   then.
-- **Economic release calendar** (`/api/econ/calendar`) — release *dates* are not
-  a Gold series; needs a pipeline `gold.release_calendar` or stays a flagged
-  exception.
 - **FOMC rate probabilities** (`FOMC` module, `macro_data_etl` FedProbabilityEngine)
   — depends on CME Fed Funds futures, which the pipeline has no connector for
   (its gap doc §4 confirms). **This module is neither Tier A-clean nor Tier B.**
@@ -392,6 +388,16 @@ Delete `src/lib/server/fred.ts` from the prod path, all `*Snapshot*` files, all
 SIM generators for Tier A. Add the CI grep gate (§11). Update `ARCHITECTURE.md`,
 `docs/data/DATA_PIPELINE_OVERVIEW.md`, `docs/gold-db/MODULE_DATA_AUDIT.md`.
 
+**Status as of 2026-08-25:** Tier A production API routes and direct Tier A
+client helpers have been hardened to return Gold DB rows or explicit `ERR`/empty
+states instead of falling through to live FRED, committed snapshots, or SIM.
+`scripts/check-gold-db-policy.sh` is wired as `npm run check:gold-policy` and
+blocks the old fallback imports/annotations in `src/app/api/econ`,
+`src/app/api/chart`, and `src/app/api/market`, with documented exceptions for
+FOMC and macro-input synthetic-book/model paths. Physical deletion of
+legacy fixture files and SIM generators remains pending because tests, Tier B/C
+exceptions, and offline helpers still reference them.
+
 Phases 1–5 are independently shippable (a module reads Gold or, until its phase
 lands, keeps the old chain — no big-bang cutover).
 
@@ -399,25 +405,25 @@ lands, keeps the old chain — no big-bang cutover).
 
 ## 11. Removal / enforcement checklist
 
-- [ ] No Tier A/C route imports `@/lib/server/fred`, `getSnapshotObservations`,
-      `getSeriesHistory`, `simStatFull`, or any `Rng`-based generator.
+- [x] No Tier A production route imports `@/lib/server/fred`,
+      `getSnapshotObservations`, `getSeriesHistory`, `simStatFull`, or any
+      `Rng`-based generator. Documented exceptions: `econ/fomc` and
+      `econ/macro-inputs` for explicit synthetic model/book behavior.
 - [ ] `FRED_API_KEY`, `MARKET_PIPELINE_URL`, `MARKET_LENS_URL`, `CHART_DB_URL`,
       `MARKET_DATA_DIR`, `AAII_SENTIMENT_URL` removed from deploy config and
       `.env.example`; only `MACRO_DB_URL` (+ Databricks vars) + Tier-B keys remain.
 - [ ] `econSnapshot.json` / `econSnapshot.ts` / `sentimentAaiiSnapshot.*` deleted
       (or the last kept only for the Tier-B AAII survey, explicitly).
-- [ ] **CI grep gate:** fail the build if `fredSeries|fredLatest|getSeriesHistory|
-      getSnapshotObservations` appears under `src/app/api/econ`, `.../market`,
-      `.../chart` (Tier A dirs). Encodes "no fallback" as a test.
-- [ ] **Runtime fallback gate:** Tier A/C routes must only use `SIM` when the
-      request explicitly opts in (`sim=1`, driven by the top-ribbon SIM toggle).
-      With SIM off, missing data returns an empty/error payload so gaps are
-      visible during testing.
-- [ ] **Snapshot fallback gate:** Tier A/C routes must only use committed
-      snapshots when the request explicitly opts in (`snapshot=1`, driven by the
-      top-ribbon Snapshot Fallback toggle). Direct endpoints such as
-      `/api/econ/series` and `/api/chart/series` need the same server-side
-      guard as `/api/market/[view]`.
+- [x] **CI grep gate:** `npm run check:gold-policy` fails the build if forbidden
+      fallback imports, calls, or `MIGRATION FALLBACK` annotations appear under
+      `src/app/api/econ`, `.../market`, or `.../chart`, excluding documented
+      exception files.
+- [x] **Runtime fallback gate:** Tier A routes now return Gold DB rows or
+      explicit `ERR`/empty payloads. `SIM` remains available only in documented
+      synthetic-book/model exception paths.
+- [x] **Snapshot fallback gate:** Tier A routes no longer serve committed
+      snapshots as a fallback. Snapshot files may remain as tests/offline
+      fixtures until the final deletion task is completed.
 - [ ] Hard-coded `source="SIM"` badges are allowed only for modules that are
       explicitly deterministic-book Tier C surfaces; the badge must render as
       unavailable/error when SIM mode is off.
@@ -460,7 +466,7 @@ These are not new product requirements; they are cleanup items surfaced while
 testing the deploy with SIM OFF and Snapshot Fallback OFF. They should be worked
 before declaring the Gold cutover complete.
 
-#### 1. Snapshot fallback needs the same explicit gate as SIM
+#### 1. Snapshot fallback needs the same explicit gate as SIM — completed for Tier A routes on 2026-08-25
 
 **Problem:** The shared client hooks suppress snapshots when Snapshot Fallback is
 off, but some direct routes can still return `SNAPSHOT` without a request opt-in.
@@ -478,9 +484,10 @@ especially:
 - `/api/econ/inversions`
 - `/api/econ/stats`
 
-**Acceptance:** With Snapshot Fallback OFF, a missing DB/live read produces an
-explicit empty/error payload, not a committed snapshot. With Snapshot Fallback
-ON, snapshots may fill gaps for testing.
+**Acceptance:** Tier A routes now produce explicit empty/error payloads rather
+than committed snapshots. The old `snapshot=1` production fallback has been
+removed from these routes; remaining snapshot references are tests/offline
+fixtures or documented non-Tier-A exceptions.
 
 #### 2. Deterministic-book modules need explicit empty/not-wired states
 
@@ -522,7 +529,7 @@ series may require the BEA manifest noted in the PCE item-level decision below.
 **Acceptance:** INFL displays CPI rows from Gold and clearly marks PCE rows that
 are unavailable until pipeline coverage is added.
 
-#### 4. Client-side fallback helpers must stop masking gaps
+#### 4. Client-side fallback helpers must stop masking gaps — Tier A direct helpers completed on 2026-08-25
 
 **Problem:** A few pages still call client-side deterministic helpers such as
 `getSeriesHistory()` / `getSocialIntel()` / `getPolymarkets()` directly. The
@@ -531,16 +538,18 @@ behavior is to return empty rows in audit mode.
 
 **Known examples from audit:**
 
-- Economics overview selected-history fallback
-- Sec-Finance rate array fallbacks
+- Economics overview selected-history fallback — completed; selected chart uses
+  live/Gold hook history or empty state
+- Sec-Finance rate array fallbacks — completed; rate arrays use live/Gold hook
+  observations or empty state
 - Sentiment social/AAII-derived fallback paths
 - Polymarket/news/social hook initial states
 
 **Fix:** Route these through the shared hooks or check `useSimMode()` before
 using local generators.
 
-**Acceptance:** With SIM OFF, local deterministic helpers do not populate module
-bodies unless explicitly enabled.
+**Acceptance:** With SIM OFF, local deterministic helpers do not populate Tier A
+module bodies unless explicitly enabled or documented as Tier B/C.
 
 #### 5. Copy, docs, and DataOps labels need to match the new policy
 
@@ -560,26 +569,24 @@ use the same language as the ribbon toggles.
 
 ---
 
-### 🔴 DECISION NEEDED — Economic release calendar (CAL)
+### ✅ RESOLVED — Economic release calendar (CAL)
 
 **Blocks:** CAL module (`/api/econ/calendar`), `ECON` breadth counter, scheduled
 event overlays on charts.
 
-**Question:** Should the pipeline add a `gold.release_calendar` table (ingesting
-FRED `/releases/dates` + `/releases/dates/upcoming`)? Or does CAL remain a
-permanent Tier B live exception?
+**Decision made 2026-08-27:** Use the pipeline-provided
+`gold.release_calendar` table and make `/api/econ/calendar` Gold DB only.
 
 **Two paths:**
 
 | Path | Work required | Result |
 |---|---|---|
-| **A — Pipeline adds `gold.release_calendar`** | Pipeline task: add `/releases/dates` ingestion to `series_catalog.yml`, add DDL + Gold view. Terminal: rewrite `/api/econ/calendar` to read that table. | CAL becomes fully Tier A; no live FRED call in prod. |
-| **B — Permanent Tier B exception** | No new work. Current `// Exception to DB-only policy` annotation stays. | CAL stays live; FRED key required for release dates in prod. |
+| **A — Pipeline adds `gold.release_calendar`** | Complete. Local DB has `gold_release_calendar` populated from FRED `/releases/dates` + `config/release_calendar.yml`. Terminal reads this table via `goldStore`. | CAL is fully Tier A; no live FRED call in prod. |
+| **B — Permanent Tier B exception** | Rejected. | CAL no longer requires a FRED key in Market Terminal. |
 
-*Recommendation: Path A — it's a small, bounded pipeline add (one ingestion config + one DDL file) and it closes the last live-FRED dependency in the ECON module.*
-
-**Current state in code:** annotated as `// Exception to DB-only policy` on the
-import line of `src/app/api/econ/calendar/route.ts`. Will not trip the CI grep gate.
+**Current state in code:** `/api/econ/calendar` reads `gold.release_calendar`
+through `goldStore` and returns `source: "DB"` or explicit `ERR`/empty state.
+Calendar is no longer exempted in `scripts/check-gold-db-policy.sh`.
 
 ---
 

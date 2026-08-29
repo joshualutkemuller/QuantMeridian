@@ -1,9 +1,6 @@
 import { json } from "@/lib/server/http";
-import { fredEnabled, fredSeries } from "@/lib/server/fred"; // MIGRATION FALLBACK — remove in Phase 6
-import { CURVE_TENORS, buildLiveSnapshots, getCurveSnapshots, type CurveHistory } from "@/data/econCurve";
-import { getSnapshotObservations, getSnapshotRawObservations } from "@/data/econSnapshot"; // MIGRATION FALLBACK — remove in Phase 6
+import { buildLiveSnapshots, type CurveHistory } from "@/data/econCurve";
 import { goldEnabled, goldStore } from "@/lib/server/goldStore";
-import { simFallbackEnabled, snapshotFallbackEnabled } from "@/lib/server/fallbacks";
 
 interface GoldCurveRow {
   as_of_date: string;
@@ -30,32 +27,18 @@ const TENOR_TO_FRED: Record<string, string> = {
   "7Y": "DGS7", "10Y": "DGS10", "20Y": "DGS20", "30Y": "DGS30",
 };
 
-function snapshotHistory(): CurveHistory | null {
-  const history: CurveHistory = {};
-  for (const [, , fredId] of CURVE_TENORS) {
-    const obs = getSnapshotRawObservations(fredId) ?? getSnapshotObservations(fredId); // MIGRATION FALLBACK — remove in Phase 6
-    if (obs?.length) history[fredId] = obs.map((o) => ({ date: o.date, value: o.value }));
-  }
-  return Object.keys(history).length ? history : null;
-}
-
 /**
  * GET /api/econ/curve-history?years=7
  *
  * Resolution order:
  *   1. Gold DB — gold.treasury_curve (all as-of dates) + treasury_curve_metrics
- *   2. Live FRED API
- *   3. Committed snapshot
- *   4. Deterministic SIM
+ *   2. Explicit empty/error state
  */
 export async function GET(req: Request) {
   const reqYears = Number(new URL(req.url).searchParams.get("years") ?? 7);
   const years = Math.max(2, Math.min(25, Number.isFinite(reqYears) ? reqYears : 7));
   const start = `${new Date().getUTCFullYear() - years}-01-01`;
-  const allowSim = simFallbackEnabled(req);
-  const allowSnapshot = snapshotFallbackEnabled(req);
 
-  // 1. Gold DB
   if (goldEnabled()) {
     try {
       const store = goldStore();
@@ -90,40 +73,9 @@ export async function GET(req: Request) {
       }
     } catch (err) {
       console.warn("[curve-history] Gold DB read failed:", (err as Error).message);
+      return json({ source: "ERR", years, snapshots: [], error: (err as Error).message });
     }
   }
 
-  const sim = getCurveSnapshots();
-  const snapHistory = allowSnapshot ? snapshotHistory() : null;
-  const snap = snapHistory ? buildLiveSnapshots(snapHistory) : null;
-
-  // 2. FRED
-  if (!fredEnabled()) {
-    return snap
-      ? json({ source: "SNAPSHOT", snapshots: snap })
-      : allowSim
-        ? json({ source: "SIM", snapshots: sim })
-        : json({ source: "ERR", snapshots: [], error: "No DB/FRED/snapshot curve history available; enable SIM in the ribbon to use generated fallback data." });
-  }
-
-  try {
-    const history: CurveHistory = {};
-    await Promise.all(
-      CURVE_TENORS.map(async ([, , fredId]) => {
-        const obs = await fredSeries(fredId, { start, revalidateSec: 6 * 60 * 60 }); // MIGRATION FALLBACK — remove in Phase 6
-        history[fredId] = obs
-          .filter((o) => o.value !== null)
-          .map((o) => ({ date: o.date, value: o.value as number }));
-      })
-    );
-    const snapshots = buildLiveSnapshots(history);
-    const asOf = snapshots.find((s) => s.id === "now")?.date ?? null;
-    return json({ source: "FRED", asOf, years, snapshots });
-  } catch (err) {
-    return snap
-      ? json({ source: "SNAPSHOT", note: err instanceof Error ? err.message : "FRED error", snapshots: snap })
-      : allowSim
-        ? json({ source: "SIM", note: err instanceof Error ? err.message : "FRED error", snapshots: sim })
-        : json({ source: "ERR", note: err instanceof Error ? err.message : "FRED error", snapshots: [] });
-  }
+  return json({ source: "ERR", years, snapshots: [], error: goldEnabled() ? "No Gold DB curve history rows found." : "MACRO_DB_URL not configured." });
 }

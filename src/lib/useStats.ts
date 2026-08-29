@@ -1,8 +1,7 @@
 
 import { useEffect, useState } from "react";
 import type { DataSource } from "@/lib/useEcon";
-import { STAT_SERIES, monthlyDate, simStatFull, type StatSeries } from "@/data/statsConfig";
-import { useSimMode } from "@/lib/simMode";
+import { STAT_SERIES, monthlyDate, type StatSeries } from "@/data/statsConfig";
 
 /**
  * Statistical Analysis data loader with an incremental session cache.
@@ -16,7 +15,7 @@ import { useSimMode } from "@/lib/simMode";
 const CACHE = {
   byLabel: new Map<string, Map<string, number>>(),
   earliest: null as string | null, // earliest start date held
-  source: "SIM" as "DB" | "FRED" | "SNAPSHOT" | "SIM" | "ERR",
+  source: "ERR" as "DB" | "ERR",
 };
 
 function mergePoints(label: string, points: { date: string; value: number }[]) {
@@ -36,10 +35,6 @@ function buildActive(startDate: string): StatSeries[] {
   });
 }
 
-function sliceSim(startDate: string): StatSeries[] {
-  return simStatFull(320).map((s) => ({ ...s, points: s.points.filter((p) => p.date >= startDate) }));
-}
-
 export function useStatsData(defaultMonths = 240): {
   series: StatSeries[];
   source: DataSource;
@@ -49,28 +44,27 @@ export function useStatsData(defaultMonths = 240): {
   startDate: string;
   endDate: string;
 } {
-  const { simEnabled, snapshotFallbackEnabled } = useSimMode();
   const [lookbackMonths, setLookbackMonths] = useState(defaultMonths);
   const startDate = monthlyDate(lookbackMonths);
   const endDate = monthlyDate(0);
-  const [series, setSeries] = useState<StatSeries[]>(() => sliceSim(startDate));
-  const [source, setSource] = useState<DataSource>("SIM");
+  const [series, setSeries] = useState<StatSeries[]>([]);
+  const [source, setSource] = useState<DataSource>("LOADING");
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     let alive = true;
     // Already cached this far back → recompute locally, no fetch.
     if (CACHE.earliest && startDate >= CACHE.earliest) {
-      setSeries(!simEnabled && CACHE.source === "SIM" ? [] : buildActive(startDate));
-      setSource(!simEnabled && CACHE.source === "SIM" ? "ERR" : CACHE.source);
+      setSeries(buildActive(startDate));
+      setSource(CACHE.source);
       return;
     }
     setLoading(true);
     setSource("LOADING");
     const fetchEnd = CACHE.earliest ?? endDate; // only the older delta when extending
-    fetch(`/api/econ/stats?start=${startDate}&end=${fetchEnd}${simEnabled ? "&sim=1" : ""}${snapshotFallbackEnabled ? "&snapshot=1" : ""}`)
+    fetch(`/api/econ/stats?start=${startDate}&end=${fetchEnd}`)
       .then((r) => r.json())
-      .then((j: { source: "DB" | "FRED" | "SNAPSHOT" | "SIM" | "ERR"; series: { label: string; points: { date: string; value: number }[] }[] }) => {
+      .then((j: { source: "DB" | "ERR"; series: { label: string; points: { date: string; value: number }[] }[] }) => {
         if (!alive) return;
         for (const s of j.series) mergePoints(s.label, s.points);
         CACHE.earliest = CACHE.earliest && startDate >= CACHE.earliest ? CACHE.earliest : startDate;
@@ -80,19 +74,12 @@ export function useStatsData(defaultMonths = 240): {
       })
       .catch(() => {
         if (!alive) return;
-        if (simEnabled) {
-          setSeries(sliceSim(startDate));
-          setSource("SIM");
-        } else {
-          setSeries([]);
-          setSource("ERR");
-        }
+        setSeries([]);
+        setSource("ERR");
       })
       .finally(() => alive && setLoading(false));
     return () => { alive = false; };
-  }, [startDate, endDate, simEnabled, snapshotFallbackEnabled]);
+  }, [startDate, endDate]);
 
-  const effectiveSeries = !simEnabled && source === "SIM" ? [] : series;
-  const effectiveSource = !simEnabled && source === "SIM" ? "ERR" : source;
-  return { series: effectiveSeries, source: effectiveSource, loading, lookbackMonths, setLookbackMonths, startDate, endDate };
+  return { series, source, loading, lookbackMonths, setLookbackMonths, startDate, endDate };
 }

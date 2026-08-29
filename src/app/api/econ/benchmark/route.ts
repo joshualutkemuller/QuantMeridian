@@ -1,16 +1,11 @@
 import { json } from "@/lib/server/http";
-import { fredEnabled, fredSeries } from "@/lib/server/fred"; // MIGRATION FALLBACK — remove in Phase 6
-import { getSeriesHistory, resolveFred } from "@/data/econSeries"; // MIGRATION FALLBACK — remove in Phase 6
-import { getSnapshotObservations } from "@/data/econSnapshot"; // MIGRATION FALLBACK — remove in Phase 6
-import { BENCHMARK_SERIES } from "@/data/benchmarkRates";
 import { worstSource } from "@/lib/provenance";
-import { goldEnabled, goldStore } from "@/lib/server/goldStore";
-import { simFallbackEnabled, snapshotFallbackEnabled } from "@/lib/server/fallbacks";
+import { goldEnabled, goldParam, goldStore, goldTable } from "@/lib/server/goldStore";
 
 export interface BenchmarkBatchSeries {
   id: string;
   observations: { date: string; value: number }[];
-  source: "FRED" | "SNAPSHOT" | "SIM" | "DB" | "ERR";
+  source: "DB" | "ERR";
   trend?: string | null;
   spread_to_benchmark?: number | null;
   regime?: string | null;
@@ -42,9 +37,7 @@ interface GoldObsRow {
  *
  * Resolution order:
  *   1. Gold DB — gold.benchmark_rate_board + fred_latest_observation history
- *   2. Live FRED API
- *   3. Committed snapshot
- *   4. Deterministic SIM
+ *   2. Explicit empty/error state
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -54,17 +47,14 @@ export async function GET(req: Request) {
     .filter(Boolean)
     .slice(0, 60);
   const n = Number(url.searchParams.get("n") ?? 520);
-  const allowSim = simFallbackEnabled(req);
-  const allowSnapshot = snapshotFallbackEnabled(req);
 
-  // 1. Gold DB
   if (goldEnabled() && ids.length) {
     try {
       const store = goldStore();
       const [boardRows, obsRows] = await Promise.all([
         store.latest<GoldBenchmarkRow>("benchmark_rate_board"),
         store.raw<GoldObsRow>(
-          `SELECT series_id, observation_date AS date, value FROM ${process.env.MACRO_DB_URL?.startsWith("sqlite") ? "gold_fred_latest_observation" : "gold.fred_latest_observation"} WHERE series_id IN (${ids.map((_, i) => /^postgres/.test(process.env.MACRO_DB_URL ?? "") ? `$${i + 1}` : "?").join(",")}) ORDER BY series_id, observation_date ASC`,
+          `SELECT series_id, observation_date AS date, value FROM ${goldTable("fred_latest_observation")} WHERE series_id IN (${ids.map((_, i) => goldParam(i + 1)).join(",")}) AND value IS NOT NULL ORDER BY series_id, observation_date ASC`,
           ids
         ),
       ]);
@@ -84,8 +74,7 @@ export async function GET(req: Request) {
           const obs = obsAll.slice(-n);
 
           if (!obs.length && !board) {
-            if (!allowSim) return { id, observations: [], source: "ERR" as const };
-            return { id, observations: getSeriesHistory(id, n), source: "SIM" as const }; // MIGRATION FALLBACK — remove in Phase 6
+            return { id, observations: [], source: "ERR" as const };
           }
 
           return {
@@ -106,35 +95,12 @@ export async function GET(req: Request) {
       }
     } catch (err) {
       console.warn("[benchmark] Gold DB read failed:", (err as Error).message);
+      return json({ source: "ERR", series: ids.map((id) => ({ id, observations: [], source: "ERR" as const })), error: (err as Error).message });
     }
   }
 
-  // 2. FRED → 3. SNAPSHOT → 4. SIM
-  const live = fredEnabled();
-  const series = await Promise.all(
-    ids.map(async (id): Promise<BenchmarkBatchSeries> => {
-      const bmDef = BENCHMARK_SERIES.find((s) => s.id === id);
-      const r = resolveFred(id);
-
-      if (live && bmDef?.hasFred && !r.simOnly) {
-        try {
-          const obs = await fredSeries(id, { limit: n, units: "lin", scale: r.scale }); // MIGRATION FALLBACK — remove in Phase 6
-          if (obs.length) return { id, observations: obs as { date: string; value: number }[], source: "FRED" };
-        } catch {
-          /* fall through */
-        }
-      }
-
-      if (allowSnapshot) {
-        const snap = getSnapshotObservations(id, n); // MIGRATION FALLBACK — remove in Phase 6
-        if (snap) return { id, observations: snap as { date: string; value: number }[], source: "SNAPSHOT" };
-      }
-
-      if (!allowSim) return { id, observations: [], source: "ERR" };
-      return { id, observations: getSeriesHistory(id, n), source: "SIM" }; // MIGRATION FALLBACK — remove in Phase 6
-    })
-  );
+  const series: BenchmarkBatchSeries[] = ids.map((id) => ({ id, observations: [], source: "ERR" }));
 
   const source = series.length ? worstSource(series.map((s) => s.source)) : "ERR";
-  return json({ source, series });
+  return json({ source, series, error: "MACRO_DB_URL not configured or no Gold DB benchmark rows found." });
 }

@@ -2,8 +2,6 @@
 import { useEffect, useState } from "react";
 import { fetchJson, peekFresh } from "@/lib/fetchCache";
 import {
-  PRICE_SNAPSHOTS,
-  SNAPSHOTS,
   type BilelloView,
   type CrossAsset,
   type EdaView,
@@ -13,22 +11,15 @@ import {
   type RegimeView,
   type ReturnBasis,
 } from "@/data/marketPipeline";
-import { useSimMode } from "@/lib/simMode";
 
-export type MarketSource = "LIVE" | "DB" | "FILE" | "SNAPSHOT" | "LOADING";
+export type MarketSource = "LIVE" | "DB" | "FILE" | "LOADING";
 
 /**
  * Resilient market_data_pipeline hook. Renders an empty, shape-safe payload by
  * default, then upgrades to whatever `/api/market/[view]` resolves:
  * a local DuckDB/Postgres cache (DB), an exported-file cache (FILE), the live
- * FastAPI service (LIVE), or the bundled snapshot (SNAPSHOT) when the explicit
- * Snapshot Fallback ribbon toggle is on. `source` drives the provenance badge.
+ * FastAPI service (LIVE). `source` drives the provenance badge.
  */
-function fallbackSnapshot(view: MarketView, basis: ReturnBasis): unknown {
-  if (basis === "price" && view in PRICE_SNAPSHOTS) return PRICE_SNAPSHOTS[view as keyof typeof PRICE_SNAPSHOTS];
-  return SNAPSHOTS[view];
-}
-
 function emptyMarketView(view: MarketView, basis: ReturnBasis): unknown {
   if (view === "market") return { return_basis: basis, cards: [] };
   if (view === "cross-asset") {
@@ -93,30 +84,23 @@ function emptyMarketView(view: MarketView, basis: ReturnBasis): unknown {
 }
 
 function mapMarketSource(source: unknown): MarketSource {
-  if (source === "LIVE" || source === "DB" || source === "FILE" || source === "SNAPSHOT") return source;
+  if (source === "LIVE" || source === "DB" || source === "FILE") return source;
   return "LOADING";
 }
 
 export function useMarketView<T>(view: MarketView, basis: ReturnBasis = "total", asof?: string): { data: T; source: MarketSource; earliestAsOf: string | null } {
-  const { snapshotFallbackEnabled } = useSimMode();
-  const [data, setData] = useState<T>((snapshotFallbackEnabled ? fallbackSnapshot(view, basis) : emptyMarketView(view, basis)) as T);
-  const [source, setSource] = useState<MarketSource>(snapshotFallbackEnabled ? "SNAPSHOT" : "LOADING");
+  const [data, setData] = useState<T>(emptyMarketView(view, basis) as T);
+  const [source, setSource] = useState<MarketSource>("LOADING");
   const [earliestAsOf, setEarliestAsOf] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
     const params = new URLSearchParams({ basis });
     if (asof) params.set("asof", asof);
-    if (snapshotFallbackEnabled) params.set("snapshot", "1");
     const url = `/api/market/${view}?${params.toString()}`;
 
     const apply = (json: any) => {
       const nextSource = mapMarketSource(json?.source);
-      if (nextSource === "SNAPSHOT" && !snapshotFallbackEnabled) {
-        setData(emptyMarketView(view, basis) as T);
-        setSource("LOADING");
-        return;
-      }
       if (Object.prototype.hasOwnProperty.call(json ?? {}, "data") && json.data !== null) setData(json.data as T);
       else if (nextSource === "LOADING") setData(emptyMarketView(view, basis) as T);
       setSource(nextSource);
@@ -128,7 +112,7 @@ export function useMarketView<T>(view: MarketView, basis: ReturnBasis = "total",
     const seed = peekFresh<any>(url);
     if (seed) apply(seed);
     else {
-      setData((snapshotFallbackEnabled ? fallbackSnapshot(view, basis) : emptyMarketView(view, basis)) as T);
+      setData(emptyMarketView(view, basis) as T);
       setSource("LOADING");
     }
 
@@ -136,18 +120,13 @@ export function useMarketView<T>(view: MarketView, basis: ReturnBasis = "total",
       .then((json) => alive && apply(json))
       .catch(() => {
         if (!alive) return;
-        if (snapshotFallbackEnabled) {
-          setData(fallbackSnapshot(view, basis) as T);
-          setSource("SNAPSHOT");
-        } else {
-          setData(emptyMarketView(view, basis) as T);
-          setSource("LOADING");
-        }
+        setData(emptyMarketView(view, basis) as T);
+        setSource("LOADING");
       });
     return () => {
       alive = false;
     };
-  }, [view, basis, asof, snapshotFallbackEnabled]);
+  }, [view, basis, asof]);
 
   return { data, source, earliestAsOf };
 }

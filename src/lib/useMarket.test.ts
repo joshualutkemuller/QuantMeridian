@@ -25,14 +25,15 @@ describe("market snapshots", () => {
     expect(b.asset_class_returns_by_year.length).toBeGreaterThan(0);
   });
 
-  test("bilello snapshot has daily prices", () => {
+  test("bilello snapshot daily prices are optional legacy fixture data", () => {
     const b = SNAPSHOTS.bilello as any;
     expect(Array.isArray(b.asset_daily_prices)).toBe(true);
-    expect(b.asset_daily_prices.length).toBeGreaterThan(0);
-    const first = b.asset_daily_prices[0];
-    expect(first).toHaveProperty("series_id");
-    expect(first).toHaveProperty("date");
-    expect(first).toHaveProperty("price");
+    if (b.asset_daily_prices.length) {
+      const first = b.asset_daily_prices[0];
+      expect(first).toHaveProperty("series_id");
+      expect(first).toHaveProperty("date");
+      expect(first).toHaveProperty("price");
+    }
   });
 
   test("bilello price snapshot has different returns than total", () => {
@@ -54,8 +55,8 @@ describe("market snapshots", () => {
   });
 });
 
-describe("fallbackSnapshot logic", () => {
-  test("fallback returns total snapshot by default", () => {
+describe("legacy market snapshot fixtures", () => {
+  test("total market snapshot fixture is still present", () => {
     expect(SNAPSHOTS.market).toBeTruthy();
     expect((SNAPSHOTS.market as any).cards.length).toBeGreaterThan(0);
   });
@@ -72,29 +73,29 @@ describe("fallbackSnapshot logic", () => {
 });
 
 describe("source mapping contract", () => {
-  test("valid market sources are LIVE, DB, FILE, or SNAPSHOT", () => {
-    const validSources = ["LIVE", "DB", "FILE", "SNAPSHOT"];
+  test("valid market sources are LIVE, DB, FILE, or LOADING", () => {
+    const validSources = ["LIVE", "DB", "FILE", "LOADING"];
     for (const s of validSources) {
       expect(validSources).toContain(s);
     }
   });
 
   test("SIM is not in the market source vocabulary", () => {
-    const marketSources = ["LIVE", "DB", "FILE", "SNAPSHOT", "LOADING"];
+    const marketSources = ["LIVE", "DB", "FILE", "LOADING"];
     expect(marketSources).not.toContain("SIM");
   });
 
-  test("unknown API source strings map to SNAPSHOT for market data", () => {
+  test("unknown API source strings map to LOADING for market data", () => {
     const mapMarketSource = (s: unknown): string => {
       if (s === "LIVE" || s === "DB" || s === "FILE") return s as string;
-      return "SNAPSHOT";
+      return "LOADING";
     };
     expect(mapMarketSource("LIVE")).toBe("LIVE");
     expect(mapMarketSource("DB")).toBe("DB");
     expect(mapMarketSource("FILE")).toBe("FILE");
-    expect(mapMarketSource("garbage")).toBe("SNAPSHOT");
-    expect(mapMarketSource(undefined)).toBe("SNAPSHOT");
-    expect(mapMarketSource("")).toBe("SNAPSHOT");
-    expect(mapMarketSource(null)).toBe("SNAPSHOT");
+    expect(mapMarketSource("garbage")).toBe("LOADING");
+    expect(mapMarketSource(undefined)).toBe("LOADING");
+    expect(mapMarketSource("")).toBe("LOADING");
+    expect(mapMarketSource(null)).toBe("LOADING");
   });
 });

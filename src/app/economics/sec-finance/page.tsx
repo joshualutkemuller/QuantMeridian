@@ -26,7 +26,6 @@ import {
   type SfePnlBridge,
   type SfeScenario,
 } from "@/data/econEnhancements";
-import { getSeriesHistory } from "@/data/econSeries";
 import { SourceBadge } from "@/components/econ/SourceBadge";
 import { isRealEconSource, useLiveSeriesSet } from "@/lib/useEcon";
 import { fmtNum, fmtSigned, fmtBps, fmtUsdAbbr, fmtPct, pnlClass } from "@/lib/format";
@@ -168,11 +167,11 @@ export default function SecFinanceEconomics() {
   // ── Funding backdrop series ───────────────────────────────────────────
   const fedFunds = useMemo(() => {
     const L = liveMap["FEDFUNDS"];
-    return L && isRealEconSource(L.source) && L.observations.length ? L.observations.map((o) => o.value) : getSeriesHistory("FEDFUNDS", 60).map((o) => o.value);
+    return L && isRealEconSource(L.source) && L.observations.length ? L.observations.map((o) => o.value) : [];
   }, [liveMap]);
   const sofrHist = useMemo(() => {
     const L = liveMap["SOFR"];
-    return L && isRealEconSource(L.source) && L.observations.length ? L.observations.map((o) => o.value) : getSeriesHistory("SOFR", 60).map((o) => o.value);
+    return L && isRealEconSource(L.source) && L.observations.length ? L.observations.map((o) => o.value) : [];
   }, [liveMap]);
 
   // ── Column defs ───────────────────────────────────────────────────────

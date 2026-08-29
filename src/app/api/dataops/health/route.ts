@@ -87,8 +87,8 @@ export async function GET() {
     }
   } else {
     providers.MACRO_DB = {
-      status: "SIM",
-      detail: "MACRO_DB_URL not configured — Tier A/C routes will fall back to FRED/SNAPSHOT/SIM",
+      status: "ERROR",
+      detail: "MACRO_DB_URL not configured — Tier A/C routes return explicit empty/error states",
       live: false,
       configured: false,
       readSuccessfully: false,
@@ -119,7 +119,7 @@ export async function GET() {
   // FRED — legacy fallback for Tier A routes when Gold DB is not configured.
   const fred = await fredProbe();
   providers.FRED = !fred.keyPresent
-    ? { status: "SIM", detail: fred.detail + " — Tier A routes fall back to SNAPSHOT/SIM when Gold DB is also absent", live: false }
+    ? { status: "ERROR", detail: fred.detail + " — Tier A routes return explicit empty/error states when Gold DB is absent", live: false }
     : fred.ok
     ? { status: "LIVE", detail: fred.detail + " (legacy fallback — Gold DB preferred)", live: true }
     : { status: "ERROR", detail: fred.detail, live: false };
@@ -162,7 +162,7 @@ export async function GET() {
 
   // Internal books — Tier C: book stays synthetic; macro inputs wired to Gold DB.
   providers.LOCAL_BOOK = {
-    status: providers.MACRO_DB?.live ? "LIVE" : "SIM",
+    status: providers.MACRO_DB?.live ? "LIVE" : "ERROR",
     detail: providers.MACRO_DB?.live
       ? "Tier C book: macro/rate inputs from Gold DB; position/P&L synthetic"
       : "Tier C book: macro inputs not connected (Gold DB absent), falling back to SIM",

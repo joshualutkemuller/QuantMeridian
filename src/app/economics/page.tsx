@@ -10,8 +10,7 @@ import { SourceBadge } from "@/components/econ/SourceBadge";
 import { useDrill } from "@/components/econ/DrillProvider";
 import { useEconSeries, useLiveIndicators, type LiveIndicator } from "@/lib/useEcon";
 import {
-  getIndicators,
-  getSeriesHistory,
+  FRED_CATALOG,
   resolveFred,
   seriesById,
   ECON_CATEGORY_LABEL,
@@ -83,7 +82,6 @@ const KPI_LABEL: Record<string, string> = {
   T10Y2Y: "2s10s Spread",
 };
 
-// Selector for the synchronous featured chart (driven by getSeriesHistory).
 const SELECTOR_IDS = ["DGS10", "DGS2", "CPIAUCSL", "UNRATE", "FEDFUNDS"] as const;
 const SELECTOR_LABEL: Record<string, string> = {
   DGS10: "UST 10Y",
@@ -114,7 +112,7 @@ const CATEGORY_ORDER: EconCategory[] = [
   "ACTIVITY",
 ];
 
-/** Merged display values: live FRED data overlaid on the simulation fallback. */
+/** Merged display values: Gold DB data overlaid on catalog metadata only. */
 function effective(r: IndicatorRow, L: LiveIndicator | undefined) {
   return {
     value: L ? L.value : r.value,
@@ -130,7 +128,7 @@ function effective(r: IndicatorRow, L: LiveIndicator | undefined) {
     indexValue: L ? L.indexValue ?? null : null,
     spark: L && L.history.length ? L.history : r.spark,
     asOf: L ? L.asOf : r.asOf,
-    source: L ? L.source : "SIM" as const,
+    source: L ? L.source : "ERR" as const,
   };
 }
 
@@ -146,7 +144,26 @@ export default function MacroDashboard() {
   const [selectedId, setSelectedId] = useState<string>("DGS2");
   const [catFilter, setCatFilter] = useState<string>("ALL");
 
-  const indicators = getIndicators();
+  const indicators = useMemo<IndicatorRow[]>(
+    () =>
+      FRED_CATALOG.map((s) => ({
+        id: s.id,
+        label: s.label,
+        short: s.short,
+        category: s.category,
+        unit: s.unit,
+        value: s.level,
+        prior: s.level,
+        change: 0,
+        yoy: s.unit.includes("y/y") ? s.level : 0,
+        surprise: 0,
+        spark: [],
+        bullish: s.bullish,
+        decimals: s.decimals,
+        asOf: "",
+      })),
+    []
+  );
   const byId = (id: string): IndicatorRow | undefined => indicators.find((i) => i.id === id);
 
   /** Open the 24-month drill-down for an indicator row. */
@@ -176,9 +193,8 @@ export default function MacroDashboard() {
   const liveLabels = live.data.map((o) => o.date);
 
   const selLive = liveInd[selectedId];
-  const selHist = selLive?.history?.length ? null : getSeriesHistory(selectedId, 120);
-  const selValues = selLive?.history?.length ? selLive.history : (selHist?.map((o) => o.value) ?? []);
-  const selLabels = selHist?.map((o) => o.date) ?? selValues.map((_, i) => `T-${selValues.length - 1 - i}`);
+  const selValues = selLive?.history?.length ? selLive.history : [];
+  const selLabels = selValues.map((_, i) => `T-${selValues.length - 1 - i}`);
   const selMeta = byId(selectedId);
 
   // Economic surprise: high-signal series with non-trivial surprise magnitude.
