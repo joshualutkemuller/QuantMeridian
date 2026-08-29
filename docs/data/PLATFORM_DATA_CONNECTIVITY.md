@@ -90,7 +90,7 @@ Each external source, what it powers, and where it stands.
 | 9 | **Securities-finance / short-interest vendor** (S&P Global, FIS Astec, exchange SI) | SQZ, SLAB | Paid | 🔴 |
 | 10 | **Fund flows** (ICI free; EPFR/Lipper paid) | SENT (positioning) | Mixed | 🔴 |
 | 11 | **CME FedWatch / fed funds futures** | FOMC | Free/derived | 🔴 |
-| 12 | **Economic calendar feed** | CAL | Free/paid | 🔴 |
+| 12 | **Economic calendar feed** | CAL | Gold DB (`gold.release_calendar`, sourced by FRED/Eco pipeline) | ✅ |
 | 13 | **BIS / FX-forward** (xccy basis, FRA-OIS) | FUND (4 series) | Free (BIS) / computed | 🔴 |
 | 14 | **Global macro** (World Bank / OECD / BIS via `macro_data_etl`) | GCPI, GPOL | Free | 🟡 partial |
 | 15 | **Internal firm books** (lending, prime, collateral, cash, positions) | SLAB, PB, COLL, CASH, REINV, SXU, LIQ, DESK | Internal integration | 🔴 |

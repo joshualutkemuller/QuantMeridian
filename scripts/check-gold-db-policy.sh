@@ -7,8 +7,6 @@
 # the cutover.
 #
 # Deliberate exceptions:
-#   - econ/calendar: release dates stay live until the pipeline ships
-#     gold.release_calendar.
 #   - econ/fomc and econ/macro-inputs: explicit SIM is a documented synthetic
 #     model/book fallback, not a silent Tier A series fallback.
 
@@ -21,7 +19,6 @@ TIER_A_DIRS=(
 )
 
 EXEMPT_FILES=(
-  "src/app/api/econ/calendar/route.ts"
   "src/app/api/econ/fomc/route.ts"
   "src/app/api/econ/macro-inputs/route.ts"
 )

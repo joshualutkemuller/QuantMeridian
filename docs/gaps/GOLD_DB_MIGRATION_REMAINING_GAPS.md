@@ -1,6 +1,6 @@
 # Gold DB Migration — Remaining Gaps
 
-**Date:** 2026-08-19  
+**Date:** 2026-08-27
 **Branch:** `claude/fred-bronze-gold-pipeline-uiijsz`  
 **Context:** After removing all data sources except the fred-bronze-to-gold-pipeline (Yahoo,
 Polymarket, BIS, WorldBank, IMF, CME, Synthetic connectors deleted), this document records
@@ -13,7 +13,7 @@ snapshot/SIM, or carries dead code referencing removed systems.
 
 | ID | File | Issue | Severity |
 |----|------|--------|----------|
-| G1 | `src/app/api/econ/calendar/route.ts` | No gold DB tier — falls directly to FRED + Finnhub live APIs | High |
+| G1 | `src/app/api/econ/calendar/route.ts` | RESOLVED — reads `gold.release_calendar` through `goldStore`; no live FRED/Finnhub route path | Closed |
 | G2 | `market_lens_studio/data/series_catalog.py` | `preferred_source = "yahoo"` for all equity entries; all equity views silently empty | High |
 | G3 | `src/app/api/econ/benchmark/route.ts` | Per-series SIM fallback inside gold path for series absent from gold table | Medium |
 | G4 | `src/app/api/econ/batch/route.ts` | Same per-series SIM inside gold path | Medium |
@@ -30,23 +30,16 @@ snapshot/SIM, or carries dead code referencing removed systems.
 
 ## Detailed Findings
 
-### G1 — `/api/econ/calendar` has no gold DB tier (High)
+### G1 — `/api/econ/calendar` Gold DB tier (Closed 2026-08-27)
 
 **File:** `src/app/api/econ/calendar/route.ts`
 
-The calendar route has no `goldEnabled()` check. It goes directly to FRED live API
-(`fredSeries`, `fredReleaseDates`) + Finnhub (`finnhubEconCalendar`). The file itself
-acknowledges this with a comment:
-
-> *Exception to DB-only policy — Decision §12: pipeline adds gold.release_calendar (FRED
-> /releases/dates ingested); until that table exists this route remains on the live FRED +
-> Finnhub path.*
-
-**Fix:** Ingest FRED `/releases/dates` into `gold_release_calendar` in the
-fred-bronze-to-gold-pipeline, then add a `goldEnabled()` tier 1 before the FRED call.
-The `gold_release_calendar` table is already listed in `SERVING_OBJECTS` in
-`scripts/publish_fred_gold_to_postgres.py`, so the publish step is ready; the pipeline
-ingestion just needs to be wired.
+The FRED/Eco pipeline now writes `gold_release_calendar` locally
+(`gold.release_calendar` on Postgres/Delta), populated from FRED `/releases/dates`
+plus `config/release_calendar.yml`. `src/app/api/econ/calendar/route.ts` now reads
+that table through `goldStore` and returns `source: "DB"` or explicit `ERR`/empty
+state. The route no longer imports the live FRED client or Finnhub calendar helper,
+and it is no longer exempted by `scripts/check-gold-db-policy.sh`.
 
 ---
 

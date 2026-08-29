@@ -1,8 +1,8 @@
 # Market Terminal Handoff
 
-**Updated:** 2026-08-25
+**Updated:** 2026-08-27
 **Branch:** `spec001_expand_cpi_component_coverage`
-**Latest pushed commit:** `d1f738f` — `Harden Gold DB Tier A fallback policy`
+**Latest pushed commit:** `801bb1a` — `Update master Gold DB handoff`
 
 ## Current Focus
 
@@ -33,8 +33,8 @@ The gate scans `src/app/api/econ`, `src/app/api/chart`, and
 
 Expected remaining exceptions:
 
-- `src/app/api/econ/calendar/route.ts` still uses FRED release-date calls until
-  the pipeline adds `gold.release_calendar`.
+- `src/app/api/econ/calendar/route.ts` now reads `gold.release_calendar`; CAL is
+  no longer a live-FRED exception.
 - `src/app/api/econ/fomc/route.ts` and `src/app/api/econ/macro-inputs/route.ts`
   remain documented synthetic model/book exception paths.
 - Snapshot fixture references may remain in tests/offline fixtures until the
@@ -55,14 +55,12 @@ Only Vite's existing large-chunk warning appeared during the client build.
 
 ## Next Work
 
-1. Add `gold.release_calendar` in the FRED/eco pipeline, then rewire
-   `/api/econ/calendar` to remove the last live-FRED ECON exception.
-2. Finish the CPI expanded weight pipeline handoff in the FRED/eco pipeline for
+1. Finish the CPI expanded weight pipeline handoff in the FRED/eco pipeline for
    the eight CPI rows that need weights.
-3. Replace or explicitly retain legacy snapshot fixtures, then delete unused
+2. Replace or explicitly retain legacy snapshot fixtures, then delete unused
    `econSnapshot`/SIM generator paths once non-route callers are audited.
-4. Add the `gold.powerbi_catalog` join test so every Tier A module maps to at
+3. Add the `gold.powerbi_catalog` join test so every Tier A module maps to at
    least one Gold object.
-5. Continue CPI expansion from `docs/specs/spec001/`, keeping Market Terminal
+4. Continue CPI expansion from `docs/specs/spec001/`, keeping Market Terminal
    DB-only: no new external data source should be added here without explicit
    owner approval.

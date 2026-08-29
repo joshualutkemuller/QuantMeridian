@@ -1,7 +1,7 @@
 # Module Data Audit & Test Plan
 
 **Generated**: 2026-06-25
-**Updated**: 2026-08-25 — Gold DB migration hardening (see `docs/features/GOLD_DB_MIGRATION_HANDOFF.md`)
+**Updated**: 2026-08-27 — Gold DB migration hardening (see `docs/features/GOLD_DB_MIGRATION_HANDOFF.md`)
 **Scope**: All 38 modules — data sourcing, SIM vs live accuracy, bugs, provenance transparency
 
 ---
@@ -13,7 +13,7 @@ The terminal has migrated from a 3-tier FRED→SNAPSHOT→SIM fallback chain to 
 | Tier | Scope | Status |
 |------|-------|--------|
 | **A** | Econ/market series — `econ/*`, `chart/*`, `market/*` | **Hardened** — Gold DB only in production Tier A routes; missing data returns explicit `ERR`; CI grep gate blocks fallback reintroduction |
-| **B** | Live feeds — `news`, `social`, `polymarket`, `copilot`, `calendar` | **Exempt** — deliberate exceptions (non-series real-time feeds), documented per §7 D1 |
+| **B** | Live feeds — `news`, `social`, `polymarket`, `copilot` | **Exempt** — deliberate exceptions (non-series real-time feeds), documented per §7 D1 |
 | **C** | Synthetic book — `economics/*` pages, Tier C data modules | **Wired** — `getMacroInputs()` / `useMacroInputs()` + `buildFallbackWithAnchors()` provide Gold-backed rate anchors; book stays synthetic |
 
 ### New routes added by migration
@@ -32,7 +32,7 @@ The terminal has migrated from a 3-tier FRED→SNAPSHOT→SIM fallback chain to 
 - [ ] Delete SIM generators from `src/data/econSeries.ts` (`getSeriesHistory*`, `getIndicators`, `Rng` usage) after all non-route callers are audited
 - [x] Remove `src/lib/server/fred.ts` from Tier A prod path; keep only for documented exceptions/offline ingestion helpers
 - [ ] Prune `simMode.tsx` — collapse provenance to DB + staleness (§8)
-- [ ] Add `gold.release_calendar` to pipeline → wire `econ/calendar` (§12 decision)
+- [x] Wire `econ/calendar` to `gold.release_calendar`; CAL is now Gold-backed
 - [ ] `gold.powerbi_catalog` join test: every Tier A module has ≥1 mapped Gold object
 
 ---

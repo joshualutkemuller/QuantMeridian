@@ -606,8 +606,8 @@ export default function EconomicCalendarPage() {
                   <div className="px-3 py-8 text-center">
                     {events.length === 0 ? (
                       <div className="space-y-1">
-                        <div className="text-xs text-term-text-mute">No live data available</div>
-                        <div className="text-3xs text-term-text-mute">Set FRED_API_KEY and/or FINNHUB_API_KEY for real calendar data</div>
+                        <div className="text-xs text-term-text-mute">No Gold DB calendar rows available</div>
+                        <div className="text-3xs text-term-text-mute">Refresh the FRED/Eco pipeline or check MACRO_DB_URL.</div>
                       </div>
                     ) : (
                       <div className="text-xs text-term-text-mute">No events match the current filters.</div>
