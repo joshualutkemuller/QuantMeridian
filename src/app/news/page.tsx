@@ -1,6 +1,7 @@
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
+import { Activity, X } from "lucide-react";
 import { PageHeader, KpiStrip } from "@/components/ui/PageHeader";
 import { Panel, Stat, Tag } from "@/components/ui/Panel";
 import { ProvenanceBadge } from "@/components/ui/ProvenanceBadge";
@@ -54,9 +55,13 @@ export default function NewsTerminal() {
   const [view, setView] = useState<View>("TAPE");
   const [acFilter, setAcFilter] = useState<AssetClass | "ALL">("ALL");
   const [impactEvent, setImpactEvent] = useState(0);
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
+  const [drawerDiagnostics, setDrawerDiagnostics] = useState<unknown | null>(null);
+  const [drawerDiagnosticsLoading, setDrawerDiagnosticsLoading] = useState(false);
+  const [drawerDiagnosticsError, setDrawerDiagnosticsError] = useState<string | null>(null);
 
   const { headlines, source: newsSource, clusters, diagnostics, nlp } = useNews(60);
-  const { intel: social, source: socialSource } = useSocial();
+  const { intel: social, source: socialSource, diagnostics: socialDiagnostics } = useSocial();
   const narratives = useMemo(() => narrativesFromHeadlines(headlines), [headlines]);
   const attention = useMemo(() => attentionFromHeadlines(headlines), [headlines]);
   const summary = useMemo(() => summarizeHeadlines(headlines, narratives, attention), [headlines, narratives, attention]);
@@ -70,6 +75,34 @@ export default function NewsTerminal() {
   const tape = acFilter === "ALL" ? headlines : headlines.filter((h) => h.assetClass === acFilter);
   const maxNarr = Math.max(...narratives.map((n) => n.mentions));
   const btn = "rounded-sm border px-2 py-0.5 text-3xs font-semibold uppercase tracking-wide transition-colors";
+  const hookDiagnostics = useMemo(() => ({
+    news: { source: newsSource, attempts: diagnostics, nlp, clusterSource: nlp.clusterSource },
+    social: { source: socialSource, attempts: socialDiagnostics },
+  }), [diagnostics, newsSource, nlp, socialDiagnostics, socialSource]);
+  const rawDiagnostics = drawerDiagnostics ?? hookDiagnostics;
+
+  useEffect(() => {
+    if (!diagnosticsOpen) return;
+    const ctrl = new AbortController();
+    setDrawerDiagnosticsLoading(true);
+    setDrawerDiagnosticsError(null);
+    Promise.all([
+      fetch("/api/news/diagnostics?n=20", { signal: ctrl.signal }).then((r) => r.json()),
+      fetch("/api/social/diagnostics", { signal: ctrl.signal }).then((r) => r.json()),
+    ])
+      .then(([news, social]) => {
+        setDrawerDiagnostics({ news, social });
+      })
+      .catch((err) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        setDrawerDiagnosticsError(err instanceof Error ? err.message : String(err));
+        setDrawerDiagnostics(hookDiagnostics);
+      })
+      .finally(() => {
+        if (!ctrl.signal.aborted) setDrawerDiagnosticsLoading(false);
+      });
+    return () => ctrl.abort();
+  }, [diagnosticsOpen, hookDiagnostics]);
 
   return (
     <div className="flex min-h-full flex-col">
@@ -121,6 +154,14 @@ export default function NewsTerminal() {
         )) : (
           <Tag tone="neutral">PROBING</Tag>
         )}
+        <button
+          className="term-btn ml-auto inline-flex items-center gap-1"
+          onClick={() => setDiagnosticsOpen(true)}
+          title="Inspect raw provider-attempt diagnostics"
+        >
+          <Activity className="h-3 w-3" />
+          Diagnostics
+        </button>
       </div>
 
       <div className="flex flex-1 flex-col gap-2 p-2">
@@ -363,6 +404,52 @@ export default function NewsTerminal() {
       <div className="border-t border-term-border bg-term-panel px-3 py-1.5 text-3xs text-term-text-mute">
         <span className="text-term-amber">NEWS</span> — source {newsSource}; clusters {clusterSourceLabel}; sentiment {nlp.sentiment ? "FinBERT" : "provider/heuristic"}; social {socialSource}.
       </div>
+
+      {diagnosticsOpen && (
+        <div className="fixed inset-0 z-50 flex items-start justify-end bg-black/55 p-2 sm:p-4" role="dialog" aria-modal="true" aria-label="NEWS diagnostics">
+          <div className="flex h-full w-full max-w-2xl flex-col border border-term-border bg-term-panel shadow-2xl">
+            <div className="term-panel-head">
+              <div className="flex min-w-0 items-center gap-2">
+                <Activity className="h-3.5 w-3.5 text-term-amber" />
+                <span className="truncate text-term-text-dim">Provider Diagnostics</span>
+                <Tag tone={newsSource === "ERR" && socialSource === "ERR" ? "down" : "up"}>
+                  {newsSource === "ERR" && socialSource === "ERR" ? "OFFLINE" : "ACTIVE"}
+                </Tag>
+                {drawerDiagnosticsLoading && <Tag tone="neutral">LOADING</Tag>}
+                {drawerDiagnosticsError && <Tag tone="down">FETCH ERR</Tag>}
+              </div>
+              <button className="term-btn inline-flex items-center gap-1" onClick={() => setDiagnosticsOpen(false)} title="Close diagnostics">
+                <X className="h-3 w-3" />
+                Close
+              </button>
+            </div>
+            <div className="grid grid-cols-1 gap-px border-b border-term-border bg-term-border text-2xs sm:grid-cols-2">
+              <div className="bg-term-panel-2 p-2">
+                <div className="term-label">NEWS</div>
+                <div className="mt-1 truncate text-term-text" title={newsSource}>{newsSource}</div>
+                <div className="text-term-text-mute">{diagnostics.filter((attempt) => attempt.ok).length}/{diagnostics.length} providers ok</div>
+              </div>
+              <div className="bg-term-panel-2 p-2">
+                <div className="term-label">SOCIAL / NLP</div>
+                <div className="mt-1 truncate text-term-text" title={`${socialSource} · ${nlp.health?.model ?? ""}`}>
+                  {socialSource} · {nlp.health?.ok ? nlp.health.model ?? "NLP" : nlp.health?.configured ? "NLP ERR" : "NLP OFF"}
+                </div>
+                <div className="text-term-text-mute">{socialDiagnostics.filter((attempt) => attempt.ok).length}/{socialDiagnostics.length} social providers ok · {clusterSourceLabel}</div>
+              </div>
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto p-3">
+              {drawerDiagnosticsError && (
+                <div className="mb-2 border border-term-down/40 bg-term-down/10 p-2 text-2xs text-term-down">
+                  {drawerDiagnosticsError}
+                </div>
+              )}
+              <pre className="whitespace-pre-wrap break-words rounded border border-term-border bg-term-panel-3 p-3 font-mono text-3xs leading-relaxed text-term-text-dim">
+                {JSON.stringify(rawDiagnostics, null, 2)}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

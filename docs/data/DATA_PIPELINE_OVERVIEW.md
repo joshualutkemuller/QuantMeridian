@@ -45,8 +45,9 @@ News/social provider keys
   -> src/lib/server/newsProviders.ts and socialProviders.ts
   -> /api/news and /api/social
   -> optional NEWS_NLP_URL scoring/clustering
+  -> /api/news/diagnostics + /api/social/diagnostics + INTELLIGENCE_FEEDS manifest
   -> NEWS/SENT/AI context
-  -> fallback: deterministic news/social fixtures and in-house lexicon
+  -> fallback: explicit ERR, or deterministic news/social fixtures only when SIM is enabled
 
 ANTHROPIC_API_KEY
   -> /api/copilot
@@ -148,7 +149,9 @@ Most public macro ETL sources do not use one universal key, but production use n
 2. Configure social providers for Reddit/StockTwits where available.
 3. Optionally run `news_nlp` and set `NEWS_NLP_URL`.
 4. `/api/news` fetches headlines, applies provider-native sentiment or in-house scoring, and optionally upgrades scoring/clustering through `news_nlp`.
-5. NEWS and SENT render live provider data when present; otherwise deterministic fixtures remain.
+5. `/api/news/diagnostics` and `/api/social/diagnostics` expose route-time provider attempts without generated fallback rows.
+6. `/api/dataops/health` and `/api/dataops/runs` surface the shared `INTELLIGENCE_FEEDS` manifest with separate `NEWS`, `SOCIAL`, and `NEWS_NLP` rows.
+7. NEWS and SENT render live provider data when present; otherwise deterministic fixtures remain only behind explicit SIM mode.
 
 ### Required environment/config
 
@@ -164,7 +167,7 @@ Most public macro ETL sources do not use one universal key, but production use n
 - Pick a production headline provider and record SLA/entitlement constraints.
 - Persist headline/social raw and scored outputs; current request-time behavior is not a full historical pipeline.
 - Add AAII/NAAIM survey ingestion for SENT.
-- Surface feed freshness, model version, and fallback reason in DataOps.
+- Extend `news_nlp` `/health` to report separate scoring, NER, and clustering model versions.
 
 ## 7. Market Lens and charting flow
 
@@ -220,7 +223,7 @@ No live internal-book ingestion exists for lending, prime finance, collateral, c
 
 - [x] Demote synthetic provider health from live to fallback-available.
 - [x] Create this pipeline overview as the operational map.
-- [ ] Replace DataOps fixture runs/lineage with real manifests from market pipeline, macro ETL, FRED cache, news NLP, and provider probes.
+- [ ] Replace DataOps fixture runs/lineage with real manifests from market pipeline, macro ETL, and FRED cache. NEWS/SOCIAL/NEWS_NLP now contribute route-time `INTELLIGENCE_FEEDS` provider-probe manifests.
 - [ ] Add one shared provenance contract with `source`, `provider`, `observationDate`, `processedAt`, `cachedAt`, `fallbackReason`, and `isSimulated`.
 - [ ] Add watermarks for simulated internal-book modules.
 - [ ] Add tests that fail when operational pages omit provenance badges.
