@@ -55,7 +55,7 @@ export default function NewsTerminal() {
   const [acFilter, setAcFilter] = useState<AssetClass | "ALL">("ALL");
   const [impactEvent, setImpactEvent] = useState(0);
 
-  const { headlines, source: newsSource, clusters } = useNews(60);
+  const { headlines, source: newsSource, clusters, diagnostics } = useNews(60);
   const { intel: social, source: socialSource } = useSocial();
   const narratives = useMemo(() => narrativesFromHeadlines(headlines), [headlines]);
   const attention = useMemo(() => attentionFromHeadlines(headlines), [headlines]);
@@ -99,6 +99,26 @@ export default function NewsTerminal() {
             {v.label}
           </button>
         ))}
+      </div>
+
+      <div className="flex min-w-0 flex-wrap items-center gap-1 border-b border-term-border bg-term-panel-2 px-3 py-1.5">
+        <span className="term-label mr-1">Provider Chain</span>
+        {diagnostics.length ? diagnostics.map((attempt) => (
+          <Tag
+            key={attempt.provider}
+            tone={attempt.ok ? "up" : attempt.configured ? "down" : "neutral"}
+            className="max-w-full"
+          >
+            <span
+              className="max-w-[14rem] truncate"
+              title={`${attempt.provider}: ${attempt.ok ? `${attempt.headlineCount} headlines in ${attempt.latencyMs}ms` : attempt.error ?? "no headlines"}`}
+            >
+              {attempt.provider} {attempt.ok ? `${attempt.headlineCount}/${attempt.latencyMs}ms` : attempt.configured ? "ERR" : "OFF"}
+            </span>
+          </Tag>
+        )) : (
+          <Tag tone="neutral">PROBING</Tag>
+        )}
       </div>
 
       <div className="flex flex-1 flex-col gap-2 p-2">

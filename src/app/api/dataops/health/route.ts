@@ -1,6 +1,7 @@
 import { json } from "@/lib/server/http";
 import { fredProbe } from "@/lib/server/fred";
 import { configuredNewsProviders } from "@/lib/server/newsProviders";
+import { getNewsDiagnostics } from "@/lib/server/newsDiagnostics";
 import { configuredSocialProviders } from "@/lib/server/socialProviders";
 import { goldConfigStatus, goldEnabled, goldStore } from "@/lib/server/goldStore";
 
@@ -15,6 +16,7 @@ interface ProviderProbe {
   backend?: string;
   target?: string;
   explicitStatus?: string;
+  diagnostics?: unknown;
 }
 
 /** Reachability probe for URL-based upstreams (news_nlp, market pipeline). */
@@ -147,6 +149,40 @@ export async function GET() {
   const newsP = configuredNewsProviders();
   const socialP = configuredSocialProviders();
   const feeds = [...newsP, ...socialP];
+  try {
+    const news = await getNewsDiagnostics(10);
+    providers.NEWS = news.live
+      ? {
+          status: "LIVE",
+          detail: `${news.source}: ${news.headlineCount} headlines; newest ${news.newestMinutesAgo ?? "?"}m ago${news.nlp.ok ? `; NLP ${news.nlp.model ?? "up"}` : ""}`,
+          live: true,
+          configured: news.configuredProviders.length > 0,
+          readSuccessfully: true,
+          latencyMs: news.attempts.find((attempt) => attempt.ok)?.latencyMs,
+          explicitStatus: "Real news provider returned headlines",
+          diagnostics: news,
+        }
+      : {
+          status: "ERROR",
+          detail: news.configuredProviders.length
+            ? `Configured providers returned no headlines: ${news.attempts.map((attempt) => `${attempt.provider}=${attempt.error ?? "no headlines"}`).join("; ")}`
+            : "No news provider keys configured; /api/news returns ERR unless sim=1 is requested",
+          live: false,
+          configured: news.configuredProviders.length > 0,
+          readSuccessfully: false,
+          explicitStatus: "No real news headlines available",
+          diagnostics: news,
+        };
+  } catch (err) {
+    providers.NEWS = {
+      status: "ERROR",
+      detail: `News diagnostics failed — ${err instanceof Error ? err.message : String(err)}`,
+      live: false,
+      configured: newsP.length > 0,
+      readSuccessfully: false,
+      explicitStatus: "News diagnostics failed",
+    };
+  }
   const nlpUrl = process.env.NEWS_NLP_URL;
   if (nlpUrl) {
     const p = await probe(nlpUrl);

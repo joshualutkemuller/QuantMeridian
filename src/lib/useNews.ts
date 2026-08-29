@@ -4,10 +4,20 @@ import { fetchJson, peekFresh } from "@/lib/fetchCache";
 import { getHeadlines, type Headline, type EventCluster } from "@/data/news";
 import { useSimMode } from "@/lib/simMode";
 
+export interface NewsProviderAttempt {
+  provider: string;
+  configured: boolean;
+  ok: boolean;
+  headlineCount: number;
+  latencyMs: number;
+  error?: string;
+}
+
 interface NewsResponse {
   source: string;
   headlines: Headline[];
   clusters?: EventCluster[];
+  diagnostics?: NewsProviderAttempt[];
 }
 
 /**
@@ -17,13 +27,14 @@ interface NewsResponse {
  * (e.g. "Alpha Vantage"), "ERR", or explicit "SIM". `clusters` carries
  * transformer event clusters when NEWS_NLP_URL is wired.
  */
-export function useNews(n = 60): { headlines: Headline[]; source: string; clusters: EventCluster[] } {
+export function useNews(n = 60): { headlines: Headline[]; source: string; clusters: EventCluster[]; diagnostics: NewsProviderAttempt[] } {
   const { simEnabled } = useSimMode();
   const url = `/api/news?n=${n}${simEnabled ? "&sim=1" : ""}`;
   const cached = peekFresh<NewsResponse>(url);
   const [headlines, setHeadlines] = useState<Headline[]>(cached?.headlines ?? getHeadlines(n));
   const [source, setSource] = useState<string>(cached?.source ?? "SIM");
   const [clusters, setClusters] = useState<EventCluster[]>(cached?.clusters ?? []);
+  const [diagnostics, setDiagnostics] = useState<NewsProviderAttempt[]>(cached?.diagnostics ?? []);
 
   useEffect(() => {
     let alive = true;
@@ -32,10 +43,20 @@ export function useNews(n = 60): { headlines: Headline[]; source: string; cluste
       setHeadlines(seed.headlines);
       setSource(seed.source);
       setClusters(seed.clusters ?? []);
+      setDiagnostics(seed.diagnostics ?? []);
     }
     fetchJson<NewsResponse>(url)
       .then((j) => {
-        if (!alive || !j?.headlines?.length) return;
+        if (!alive) return;
+        setDiagnostics(j?.diagnostics ?? []);
+        if (!j?.headlines?.length) {
+          setSource(j?.source ?? (simEnabled ? "SIM" : "ERR"));
+          if (!simEnabled || j?.source === "ERR") {
+            setHeadlines([]);
+            setClusters([]);
+          }
+          return;
+        }
         setHeadlines(j.headlines);
         setSource(j.source ?? "SIM");
         setClusters(j.clusters ?? []);
@@ -43,6 +64,10 @@ export function useNews(n = 60): { headlines: Headline[]; source: string; cluste
       .catch(() => {
         if (!alive) return;
         setSource(simEnabled ? "SIM" : "ERR");
+        if (!simEnabled) {
+          setHeadlines([]);
+          setClusters([]);
+        }
       });
     return () => {
       alive = false;
@@ -50,7 +75,7 @@ export function useNews(n = 60): { headlines: Headline[]; source: string; cluste
   }, [url]);
 
   if (!simEnabled && source === "SIM") {
-    return { headlines: [], source: "ERR", clusters: [] };
+    return { headlines: [], source: "ERR", clusters: [], diagnostics };
   }
-  return { headlines, source, clusters };
+  return { headlines, source, clusters, diagnostics };
 }
