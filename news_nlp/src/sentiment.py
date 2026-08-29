@@ -66,6 +66,21 @@ def model_name() -> str:
     return settings.finbert_model if _finbert() is not None else "lexicon-fallback"
 
 
+def health() -> dict:
+    clf = _finbert()
+    if clf is None:
+        return {
+            "ok": True,
+            "model": "lexicon-fallback",
+            "backend": "lexicon",
+        }
+    return {
+        "ok": True,
+        "model": settings.finbert_model,
+        "backend": "transformers",
+    }
+
+
 def score_texts(texts: list[str]) -> list[ScoreItem]:
     clf = _finbert()
     if clf is None:

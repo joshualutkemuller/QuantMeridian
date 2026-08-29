@@ -160,14 +160,13 @@ Most public macro ETL sources do not use one universal key, but production use n
 | `ALPHAVANTAGE_API_KEY`, `MARKETAUX_API_KEY`, `FINNHUB_API_KEY`, `NEWSAPI_API_KEY` | Headline provider chain | First configured viable provider can populate NEWS. |
 | `REDDIT_USER_AGENT` | Reddit/social fetches | User-agent gated. |
 | `STOCKTWITS_ENABLED`, `STOCKTWITS_ACCESS_TOKEN` | StockTwits/social fetches | Enables NEWS social and SENT social components. |
-| `NEWS_NLP_URL` | FinBERT/NER/clustering service | Upgrades heuristic sentiment and event clustering. |
+| `NEWS_NLP_URL` | FinBERT/NER/clustering service | Upgrades heuristic sentiment and event clustering; `/health` reports component-level model, fallback, device, and runtime metadata. |
 
 ### Remaining work
 
 - Pick a production headline provider and record SLA/entitlement constraints.
-- Persist headline/social raw and scored outputs; current request-time behavior is not a full historical pipeline.
+- Persist headline/social raw and scored outputs after an upstream-pipeline schema is approved; current request-time behavior is not a full historical pipeline.
 - Add AAII/NAAIM survey ingestion for SENT.
-- Extend `news_nlp` `/health` to report separate scoring, NER, and clustering model versions.
 
 ## 7. Market Lens and charting flow
 

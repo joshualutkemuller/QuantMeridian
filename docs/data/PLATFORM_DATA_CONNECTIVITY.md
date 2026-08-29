@@ -50,9 +50,9 @@ Provenance is observable at runtime — the platform probes its own backends rat
 
 | Endpoint | Returns |
 |---|---|
-| `GET /api/dataops/health` | Per-provider live status — FRED key presence, market-pipeline resolver (DB/FILE/PIPELINE reachability), an `INTELLIGENCE_FEEDS` umbrella row, separate `NEWS` / `SOCIAL` provider-chain rows, and a live `/health` ping to the `NEWS_NLP` FinBERT service (with model name). |
+| `GET /api/dataops/health` | Per-provider live status — FRED key presence, market-pipeline resolver (DB/FILE/PIPELINE reachability), an `INTELLIGENCE_FEEDS` umbrella row, separate `NEWS` / `SOCIAL` provider-chain rows, and a live `/health` ping to the `NEWS_NLP` service with sentiment, clustering, NER, fallback, device, and runtime metadata. |
 | `GET /api/dataops/runs` | Live ingestion **runs / series outcomes / lineage** aggregated from the `market_data_pipeline` ingestion manifest, resolved **`MARKET_DB_URL` (Postgres/DuckDB) → `MARKET_PIPELINE_URL`** (mirrors the market-views resolver), plus route-time `INTELLIGENCE_FEEDS` diagnostics for `NEWS`, `SOCIAL`, and `NEWS_NLP`. Includes real per-series/provider-attempt **latency**. Empty → the page keeps fixtures. |
-| `GET /api/news/diagnostics` | Headline provider smoke check: configured providers, winning source, per-provider attempts, newest headline age, and `NEWS_NLP` health. |
+| `GET /api/news/diagnostics` | Headline provider smoke check: configured providers, winning source, per-provider attempts, newest headline age, and structured `NEWS_NLP` health. |
 | `GET /api/social/diagnostics` | Social provider smoke check: Reddit/StockTwits attempts, post volume, platform count, top ticker, and top theme. |
 
 Where it surfaces:

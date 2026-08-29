@@ -65,7 +65,16 @@ describe("/api/news/diagnostics", () => {
         });
       }
       if (url === "http://nlp.local/health") {
-        return jsonResponse({ model: "FinBERT-test" });
+        return jsonResponse({
+          status: "ok",
+          model: "FinBERT-test",
+          sentiment: { ok: true, model: "FinBERT-test", backend: "transformers" },
+          clustering: { ok: true, model: "all-MiniLM-test", backend: "sentence-transformers" },
+          ner: { ok: true, model: "en_core_web_sm", backend: "spacy" },
+          lexiconFallback: { enabled: false, model: "finance-lexicon", version: "1" },
+          device: "cpu",
+          runtime: "python 3.12.0",
+        });
       }
       throw new Error(`unexpected URL ${url}`);
     }));
@@ -85,6 +94,12 @@ describe("/api/news/diagnostics", () => {
       configured: true,
       ok: true,
       model: "FinBERT-test",
+      sentiment: { ok: true, model: "FinBERT-test", backend: "transformers" },
+      clustering: { ok: true, model: "all-MiniLM-test", backend: "sentence-transformers" },
+      ner: { ok: true, model: "en_core_web_sm", backend: "spacy" },
+      lexiconFallback: { enabled: false, model: "finance-lexicon", version: "1" },
+      device: "cpu",
+      runtime: "python 3.12.0",
     });
     expect(body.attempts[0]).toMatchObject({
       provider: "Alpha Vantage",

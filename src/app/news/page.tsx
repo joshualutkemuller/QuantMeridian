@@ -55,12 +55,24 @@ interface DiagnosticsPayload {
   news?: {
     source?: unknown;
     attempts?: unknown[];
-    nlp?: { configured?: unknown; ok?: unknown; model?: unknown };
+    nlp?: NewsNlpPayload;
   };
   social?: {
     source?: unknown;
     attempts?: unknown[];
   };
+}
+
+interface NewsNlpPayload {
+  configured?: unknown;
+  ok?: unknown;
+  model?: unknown;
+  sentiment?: { ok?: unknown; model?: unknown; backend?: unknown; version?: unknown };
+  clustering?: { ok?: unknown; model?: unknown; backend?: unknown; version?: unknown };
+  ner?: { ok?: unknown; model?: unknown; backend?: unknown; version?: unknown };
+  lexiconFallback?: { enabled?: unknown; model?: unknown; version?: unknown };
+  device?: unknown;
+  runtime?: unknown;
 }
 
 function asDiagnosticsPayload(value: unknown): DiagnosticsPayload {
@@ -69,6 +81,26 @@ function asDiagnosticsPayload(value: unknown): DiagnosticsPayload {
 
 function countOk(attempts: unknown[]): number {
   return attempts.filter((attempt) => Boolean((attempt as { ok?: unknown }).ok)).length;
+}
+
+function stringLabel(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function nlpStatusLabel(health?: NewsNlpPayload): string {
+  if (!health?.ok) return health?.configured ? "NLP ERR" : "NLP OFF";
+  const sentiment = stringLabel(health.sentiment?.model);
+  const clustering = stringLabel(health.clustering?.model);
+  const ner = stringLabel(health.ner?.model);
+  const model = stringLabel(health.model);
+  if (sentiment && clustering && ner) return "NLP FULL";
+  return model ?? sentiment ?? "NLP UP";
+}
+
+function componentLabel(label: string, component?: NewsNlpPayload["sentiment"]): string {
+  if (!component) return `${label}: n/a`;
+  const status = component.ok ? "ok" : "err";
+  return `${label}: ${stringLabel(component.model) ?? stringLabel(component.backend) ?? "unknown"} ${status}`;
 }
 
 export default function NewsTerminal() {
@@ -93,6 +125,7 @@ export default function NewsTerminal() {
   const signals = useMemo(() => signalsFromHeadlines(narratives, attention, social, headlines), [narratives, attention, social, headlines]);
   const clusterSourceLabel = nlp.clusterSource === "FINBERT" ? "FinBERT clusters" : nlp.clusterSource === "KEYWORD" ? "Keyword clusters" : "No clusters";
   const nlpTone = nlp.health?.ok ? "up" : nlp.health?.configured ? "down" : "neutral";
+  const nlpHeaderLabel = nlpStatusLabel(nlp.health);
 
   const tape = acFilter === "ALL" ? headlines : headlines.filter((h) => h.assetClass === acFilter);
   const maxNarr = Math.max(...narratives.map((n) => n.mentions));
@@ -108,7 +141,14 @@ export default function NewsTerminal() {
   const drawerNewsSource = String(diagnosticsPayload.news?.source ?? newsSource);
   const drawerSocialSource = String(diagnosticsPayload.social?.source ?? socialSource);
   const drawerNlp = diagnosticsPayload.news?.nlp;
-  const drawerNlpLabel = drawerNlp?.ok ? String(drawerNlp.model ?? "NLP") : drawerNlp?.configured ? "NLP ERR" : "NLP OFF";
+  const drawerNlpLabel = nlpStatusLabel(drawerNlp);
+  const drawerNlpDetails = [
+    componentLabel("sentiment", drawerNlp?.sentiment),
+    componentLabel("cluster", drawerNlp?.clustering),
+    componentLabel("NER", drawerNlp?.ner),
+    `fallback: ${drawerNlp?.lexiconFallback?.enabled ? stringLabel(drawerNlp.lexiconFallback.model) ?? "on" : "off"}`,
+    `runtime: ${stringLabel(drawerNlp?.device) ?? "n/a"}${stringLabel(drawerNlp?.runtime) ? ` · ${stringLabel(drawerNlp?.runtime)}` : ""}`,
+  ];
   const diagnosticsJson = useMemo(() => JSON.stringify(rawDiagnostics, null, 2), [rawDiagnostics]);
 
   useEffect(() => {
@@ -172,7 +212,7 @@ export default function NewsTerminal() {
         code="NEWS"
         title="Market News & Signal Intelligence"
         desc="Signal extraction · narratives · social · impact"
-        right={<span className="flex items-center gap-1"><ProvenanceBadge source={newsSource} /><Tag tone={nlpTone}>{nlp.health?.ok ? `NLP ${nlp.health.model ?? "UP"}` : nlp.health?.configured ? "NLP ERR" : "NLP OFF"}</Tag><Tag tone={nlp.clusterSource === "FINBERT" ? "up" : nlp.clusterSource === "KEYWORD" ? "amber" : "neutral"}>{clusterSourceLabel}</Tag></span>}
+        right={<span className="flex items-center gap-1"><ProvenanceBadge source={newsSource} /><Tag tone={nlpTone}>{nlpHeaderLabel}</Tag><Tag tone={nlp.clusterSource === "FINBERT" ? "up" : nlp.clusterSource === "KEYWORD" ? "amber" : "neutral"}>{clusterSourceLabel}</Tag></span>}
       />
 
       <KpiStrip>
@@ -512,6 +552,13 @@ export default function NewsTerminal() {
                 </div>
                 <div className="text-term-text-mute">{countOk(drawerSocialAttempts)}/{drawerSocialAttempts.length} social providers ok · {clusterSourceLabel}</div>
               </div>
+            </div>
+            <div className="grid grid-cols-1 gap-px border-b border-term-border bg-term-border text-3xs md:grid-cols-5">
+              {drawerNlpDetails.map((detail) => (
+                <div key={detail} className="truncate bg-term-panel p-2 text-term-text-mute" title={detail}>
+                  {detail}
+                </div>
+              ))}
             </div>
             <div className="min-h-0 flex-1 overflow-auto p-3">
               {drawerDiagnosticsError && (

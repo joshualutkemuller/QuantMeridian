@@ -99,11 +99,9 @@ Existing source docs:
 - Drawer summary counts read from the same raw diagnostics payload shown in the
   JSON body.
 
-## Next Work
-
 ### Phase 2: NEWS_NLP Health Contract
 
-Extend `news_nlp` `/health` to return separate version/status fields:
+`news_nlp` `/health` now returns separate version/status fields:
 
 - sentiment model
 - clustering model
@@ -111,12 +109,18 @@ Extend `news_nlp` `/health` to return separate version/status fields:
 - lexicon fallback status
 - loaded-device/runtime
 
-Then surface those fields in:
+Those fields surface in:
 
 - `/api/news`
 - `/api/news/diagnostics`
 - `/api/dataops/health`
 - the NEWS diagnostics drawer
+
+The Market Terminal parser is backward-compatible with the old `{ model }`
+health response, so deploying the terminal before the service upgrade does not
+break NEWS.
+
+## Next Work
 
 ### Phase 3: Persistence Handoff
 

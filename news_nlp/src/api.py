@@ -9,21 +9,42 @@ Endpoints:
 from __future__ import annotations
 
 import json
+import platform
 
 from fastapi import FastAPI
 
+from . import entities
 from . import sentiment
-from .cluster import cluster as cluster_headlines
+from . import cluster as clustering
 from .pipeline import score_headlines
-from .schema import ClusterRequest, ClusterResponse, ScoreRequest, ScoreResponse
+from .schema import ClusterRequest, ClusterResponse, HealthResponse, ScoreRequest, ScoreResponse
 from .settings import settings
 
 app = FastAPI(title="news-nlp", version="0.1.0")
 
 
-@app.get("/health")
-def health() -> dict:
-    return {"status": "ok", "model": sentiment.model_name()}
+def _device() -> str:
+    try:
+        import torch  # type: ignore
+
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except Exception:  # noqa: BLE001 - optional runtime dependency
+        return "cpu"
+
+
+@app.get("/health", response_model=HealthResponse)
+def health() -> HealthResponse:
+    sentiment_health = sentiment.health()
+    return HealthResponse(
+        status="ok",
+        model=sentiment_health["model"],
+        sentiment=sentiment_health,
+        clustering=clustering.health(),
+        ner=entities.health(),
+        lexiconFallback={"enabled": sentiment_health["model"] == "lexicon-fallback"},
+        device=_device(),
+        runtime=f"python {platform.python_version()}",
+    )
 
 
 @app.post("/score", response_model=ScoreResponse)
@@ -35,7 +56,7 @@ def score(req: ScoreRequest) -> ScoreResponse:
 def cluster(req: ClusterRequest) -> ClusterResponse:
     """Score + embed + cluster the posted headlines into events (NEWS-6)."""
     scored = score_headlines(req.headlines)
-    return ClusterResponse(model=sentiment.model_name(), clusters=cluster_headlines(scored))
+    return ClusterResponse(model=sentiment.model_name(), clusters=clustering.cluster(scored))
 
 
 @app.get("/headlines")

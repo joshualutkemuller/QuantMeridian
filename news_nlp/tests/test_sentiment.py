@@ -1,5 +1,6 @@
 """Sentiment scorer tests — exercise the lexicon fallback (no model stack needed)."""
 from news_nlp.src import sentiment
+from news_nlp.src.api import health
 from news_nlp.src.pipeline import score_headlines
 from news_nlp.src.schema import RawHeadline
 
@@ -25,3 +26,18 @@ def test_pipeline_scores_and_extracts():
     scored = score_headlines(raw)
     assert scored[0].sentiment == "BULLISH"
     assert "NVDA" in scored[0].tickers
+
+
+def test_health_reports_component_contract():
+    payload = health()
+    assert payload.status == "ok"
+    assert payload.model
+    assert payload.sentiment.ok is True
+    assert payload.sentiment.model
+    assert payload.clustering.ok is True
+    assert payload.clustering.model
+    assert payload.ner.ok is True
+    assert payload.ner.model
+    assert payload.lexiconFallback.model == "finance-lexicon"
+    assert payload.device
+    assert payload.runtime.startswith("python ")

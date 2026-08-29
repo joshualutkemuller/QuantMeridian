@@ -3,6 +3,7 @@ import { fredProbe } from "@/lib/server/fred";
 import { getIntelligenceFeedDiagnostics } from "@/lib/server/intelligenceFeedManifest";
 import { configuredSocialProviders } from "@/lib/server/socialProviders";
 import { goldConfigStatus, goldEnabled, goldStore } from "@/lib/server/goldStore";
+import type { NewsNlpProbe } from "@/lib/server/newsDiagnostics";
 
 type Status = "LIVE" | "CACHED" | "SIM" | "STALE" | "ERROR" | "FALLBACK_AVAILABLE";
 interface ProviderProbe {
@@ -31,6 +32,19 @@ async function probe(base: string, path = "/health", ms = 3000): Promise<{ ok: b
   } finally {
     clearTimeout(timer);
   }
+}
+
+function nlpHealthDetail(nlp: NewsNlpProbe): string {
+  if (!nlp.ok) return nlp.error ?? "unknown error";
+  const parts = [
+    nlp.sentiment?.model ? `sentiment=${nlp.sentiment.model}` : nlp.model ? `model=${nlp.model}` : null,
+    nlp.clustering?.model ? `cluster=${nlp.clustering.model}` : null,
+    nlp.ner?.model ? `NER=${nlp.ner.model}` : null,
+    nlp.lexiconFallback?.enabled ? `fallback=${nlp.lexiconFallback.model ?? "lexicon"}` : null,
+    nlp.device ? `device=${nlp.device}` : null,
+    nlp.runtime,
+  ].filter(Boolean);
+  return parts.length ? parts.join(" · ") : `model=${nlp.model ?? "?"}`;
 }
 
 /**
@@ -230,7 +244,7 @@ export async function GET() {
 
   if (news.nlp.configured) {
     providers.NEWS_NLP = news.nlp.ok
-      ? { status: "LIVE", detail: `FinBERT service up (model=${news.nlp.model ?? "?"})${feeds.length ? ` · feeds: ${feeds.join(", ")}` : ""}`, live: true, diagnostics: news.nlp }
+      ? { status: "LIVE", detail: `NEWS_NLP service up (${nlpHealthDetail(news.nlp)})${feeds.length ? ` · feeds: ${feeds.join(", ")}` : ""}`, live: true, diagnostics: news.nlp }
       : { status: "STALE", detail: `NEWS_NLP_URL set but /health unreachable — ${news.nlp.error ?? "unknown error"}`, live: false, diagnostics: news.nlp };
   } else if (feeds.length) {
     providers.NEWS_NLP = { status: "CACHED", detail: `provider sentiment + in-house heuristic · feeds: ${feeds.join(", ")}`, live: false, diagnostics: news.nlp };

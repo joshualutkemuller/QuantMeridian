@@ -50,3 +50,18 @@ def extract(text: str) -> tuple[list[str], list[str]]:
                 if tic:
                     tickers.add(tic)
     return sorted(tickers), sorted(entities)
+
+
+def health() -> dict:
+    nlp = _nlp()
+    if nlp is None:
+        return {
+            "ok": True,
+            "model": "regex-keyword-fallback",
+            "backend": "regex",
+        }
+    return {
+        "ok": True,
+        "model": settings.spacy_model,
+        "backend": "spacy",
+    }

@@ -97,6 +97,9 @@ Current local NEWS work expands DataOps and module-facing diagnostics:
   the raw NEWS/SOCIAL/NLP provider-attempt payloads from the UI.
 - The NEWS diagnostics drawer now supports direct smoke-check refresh, JSON
   copy/download, and Escape-key close.
+- `news_nlp` `/health` now reports structured sentiment, clustering, NER,
+  lexicon fallback, device, and runtime metadata; Market Terminal normalizes
+  both the new shape and the legacy `{ model }` shape.
 - `docs/specs/spec002_news_live_intelligence/SPEC.md` is the active NEWS spec
   for diagnostics, `NEWS_NLP` health, and future persistence handoffs.
 
@@ -128,7 +131,7 @@ the Gold calendar or NEWS provider work and should be reviewed separately.
 4. Continue CPI expansion from `docs/specs/spec001/`, keeping Market Terminal
    DB-only: no new external data source should be added here without explicit
    owner approval.
-5. Commit the `news-expansion` diagnostics-polish slice.
-6. Next NEWS pass: decide whether `news_nlp` should expose a richer `/health`
-   payload for scoring, NER, and clustering model versions separately, then
-   surface those fields in the diagnostics drawer and DataOps.
+5. Commit the `news-expansion` Phase 2 `NEWS_NLP` health-contract slice.
+6. Next NEWS pass: create the upstream-pipeline persistence handoff for raw
+   headlines, raw social posts, scored headlines, entity links, cluster
+   memberships, and DataOps audit tables before any historical storage work.

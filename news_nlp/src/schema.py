@@ -63,3 +63,28 @@ class ClusterRequest(BaseModel):
 class ClusterResponse(BaseModel):
     model: str
     clusters: list[NewsCluster]
+
+
+class HealthComponent(BaseModel):
+    ok: bool
+    model: str
+    backend: str | None = None
+    version: str | None = None
+    error: str | None = None
+
+
+class LexiconFallbackHealth(BaseModel):
+    enabled: bool
+    model: str = "finance-lexicon"
+    version: str = "1"
+
+
+class HealthResponse(BaseModel):
+    status: Literal["ok"]
+    model: str
+    sentiment: HealthComponent
+    clustering: HealthComponent
+    ner: HealthComponent
+    lexiconFallback: LexiconFallbackHealth
+    device: str
+    runtime: str

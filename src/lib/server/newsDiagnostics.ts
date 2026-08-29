@@ -5,7 +5,74 @@ export interface NewsNlpProbe {
   ok: boolean;
   latencyMs: number;
   model?: string;
+  sentiment?: NewsNlpComponentProbe;
+  clustering?: NewsNlpComponentProbe;
+  ner?: NewsNlpComponentProbe;
+  lexiconFallback?: {
+    enabled: boolean;
+    model?: string;
+    version?: string;
+  };
+  device?: string;
+  runtime?: string;
   error?: string;
+}
+
+export interface NewsNlpComponentProbe {
+  ok: boolean;
+  model?: string;
+  backend?: string;
+  version?: string;
+  error?: string;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function boolValue(value: unknown, fallback = false): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function componentValue(value: unknown): NewsNlpComponentProbe | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const row = value as Record<string, unknown>;
+  return {
+    ok: boolValue(row.ok),
+    model: stringValue(row.model),
+    backend: stringValue(row.backend),
+    version: stringValue(row.version),
+    error: stringValue(row.error),
+  };
+}
+
+function normalizeNewsNlpHealth(body: Record<string, unknown>, latencyMs: number): NewsNlpProbe {
+  const sentiment = componentValue(body.sentiment);
+  const clustering = componentValue(body.clustering);
+  const ner = componentValue(body.ner);
+  const legacyModel = stringValue(body.model);
+  const model = legacyModel ?? sentiment?.model ?? clustering?.model ?? ner?.model;
+  const lexicon = body.lexiconFallback && typeof body.lexiconFallback === "object"
+    ? body.lexiconFallback as Record<string, unknown>
+    : undefined;
+  return {
+    configured: true,
+    ok: true,
+    latencyMs,
+    model,
+    sentiment,
+    clustering,
+    ner,
+    lexiconFallback: lexicon
+      ? {
+          enabled: boolValue(lexicon.enabled),
+          model: stringValue(lexicon.model),
+          version: stringValue(lexicon.version),
+        }
+      : undefined,
+    device: stringValue(body.device),
+    runtime: stringValue(body.runtime),
+  };
 }
 
 export interface NewsDiagnostics {
@@ -39,8 +106,9 @@ export async function probeNewsNlp(): Promise<NewsNlpProbe> {
     if (!res.ok) {
       return { configured: true, ok: false, latencyMs: Date.now() - started, error: `HTTP ${res.status}` };
     }
-    const body = (await res.json().catch(() => ({}))) as { model?: unknown };
-    return { configured: true, ok: true, latencyMs: Date.now() - started, model: String(body?.model ?? "?") };
+    const latencyMs = Date.now() - started;
+    const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    return normalizeNewsNlpHealth(body, latencyMs);
   } catch (err) {
     return { configured: true, ok: false, latencyMs: Date.now() - started, error: err instanceof Error ? err.message : String(err) };
   } finally {
