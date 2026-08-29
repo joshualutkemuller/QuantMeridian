@@ -4,9 +4,9 @@
  * Tries each configured provider in priority order and returns the first that
  * yields headlines, normalized into the module's `Headline` shape. Every
  * provider is independent and behind its own env key, so the chain degrades
- * gracefully: if Alpha Vantage is missing/rate-limited/errors, it falls through
- * to Marketaux → Finnhub → NewsAPI, and finally (in the route) to the
- * deterministic SIM engine. No provider is required.
+ * visibly: if Alpha Vantage is missing/rate-limited/errors, it falls through to
+ * Marketaux → Finnhub → NewsAPI. The API route returns ERR unless the request
+ * explicitly opts into SIM with `sim=1`.
  *
  * Env keys (set any/all):
  *   ALPHAVANTAGE_API_KEY   — Alpha Vantage NEWS_SENTIMENT (sentiment + tickers)
@@ -20,6 +20,16 @@ import { scoreText } from "@/lib/server/sentimentNlp";
 export interface LiveNews {
   source: string;
   headlines: Headline[];
+  diagnostics: NewsProviderAttempt[];
+}
+
+export interface NewsProviderAttempt {
+  provider: string;
+  configured: boolean;
+  ok: boolean;
+  headlineCount: number;
+  latencyMs: number;
+  error?: string;
 }
 
 const FETCH_TIMEOUT_MS = 6000;
@@ -174,37 +184,45 @@ async function newsapi(n: number): Promise<Headline[] | null> {
   });
 }
 
-const PROVIDERS: { name: string; fn: (n: number) => Promise<Headline[] | null> }[] = [
-  { name: "Finnhub", fn: finnhub },
-  { name: "Alpha Vantage", fn: alphaVantage },
-  { name: "Marketaux", fn: marketaux },
-  { name: "NewsAPI", fn: newsapi },
+const PROVIDERS: { name: string; envKey: string; fn: (n: number) => Promise<Headline[] | null> }[] = [
+  { name: "Alpha Vantage", envKey: "ALPHAVANTAGE_API_KEY", fn: alphaVantage },
+  { name: "Marketaux", envKey: "MARKETAUX_API_KEY", fn: marketaux },
+  { name: "Finnhub", envKey: "FINNHUB_API_KEY", fn: finnhub },
+  { name: "NewsAPI", envKey: "NEWSAPI_API_KEY", fn: newsapi },
 ];
 
-/** Try providers in order; return the first with headlines, or null (→ caller uses SIM). */
+/** Try providers in documented order; return the first with headlines plus an attempt log. */
 export async function fetchLiveNews(n = 60): Promise<LiveNews | null> {
+  const diagnostics: NewsProviderAttempt[] = [];
   for (const p of PROVIDERS) {
+    const configured = Boolean(process.env[p.envKey]);
+    if (!configured) {
+      diagnostics.push({ provider: p.name, configured, ok: false, headlineCount: 0, latencyMs: 0, error: `${p.envKey} not configured` });
+      continue;
+    }
+    const started = Date.now();
     try {
       const headlines = await p.fn(n);
       if (headlines && headlines.length) {
         headlines.sort((a, b) => a.minutesAgo - b.minutesAgo);
+        diagnostics.push({ provider: p.name, configured, ok: true, headlineCount: headlines.length, latencyMs: Date.now() - started });
         console.log(`[NEWS] ${p.name}: ${headlines.length} headlines`);
-        return { source: p.name, headlines };
+        return { source: p.name, headlines, diagnostics };
       }
+      diagnostics.push({ provider: p.name, configured, ok: false, headlineCount: 0, latencyMs: Date.now() - started, error: "provider returned no headlines" });
     } catch (err) {
-      console.warn(`[NEWS] ${p.name} failed:`, err instanceof Error ? err.message : err);
+      const error = err instanceof Error ? err.message : String(err);
+      diagnostics.push({ provider: p.name, configured, ok: false, headlineCount: 0, latencyMs: Date.now() - started, error });
+      console.warn(`[NEWS] ${p.name} failed:`, error);
     }
   }
-  console.warn("[NEWS] all providers failed, falling back to SIM");
-  return null;
+  console.warn("[NEWS] all configured providers failed or no news provider keys are configured");
+  return { source: "ERR", headlines: [], diagnostics };
 }
 
 /** Provider keys configured in this environment (for DATAOPS / diagnostics). */
 export function configuredNewsProviders(): string[] {
-  return PROVIDERS.filter((p) => {
-    const k = { "Alpha Vantage": "ALPHAVANTAGE_API_KEY", Marketaux: "MARKETAUX_API_KEY", Finnhub: "FINNHUB_API_KEY", NewsAPI: "NEWSAPI_API_KEY" }[p.name];
-    return k ? !!process.env[k] : false;
-  }).map((p) => p.name);
+  return PROVIDERS.filter((p) => Boolean(process.env[p.envKey])).map((p) => p.name);
 }
 
 export { getHeadlines };

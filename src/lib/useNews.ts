@@ -11,12 +11,11 @@ interface NewsResponse {
 }
 
 /**
- * Live news headlines with provenance, mirroring useEcon's pattern: render the
- * deterministic SIM set instantly, seed from cache on re-navigation, then
- * upgrade to the provider-chain response from /api/news. `source` is the live
- * provider name (e.g. "Alpha Vantage") or "SIM". `clusters` carries transformer
- * event clusters when the FinBERT stage (NEWS_NLP_URL) is wired (else empty →
- * the page falls back to keyword clustering).
+ * Live news headlines with provenance. Uses cached provider-chain responses on
+ * re-navigation and fetches /api/news; generated headlines are only exposed
+ * when the SIM ribbon is enabled. `source` is the live provider name
+ * (e.g. "Alpha Vantage"), "ERR", or explicit "SIM". `clusters` carries
+ * transformer event clusters when NEWS_NLP_URL is wired.
  */
 export function useNews(n = 60): { headlines: Headline[]; source: string; clusters: EventCluster[] } {
   const { simEnabled } = useSimMode();
