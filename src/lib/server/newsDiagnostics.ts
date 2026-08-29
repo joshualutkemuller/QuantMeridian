@@ -1,6 +1,6 @@
 import { fetchLiveNews, configuredNewsProviders, type NewsProviderAttempt } from "@/lib/server/newsProviders";
 
-interface NewsNlpProbe {
+export interface NewsNlpProbe {
   configured: boolean;
   ok: boolean;
   latencyMs: number;
@@ -27,7 +27,7 @@ export interface NewsDiagnostics {
   error?: string;
 }
 
-async function probeNewsNlp(): Promise<NewsNlpProbe> {
+export async function probeNewsNlp(): Promise<NewsNlpProbe> {
   const url = process.env.NEWS_NLP_URL;
   if (!url) return { configured: false, ok: false, latencyMs: 0, error: "NEWS_NLP_URL not configured" };
 

@@ -3,7 +3,7 @@ import { Rng } from "@/lib/rng";
 /** Data health, lineage and provider-readiness console. */
 
 export type ProviderStatus = "LIVE" | "CACHED" | "SIM" | "STALE" | "ERROR" | "FALLBACK_AVAILABLE";
-export type ProviderName = "FRED" | "YAHOO" | "MACRO_ETL" | "NEWS" | "NEWS_NLP" | "SYNTHETIC" | "LOCAL_BOOK";
+export type ProviderName = "FRED" | "YAHOO" | "MACRO_ETL" | "INTELLIGENCE_FEEDS" | "NEWS" | "SOCIAL" | "NEWS_NLP" | "SYNTHETIC" | "LOCAL_BOOK";
 
 export interface ProviderHealth {
   provider: ProviderName;
@@ -19,7 +19,7 @@ export interface ProviderHealth {
 export interface ProviderRun {
   runId: string;
   provider: ProviderName;
-  pipeline: "econ_api" | "market_data_pipeline" | "macro_data_etl" | "news_feed" | "news_nlp" | "terminal_fixture";
+  pipeline: "econ_api" | "market_data_pipeline" | "macro_data_etl" | "intelligence_feeds" | "news_feed" | "social_feed" | "news_nlp" | "terminal_fixture";
   started: string;
   completed: string;
   durationMs: number;
@@ -122,7 +122,9 @@ export function getProviderHealth(): ProviderHealth[] {
     { provider: "FRED", status: "FALLBACK_AVAILABLE", coveragePct: 88, freshnessMin: 12, seriesCount: 142, failedSeries: 3, lastRun: "2026-06-18 09:10", upgradePath: "Keep as official macro source" },
     { provider: "YAHOO", status: "CACHED", coveragePct: 74, freshnessMin: 64, seriesCount: 96, failedSeries: 8, lastRun: "2026-06-18 08:18", upgradePath: "Replace with Polygon, Tiingo, FactSet or Bloomberg" },
     { provider: "MACRO_ETL", status: "FALLBACK_AVAILABLE", coveragePct: 82, freshnessMin: 180, seriesCount: 44, failedSeries: 2, lastRun: "2026-06-18 06:30", upgradePath: "Add BIS, IMF, CME browser fetch hardening" },
+    { provider: "INTELLIGENCE_FEEDS", status: "SIM", coveragePct: 34, freshnessMin: 10, seriesCount: 7, failedSeries: 0, lastRun: "feed-chain probe pending", upgradePath: "Umbrella status for NEWS, SOCIAL, and NEWS_NLP live feed exceptions" },
     { provider: "NEWS", status: "SIM", coveragePct: 30, freshnessMin: 10, seriesCount: 4, failedSeries: 0, lastRun: "provider-chain probe pending", upgradePath: "Set one of ALPHAVANTAGE_API_KEY, MARKETAUX_API_KEY, FINNHUB_API_KEY, NEWSAPI_API_KEY" },
+    { provider: "SOCIAL", status: "SIM", coveragePct: 25, freshnessMin: 10, seriesCount: 2, failedSeries: 0, lastRun: "provider-chain probe pending", upgradePath: "Set REDDIT_USER_AGENT or STOCKTWITS_ENABLED=1 / STOCKTWITS_ACCESS_TOKEN" },
     { provider: "NEWS_NLP", status: "SIM", coveragePct: 35, freshnessMin: 6, seriesCount: 12, failedSeries: 0, lastRun: "heuristic fallback", upgradePath: "Run the news_nlp FinBERT service and set NEWS_NLP_URL (else news/social providers + in-house lexicon)" },
     { provider: "LOCAL_BOOK", status: "SIM", coveragePct: 61, freshnessMin: 5, seriesCount: 38, failedSeries: 0, lastRun: "2026-06-18 09:17", upgradePath: "Connect custody, loan, margin and treasury books" },
     { provider: "SYNTHETIC", status: "FALLBACK_AVAILABLE", coveragePct: 100, freshnessMin: 0, seriesCount: 220, failedSeries: 0, lastRun: "deterministic", upgradePath: "Retain as explicit fallback provider; never count as live" },
@@ -162,11 +164,20 @@ const PROVIDER_SERIES: Record<ProviderName, { id: string; dataset: string; name:
     { id: "fed_probabilities", dataset: "fedwatch", name: "FOMC Probability Ladder" },
     { id: "fed_probability_vintages", dataset: "fedwatch", name: "FedWatch Vintage Snapshots" },
   ],
+  INTELLIGENCE_FEEDS: [
+    { id: "news_feed", dataset: "intelligence_feeds", name: "NEWS Provider Chain" },
+    { id: "social_feed", dataset: "intelligence_feeds", name: "SOCIAL Provider Chain" },
+    { id: "news_nlp", dataset: "intelligence_feeds", name: "NEWS_NLP Service" },
+  ],
   NEWS: [
     { id: "alpha_vantage_news", dataset: "provider_chain", name: "Alpha Vantage NEWS_SENTIMENT" },
     { id: "marketaux_news", dataset: "provider_chain", name: "Marketaux Financial News" },
     { id: "finnhub_news", dataset: "provider_chain", name: "Finnhub Market News" },
     { id: "newsapi_business", dataset: "provider_chain", name: "NewsAPI Business Headlines" },
+  ],
+  SOCIAL: [
+    { id: "reddit_social", dataset: "social_provider_chain", name: "Reddit Market Subreddits" },
+    { id: "stocktwits_social", dataset: "social_provider_chain", name: "StockTwits Trending Symbols" },
   ],
   LOCAL_BOOK: [
     { id: "collateral_assets", dataset: "desk_books", name: "Collateral Asset Schedule" },
@@ -197,7 +208,9 @@ export function getProviderRuns(): ProviderRun[] {
     { provider: "FRED", pipeline: "econ_api", runs: 5, base: 9100, partialEvery: 4 },
     { provider: "YAHOO", pipeline: "market_data_pipeline", runs: 6, base: 9050, partialEvery: 2 },
     { provider: "MACRO_ETL", pipeline: "macro_data_etl", runs: 5, base: 9000, partialEvery: 3 },
+    { provider: "INTELLIGENCE_FEEDS", pipeline: "intelligence_feeds", runs: 4, base: 8992 },
     { provider: "NEWS", pipeline: "news_feed", runs: 4, base: 8988 },
+    { provider: "SOCIAL", pipeline: "social_feed", runs: 4, base: 8982 },
     { provider: "NEWS_NLP", pipeline: "news_nlp", runs: 4, base: 8975 },
     { provider: "LOCAL_BOOK", pipeline: "terminal_fixture", runs: 4, base: 8950 },
     { provider: "SYNTHETIC", pipeline: "terminal_fixture", runs: 4, base: 8900 },

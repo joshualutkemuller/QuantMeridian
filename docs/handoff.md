@@ -67,7 +67,7 @@ NEWS provider hardening is pushed in `9e32af6`:
   unless `sim=1` explicitly opts into generated demo headlines.
 - `src/lib/useNews.ts` comments describe the SIM-gated behavior.
 
-Current local NEWS work adds DataOps and module-facing smoke diagnostics:
+Current local NEWS work expands DataOps and module-facing diagnostics:
 
 - `src/lib/server/newsDiagnostics.ts` wraps the provider chain plus NEWS_NLP
   health into one diagnostics object.
@@ -79,11 +79,24 @@ Current local NEWS work adds DataOps and module-facing smoke diagnostics:
   table has a stable row before the live probe overlays it.
 - `src/lib/useNews.ts` now preserves `/api/news` provider diagnostics, and
   `src/app/news/page.tsx` renders a compact provider-chain strip above the tape.
+- `src/lib/server/socialProviders.ts` now emits Reddit/StockTwits attempt
+  diagnostics; `src/app/api/social/diagnostics/route.ts` exposes the social
+  smoke check without falling back to generated rows.
+- `src/lib/server/intelligenceFeedManifest.ts` builds a shared
+  NEWS/SOCIAL/NEWS_NLP DataOps manifest, and `src/app/api/dataops/runs/route.ts`
+  appends those DataOps-shaped run/series/lineage rows under
+  `INTELLIGENCE_FEEDS`.
+- `src/app/api/dataops/health/route.ts` reports the umbrella
+  `INTELLIGENCE_FEEDS` status plus separate `NEWS`, `SOCIAL`, and `NEWS_NLP`
+  statuses.
+- `/api/news` now returns `clusterSource` and `nlp` runtime metadata so
+  `src/app/news/page.tsx` can label NEWS-6 as FinBERT clusters, keyword
+  clusters, or no clusters, and show NLP health in the header.
 
 Validation for the NEWS slices:
 
 ```bash
-npm test -- src/lib/server/newsProviders.test.ts src/app/api/news/route.test.ts src/app/api/news/diagnostics/route.test.ts
+npm test -- src/lib/server/newsProviders.test.ts src/app/api/news/route.test.ts src/app/api/news/diagnostics/route.test.ts src/app/api/social/diagnostics/route.test.ts src/app/api/dataops/runs/route.test.ts src/app/api/dataops/health/route.test.ts
 npm run check:gold-policy
 npm run build:client
 npm run build:server
@@ -108,8 +121,9 @@ the Gold calendar or NEWS provider work and should be reviewed separately.
 4. Continue CPI expansion from `docs/specs/spec001/`, keeping Market Terminal
    DB-only: no new external data source should be added here without explicit
    owner approval.
-5. Review and commit the NEWS DataOps diagnostics slice, excluding the unrelated
-   `TESTING_HANDOFF.md` move unless the owner confirms it should be included.
-6. Start the next NEWS integration pass: decide whether news/social feeds should
-   share a common DataOps live-run manifest, then wire those run artifacts into
-   DATAOPS Runs / Series / Lineage instead of fixture rows.
+5. Review and commit the expanded NEWS/SOCIAL/NLP diagnostics slice, excluding
+   the unrelated `TESTING_HANDOFF.md` move unless the owner confirms it should
+   be included.
+6. Next NEWS pass: add a compact diagnostics drawer/modal with the raw
+   provider-attempt payloads, then decide whether `news_nlp` should expose a
+   richer `/health` payload for scoring and clustering model versions separately.
