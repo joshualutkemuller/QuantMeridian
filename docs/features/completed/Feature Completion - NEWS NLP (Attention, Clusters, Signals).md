@@ -2,7 +2,15 @@
 
 Date: 2026-06-22
 Status: Completed — tape-derived attention, clusters, and signals are integrated
-Related: `docs/features/completed/Feature Addition - NEWS Terminal Module (Market News & Signal Intelligence).md`, `news_nlp/README.md`, `docs/PLATFORM_DATA_CONNECTIVITY.md`
+Related: `docs/features/completed/Feature Addition - NEWS Terminal Module (Market News & Signal Intelligence).md`, `news_nlp/README.md`, `docs/data/PLATFORM_DATA_CONNECTIVITY.md`, `docs/specs/spec002_news_live_intelligence/SPEC.md`
+
+> **Update 2026-08-30.** The higher-fidelity `news_nlp` path is now wired:
+> `/api/news` can consume service-backed scoring/clustering, `/api/news/diagnostics`
+> and DATAOPS expose structured `NEWS_NLP` health, and the NEWS diagnostics
+> drawer can inspect raw provider and NLP payloads. Current active work is
+> tracked in `docs/specs/spec002_news_live_intelligence/SPEC.md`; the next NEWS
+> priority is the upstream-pipeline persistence handoff before any historical
+> storage code.
 
 ## Objective
 
@@ -56,15 +64,16 @@ finishes the three remaining simulated views and the partial one.
 - Every new function **falls back to the existing engine** so views never render empty.
 - Provenance unchanged — the header badge already reflects the headline source.
 
-## Higher-fidelity upgrade (noted, not required here)
+## Higher-fidelity upgrade
 
-The `news_nlp` FinBERT stage already produces **embedding-based clusters + NER**. A
-follow-up can have `enrichWithNlp` (or a `/clusters` endpoint) return those so NEWS-6/5
-use transformer clusters/entities instead of keyword grouping — strictly an upgrade
-behind the same shapes.
+The `news_nlp` stage now supports service-backed scoring and clustering behind
+the same terminal shapes, and `/health` reports separate sentiment, clustering,
+NER, lexicon fallback, device, and runtime metadata. NEWS-6 uses transformer
+clusters when `NEWS_NLP_URL` is configured and keyword clustering otherwise.
 
 ## Out of scope
 
-- Executing/verifying the Python FinBERT stage (needs the model stack / a run env).
+- Historical headline/social persistence. That requires the Phase 3 upstream
+  persistence handoff in `docs/specs/spec002_news_live_intelligence/`.
 - X/Twitter social adapter (paid).
 - A real event→asset-move dataset for NEWS-4 magnitudes.

@@ -133,6 +133,7 @@ This roadmap is a product and engineering backlog for the QIT Terminal, with the
 - Add regime-aware playbooks that automatically highlight desk actions under growth, inflation, liquidity, policy, and credit regimes.
 - Add market chart templates and macro chart templates tied to common workflows: curve steepener, inflation impulse, credit stress, dollar funding, risk-on/risk-off.
 - Add correlation and lead/lag studies between macro factors and securities-finance outcomes such as fee revenue, specials, utilization, reinvestment spread, and funding gap.
+- Add the proposed `MVOL` Market Volatility module from `docs/specs/spec003/SPEC.md`: start with the FRED/Gold DB reserve-balances-versus-VIX claim audit, support Research Mode and Tradability Mode, use deterministic `+7` and `+14` calendar-day VIX endpoints, show base-rate lift and binomial confidence intervals, and keep future roadmap items for vintage-aware reserve history, richer uncertainty bands, citation-safe video export, configurable claim-audit presets, and additional volatility experiments.
 
 ### 3.6 AI Copilot and intelligence workflows
 
