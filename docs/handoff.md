@@ -1,13 +1,13 @@
 # Market Terminal Handoff
 
 **Updated:** 2026-08-30
-**Branch:** `news-expansion`
-**Latest pushed branch commit:** `ba8cad7` — `Add structured NEWS_NLP health contract`
+**Branch:** `MVOL-Implementation`
+**Latest pushed branch commit:** `8f121e3` — `Clarify MVOL Gold-only data boundary`
 
 ## Current Focus
 
-The active workstreams are the NEWS persistence handoff, Gold DB conversion, and
-CPI component expansion. Detailed source docs live in:
+The active workstreams are MVOL implementation, Gold DB conversion, NEWS
+persistence, and CPI component expansion. Detailed source docs live in:
 
 - `docs/features/GOLD_DB_MIGRATION_HANDOFF.md`
 - `docs/gold-db/MODULE_DATA_AUDIT.md`
@@ -25,6 +25,20 @@ Tier A production routes for econ, chart, and market data have been hardened to
 read the Gold DB or return explicit `ERR`/empty states. The old silent fallback
 ladder to live FRED, committed snapshots, and deterministic SIM has been removed
 from those production paths.
+
+HOME / Command Center is being converted from the old revenue/book cockpit into
+a Gold/FRED macro cockpit. It should read only `gold_fred_latest_observation`
+and `gold_release_calendar` through `/api/command-center`, with no market API,
+snapshot, news, desk-book, or generated sample-data fallback path. Every
+displayed metric must show its own as-of observation date because daily, weekly,
+monthly, and quarterly FRED series update on different schedules.
+
+For HOME high-level index/price rows, `change` is the actual point/price level
+delta, while `marketReturns["1D"]` is the one-day percent return. The route also
+derives geometrically linked `5D`, `MTD`, `1M`, `3M`, `QTD`, `YTD`, `1Y`, `3Y`,
+and `5Y` returns from the Gold observation levels. `1Y`, `3Y`, and `5Y` are
+annualized with the convention `((end / start) ** (252 / observedTradingDays) -
+1) * 100`.
 
 The policy is enforced by:
 

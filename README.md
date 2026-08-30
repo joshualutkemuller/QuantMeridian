@@ -37,7 +37,7 @@ BlackRock.
 
 | Code | Module | What it does |
 |------|--------|--------------|
-| `HOME` | **Command Center** | Cross-desk KPIs, revenue, heat map, live alert stream, module launchpad |
+| `HOME` | **Command Center** | Gold/FRED macro cockpit for high-level indices, rates, volatility/credit risk, domestic/global economic health, and upcoming releases with explicit per-series as-of dates. Index rows show level, level Δ, 1D/5D/MTD/1M/3M/QTD/YTD linked returns, and annualized 1Y/3Y/5Y returns on a 252-trading-day basis |
 | `MKT`  | **Live Markets** | Multi-asset monitor — equities, ETFs, fixed income, futures, FX, commodities, crypto, vol. Quotes grid, candlesticks + VWAP, order flow, treemap heat map, movers |
 | `SNAP` | **Market Snapshot** | Cross-asset "state of the market" served by the **`market_data_pipeline`** (FRED · Yahoo · pluggable vendors): returns/drawdown table (1D…5Y CAGR, 52w distance), Treasury curve + 2s10s/3m10y, regime scores (risk-on/off · growth · inflation · liquidity), cross-asset dashboard, best/worst YTD |
 | `QUILT` | **Asset Quilt** | Annual cross-asset return "quilt" — every asset class ranked by yearly total return, Bilello-style, with leaders/laggards and dispersion |

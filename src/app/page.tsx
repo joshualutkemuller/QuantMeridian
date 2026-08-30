@@ -1,252 +1,362 @@
-
-import { useMemo, useState } from "react";
 import clsx from "clsx";
-import Link from "@/components/Link";
-import { useNews } from "@/lib/useNews";
-import type { Headline } from "@/data/news";
+import { CalendarClock, Database, Globe2, Landmark, LineChart, ShieldAlert, TrendingUp } from "lucide-react";
 import { PageHeader, KpiStrip } from "@/components/ui/PageHeader";
 import { Panel, Stat, Tag } from "@/components/ui/Panel";
 import { ProvenanceBadge } from "@/components/ui/ProvenanceBadge";
 import { Sparkline } from "@/components/charts/Sparkline";
-import { LineChart } from "@/components/charts/LineChart";
-import { Treemap } from "@/components/charts/Treemap";
 import { DataGrid, type Column } from "@/components/ui/DataGrid";
-import { getSLSummary } from "@/data/securitiesLending";
-import { getPrimeSummary } from "@/data/primeFinance";
-import { getCollateralSummary } from "@/data/collateral";
-import { getCashSummary } from "@/data/cash";
-import { getOptimizationRuns } from "@/data/optimization";
-import { getIndices, getHeatmap, getMovers, INDEX_FRED_IDS, mergeLiveIndices, mergeSnapshotIndices, latestFredAsOf, heatmapFromCards, moversFromCards, HEAT_HORIZONS, horizonDateRange, isAnnualized, type PipelineCard, type HeatHorizon } from "@/data/markets";
-import { TermToggleGroup } from "@/components/ui/TermToggleGroup";
-import { getActiveAlerts, SEVERITY_TONE, CATEGORY_LABEL, type Alert } from "@/data/alerts";
-import { isRealEconSource, useLiveSeriesSet } from "@/lib/useEcon";
-import { useMarketView } from "@/lib/useMarket";
-import { fmtUsdAbbr, fmtSignedPct, fmtNum, pnlClass, fmtAbbr } from "@/lib/format";
-import { NAV } from "@/lib/nav";
-import { StalenessBar } from "@/components/ui/StalenessBar";
-import { worstSource } from "@/lib/provenance";
+import {
+  type CommandCenterCatalyst,
+  type CommandCenterMetric,
+  type CommandCenterReturnHorizon,
+  type CommandCenterTone,
+} from "@/lib/commandCenter";
+import { useCommandCenter } from "@/lib/useCommandCenter";
+import { fmtNum, fmtSigned, fmtSignedPct, pnlClass } from "@/lib/format";
 
-function NewsTicker({ headlines }: { headlines: Headline[] }) {
-  if (!headlines.length) return null;
-  const top = headlines.slice(0, 8);
-  return (
-    <div className="flex items-center gap-4 overflow-x-auto border-b border-term-border bg-term-panel px-3 py-1 scrollbar-hide">
-      <span className="shrink-0 text-3xs font-bold uppercase tracking-widest text-term-amber">NEWS</span>
-      {top.map((h) => (
-        <span key={h.id} className="flex shrink-0 items-center gap-1.5 text-2xs">
-          <span className="text-term-text-mute">{h.time}</span>
-          <span className={clsx("font-semibold", h.sentimentScore > 0.15 ? "text-term-up" : h.sentimentScore < -0.15 ? "text-term-down" : "text-term-text")}>{h.headline}</span>
-          {h.tickers[0] && <span className="text-3xs text-term-blue">{h.tickers[0]}</span>}
+const toneClass: Record<CommandCenterTone, string> = {
+  up: "text-term-up",
+  down: "text-term-down",
+  amber: "text-term-amber",
+  neutral: "text-term-text",
+};
+
+function valueText(metric: CommandCenterMetric): string {
+  if (metric.unit === "%") return `${fmtNum(metric.value, metric.decimals)}%`;
+  if (metric.unit.includes("%")) return `${fmtNum(metric.value, metric.decimals)} ${metric.unit}`;
+  if (metric.unit === "bps") return `${fmtNum(metric.value, metric.decimals)} bp`;
+  if (metric.unit === "$T") return `$${fmtNum(metric.value, metric.decimals)}T`;
+  if (metric.unit === "k") return `${fmtNum(metric.value, metric.decimals)}k`;
+  if (metric.unit === "$/oz" || metric.unit === "$/bbl") return `$${fmtNum(metric.value, metric.decimals)}`;
+  return fmtNum(metric.value, metric.decimals);
+}
+
+function changeText(metric: CommandCenterMetric): string {
+  if (metric.changeMode === "pct") return metric.changePct == null ? "-" : fmtSignedPct(metric.changePct, 2);
+  if (metric.changeMode === "bps") return metric.change == null ? "-" : `${fmtSigned(metric.change, 0)} bp`;
+  if (metric.changeMode === "points") return metric.change == null ? "-" : `${fmtSigned(metric.change, metric.decimals)} pt`;
+  return metric.change == null ? "-" : fmtSigned(metric.change, metric.decimals);
+}
+
+function changeClass(metric: CommandCenterMetric): string {
+  if (metric.changeMode === "pct") return pnlClass(metric.changePct ?? 0);
+  return pnlClass(metric.change ?? 0);
+}
+
+function levelDeltaText(metric: CommandCenterMetric): string {
+  if (metric.change == null) return "-";
+  return fmtSigned(metric.change, metric.unit === "$/bbl" ? 2 : metric.decimals);
+}
+
+function returnText(metric: CommandCenterMetric, horizon: CommandCenterReturnHorizon): string {
+  const ret = metric.marketReturns?.[horizon];
+  return ret?.value == null ? "-" : fmtSignedPct(ret.value, 2);
+}
+
+function returnClass(metric: CommandCenterMetric, horizon: CommandCenterReturnHorizon): string {
+  return pnlClass(metric.marketReturns?.[horizon]?.value ?? 0);
+}
+
+function returnTitle(metric: CommandCenterMetric, horizon: CommandCenterReturnHorizon): string {
+  const ret = metric.marketReturns?.[horizon];
+  if (!ret?.startDate || !ret.endDate) return `${metric.label} ${horizon} return unavailable`;
+  const ann = ret.annualized ? "annualized, 252 trading-day basis" : "cumulative";
+  return `${metric.label} ${horizon} ${ann}: ${ret.startDate} to ${ret.endDate}, ${ret.tradingDays} trading observations`;
+}
+
+function metricColumns(showSection = false): Column<CommandCenterMetric>[] {
+  return [
+    {
+      key: "series",
+      header: "Series",
+      width: "230px",
+      sortVal: (metric) => metric.short,
+      render: (metric) => (
+        <div className="min-w-0">
+          <div className="truncate font-semibold text-term-text" title={metric.label}>{metric.short}</div>
+          <div className="truncate font-mono text-3xs text-term-text-mute">{metric.id}</div>
+        </div>
+      ),
+    },
+    ...(showSection ? [{
+      key: "section",
+      header: "Block",
+      width: "92px",
+      sortVal: (metric: CommandCenterMetric) => metric.section,
+      render: (metric: CommandCenterMetric) => <Tag>{metric.section}</Tag>,
+    } satisfies Column<CommandCenterMetric>] : []),
+    {
+      key: "value",
+      header: "Value",
+      align: "right",
+      width: "110px",
+      sortVal: (metric) => metric.value,
+      render: (metric) => <span className={clsx("font-semibold", toneClass[metric.tone])}>{valueText(metric)}</span>,
+    },
+    {
+      key: "change",
+      header: "Δ",
+      align: "right",
+      width: "90px",
+      sortVal: (metric) => metric.change ?? metric.changePct ?? 0,
+      render: (metric) => <span className={changeClass(metric)}>{changeText(metric)}</span>,
+    },
+    {
+      key: "spark",
+      header: "History",
+      align: "center",
+      width: "90px",
+      render: (metric) => <Sparkline data={metric.history} width={70} height={22} />,
+    },
+    {
+      key: "asOf",
+      header: "As Of",
+      align: "right",
+      width: "112px",
+      sortVal: (metric) => metric.asOf,
+      render: (metric) => (
+        <span className="font-mono text-2xs text-term-text-dim" title={metric.realtimeStart ? `Realtime start ${metric.realtimeStart}` : undefined}>
+          {metric.asOf}
         </span>
+      ),
+    },
+  ];
+}
+
+function MetricTable({ rows, maxHeight = "260px", showSection = false }: { rows: CommandCenterMetric[]; maxHeight?: string; showSection?: boolean }) {
+  return (
+    <DataGrid
+      columns={metricColumns(showSection)}
+      rows={rows}
+      rowKey={(row) => row.id}
+      maxHeight={maxHeight}
+      initialSort={{ key: "asOf", dir: "desc" }}
+      zebra
+    />
+  );
+}
+
+function marketColumns(): Column<CommandCenterMetric>[] {
+  const returnColumn = (horizon: CommandCenterReturnHorizon, header = horizon): Column<CommandCenterMetric> => ({
+    key: horizon,
+    header,
+    align: "right",
+    width: "82px",
+    sortVal: (metric) => metric.marketReturns?.[horizon]?.value ?? -Infinity,
+    render: (metric) => (
+      <span className={returnClass(metric, horizon)} title={returnTitle(metric, horizon)}>
+        {returnText(metric, horizon)}
+      </span>
+    ),
+  });
+
+  return [
+    {
+      key: "series",
+      header: "Series",
+      width: "170px",
+      sortVal: (metric) => metric.short,
+      render: (metric) => (
+        <div className="min-w-0">
+          <div className="truncate font-semibold text-term-text" title={metric.label}>{metric.short}</div>
+          <div className="truncate font-mono text-3xs text-term-text-mute">{metric.id}</div>
+        </div>
+      ),
+    },
+    {
+      key: "level",
+      header: "Level",
+      align: "right",
+      width: "96px",
+      sortVal: (metric) => metric.value,
+      render: (metric) => <span className="font-semibold text-term-text">{valueText(metric)}</span>,
+    },
+    {
+      key: "delta",
+      header: "Δ Level",
+      align: "right",
+      width: "88px",
+      sortVal: (metric) => metric.change ?? 0,
+      render: (metric) => <span className={pnlClass(metric.change ?? 0)}>{levelDeltaText(metric)}</span>,
+    },
+    returnColumn("1D", "1D %"),
+    returnColumn("5D"),
+    returnColumn("MTD"),
+    returnColumn("1M"),
+    returnColumn("3M"),
+    returnColumn("QTD"),
+    returnColumn("YTD"),
+    returnColumn("1Y", "1Y Ann."),
+    returnColumn("3Y", "3Y Ann."),
+    returnColumn("5Y", "5Y Ann."),
+    {
+      key: "asOf",
+      header: "As Of",
+      align: "right",
+      width: "112px",
+      sortVal: (metric) => metric.asOf,
+      render: (metric) => <span className="font-mono text-2xs text-term-text-dim">{metric.asOf}</span>,
+    },
+  ];
+}
+
+function MarketTable({ rows }: { rows: CommandCenterMetric[] }) {
+  return (
+    <DataGrid
+      columns={marketColumns()}
+      rows={rows}
+      rowKey={(row) => row.id}
+      maxHeight="300px"
+      initialSort={{ key: "asOf", dir: "desc" }}
+      zebra
+    />
+  );
+}
+
+function CatalystList({ catalysts }: { catalysts: CommandCenterCatalyst[] }) {
+  if (!catalysts.length) {
+    return <div className="px-3 py-5 text-center text-2xs text-term-text-mute">No Gold release calendar rows available.</div>;
+  }
+  return (
+    <div className="divide-y divide-term-border-soft">
+      {catalysts.map((event) => (
+        <div key={event.id} className="flex items-center justify-between gap-3 px-2.5 py-2 text-2xs">
+          <div className="min-w-0">
+            <div className="truncate font-semibold text-term-text" title={event.name}>{event.name}</div>
+            <div className="flex flex-wrap items-center gap-1.5 pt-0.5 text-3xs text-term-text-mute">
+              <span className="font-mono">{event.date}</span>
+              <span>{event.category}</span>
+              {event.representativeSeriesId && <span className="font-mono">{event.representativeSeriesId}</span>}
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <Tag tone={event.importance === "HIGH" ? "amber" : "neutral"}>{event.importance}</Tag>
+            <span className="tnum w-14 text-right text-term-text-dim">{event.daysOut === 0 ? "Today" : `${event.daysOut}d`}</span>
+          </div>
+        </div>
       ))}
     </div>
   );
 }
 
+function StatusPanel({ source, error, missing, warnings }: { source: string; error?: string; missing: string[]; warnings: string[] }) {
+  const hasDetail = source === "ERR" || !!error || missing.length > 0 || warnings.length > 0;
+  if (!hasDetail) return null;
+  return (
+    <Panel title="Data Coverage" code="GOLD" right={<Tag tone={source === "ERR" ? "down" : "amber"}>{source}</Tag>}>
+      <div className="space-y-2 p-3 text-2xs">
+        {error && <div className="border border-term-down/30 bg-term-down/10 px-2 py-1.5 text-term-down">{error}</div>}
+        {warnings.map((warning) => (
+          <div key={warning} className="border border-term-amber/30 bg-term-amber/10 px-2 py-1.5 text-term-amber">{warning}</div>
+        ))}
+        {missing.length > 0 && (
+          <div>
+            <div className="mb-1 text-3xs font-semibold uppercase tracking-wide text-term-text-mute">Missing Gold Series</div>
+            <div className="flex flex-wrap gap-1">
+              {missing.map((id) => <Tag key={id} tone="neutral">{id}</Tag>)}
+            </div>
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
 export default function CommandCenter() {
-  const { headlines } = useNews(20);
-  const sl = getSLSummary();
-  const pb = getPrimeSummary();
-  const coll = getCollateralSummary();
-  const cash = getCashSummary();
-  const runs = getOptimizationRuns();
-  const simIndices = getIndices();
-  const simHeat = getHeatmap();
-  const simMovers = getMovers();
-  const alerts = getActiveAlerts().slice(0, 7);
-  const [heatHorizon, setHeatHorizon] = useState<HeatHorizon>("1D");
-
-  const { data: indexFred } = useLiveSeriesSet(INDEX_FRED_IDS, "lin", 30);
-  const anyIndexLive = INDEX_FRED_IDS.some((id) => isRealEconSource(indexFred[id]?.source));
-  const fredAsOf = useMemo(() => latestFredAsOf(indexFred), [indexFred]);
-
-  const { data: marketData, source: mktSource } = useMarketView<{ cards: PipelineCard[] }>("market");
-  const pipelineLive = mktSource !== "SNAPSHOT" && mktSource !== "LOADING" && !!marketData?.cards?.length;
-  const hasCards = !!marketData?.cards?.length;
-  const pipelineAsOf = useMemo(() => {
-    if (!marketData?.cards?.length) return null;
-    return marketData.cards.reduce((best: string | null, c) => {
-      const d = (c as any).asof ?? null;
-      return d && (!best || d > best) ? d : best;
-    }, null);
-  }, [marketData]);
-
-  const indices = useMemo(() => {
-    let idx = simIndices;
-    if (hasCards && marketData?.cards) idx = mergeSnapshotIndices(idx, marketData.cards, pipelineAsOf);
-    if (anyIndexLive) idx = mergeLiveIndices(idx, indexFred);
-    return idx;
-  }, [simIndices, indexFred, anyIndexLive, marketData, hasCards, pipelineAsOf]);
-
-  const heat = useMemo(() => hasCards ? heatmapFromCards(marketData!.cards, heatHorizon) : simHeat, [hasCards, marketData, simHeat, heatHorizon]);
-  const heatRange = useMemo(() => horizonDateRange(heatHorizon, pipelineAsOf), [heatHorizon, pipelineAsOf]);
-  const movers = useMemo(() => {
-    if (hasCards) { const m = moversFromCards(marketData!.cards); return { ...simMovers, gainers: m.gainers, losers: m.losers }; }
-    return simMovers;
-  }, [hasCards, marketData, simMovers]);
-
-  const marketAsOf = fredAsOf ?? pipelineAsOf;
-  const sourceTiers: string[] = [];
-  if (anyIndexLive) sourceTiers.push(...INDEX_FRED_IDS.map((id) => indexFred[id]?.source).filter(isRealEconSource));
-  if (hasCards) sourceTiers.push(pipelineLive ? "LIVE" as any : "SNAPSHOT");
-  if (!sourceTiers.length) sourceTiers.push("SIM");
-  const badgeSource = worstSource(sourceTiers);
-
-  const alertCols: Column<Alert>[] = [
-    { key: "sev", header: "", width: "8px", render: (a) => <span className={`inline-block h-2 w-2 rounded-full ${a.severity === "CRITICAL" ? "bg-term-down" : a.severity === "HIGH" ? "bg-term-amber" : "bg-term-blue"}`} /> },
-    { key: "ts", header: "Time", render: (a) => <span className="text-term-text-mute">{a.ts}</span> },
-    { key: "cat", header: "Desk", render: (a) => <Tag tone={SEVERITY_TONE[a.severity]}>{CATEGORY_LABEL[a.category]}</Tag> },
-    { key: "title", header: "Alert", render: (a) => <span className="text-term-text">{a.title}</span> },
-    { key: "metric", header: "Metric", align: "right", render: (a) => <span className="text-term-amber">{a.metric}</span> },
-  ];
+  const { data, source } = useCommandCenter();
+  const topline = data.topline.slice(0, 6);
 
   return (
     <div className="flex min-h-full flex-col">
-      <PageHeader code="HOME" title="Command Center" desc="Cross-desk securities finance intelligence" right={
-        <span className="flex items-center gap-2">
-          {marketAsOf && <span className="text-3xs text-term-text-mute">Data as of {marketAsOf}</span>}
-          <ProvenanceBadge source={badgeSource} />
-        </span>
-      } />
-
-      <StalenessBar asOf={marketAsOf} />
-
-      <NewsTicker headlines={headlines} />
+      <PageHeader
+        code="HOME"
+        title="Command Center"
+        desc="Gold-sourced macro, rates, volatility, and market health"
+        asOf={data.asOf}
+        showStreaming={false}
+        right={
+          <span className="flex items-center gap-2">
+            <Tag tone="blue">FRED/GOLD SQLITE</Tag>
+            <ProvenanceBadge source={source} asOf={data.asOf} />
+          </span>
+        }
+      />
 
       <KpiStrip>
-        <Stat label="SL Revenue (Day)" value={fmtUsdAbbr(sl.dayRevenue)} sub={<span className={pnlClass(sl.dayChgPct)}>{fmtSignedPct(sl.dayChgPct)} vs prior</span>} tone="amber" />
-        <Stat label="Prime Financing Rev" value={fmtUsdAbbr(pb.financingRevenue)} sub={`${pb.clientCount} active clients`} />
-        <Stat label="Gross Exposure" value={fmtUsdAbbr(pb.grossExposure)} sub={`Net ${fmtUsdAbbr(pb.netExposure)}`} />
-        <Stat label="Collateral Savings" value={fmtUsdAbbr(coll.optimizedSavings)} sub="today's optimization" tone="up" />
-        <Stat label="Funding Cost" value={`${cash.blendedRateBps.toFixed(1)}bps`} sub={<span className={pnlClass(-cash.fundingGap)}>{fmtUsdAbbr(cash.fundingGap)} gap</span>} />
-        <Stat label="Excess Collateral" value={fmtUsdAbbr(coll.excessCollateral)} sub={`${coll.deficitCount} deficits`} tone={coll.deficitCount > 0 ? "down" : "up"} />
+        {topline.length ? topline.map((metric) => (
+          <Stat
+            key={metric.id}
+            label={metric.short}
+            value={valueText(metric)}
+            sub={<span>As of {metric.asOf} · <span className={changeClass(metric)}>{changeText(metric)}</span></span>}
+            tone={metric.tone === "neutral" ? undefined : metric.tone}
+          />
+        )) : (
+          <>
+            <Stat label="Gold Status" value={source} sub={data.error ?? "Waiting for /api/command-center"} tone={source === "ERR" ? "down" : "amber"} />
+            <Stat label="Source Boundary" value="FRED Gold" sub="No sample, snapshot, or market API fallback" tone="amber" />
+            <Stat label="As Of" value={data.asOf ?? "-"} sub="Per-row dates shown below" />
+          </>
+        )}
       </KpiStrip>
 
+      <div className="p-2 pb-0">
+        <Panel
+          title="High-Level Indices"
+          code="MKT"
+          subtitle="1Y+ annualized on 252 trading days"
+          right={<LineChart size={14} className="text-term-blue" />}
+        >
+          <MarketTable rows={data.highLevelMarkets} />
+        </Panel>
+      </div>
+
       <div className="grid flex-1 grid-cols-1 gap-2 p-2 xl:grid-cols-3">
-        {/* Left column: module launchpad + revenue */}
-        <div className="flex flex-col gap-2">
-          <Panel title="Desk Revenue — Trailing 60d" code="ALL DESKS">
-            <div className="p-2">
-              <LineChart
-                height={150}
-                yFmt={(n) => fmtAbbr(n)}
-                series={[
-                  { name: "Sec Lending", data: sl.revenueTrend, color: "#FF8C00", area: true },
-                  { name: "Prime", data: pb.revenueTrend, color: "#3B9DFF" },
-                ]}
-              />
-              <div className="mt-1 flex gap-4 px-1 text-2xs">
-                <span className="flex items-center gap-1"><span className="h-1.5 w-3 bg-term-amber" /> Securities Lending</span>
-                <span className="flex items-center gap-1"><span className="h-1.5 w-3 bg-term-blue" /> Prime Finance</span>
-              </div>
-            </div>
-          </Panel>
-
-          <Panel title="Module Launchpad" code="GO">
-            <div className="grid grid-cols-2 gap-px bg-term-border">
-              {NAV.slice(1).map((n) => {
-                const Icon = n.icon;
-                return (
-                  <Link key={n.href} href={n.href} className="flex items-center gap-2 bg-term-panel px-2.5 py-2 hover:bg-term-panel-2">
-                    <Icon size={15} className="text-term-amber" />
-                    <span className="min-w-0">
-                      <span className="block truncate text-2xs font-semibold text-term-text">{n.label}</span>
-                      <span className="block font-mono text-3xs text-term-text-mute">{n.code}</span>
-                    </span>
-                  </Link>
-                );
-              })}
-            </div>
+        <div className="flex min-h-0 flex-col gap-2">
+          <Panel title="Domestic Rates" code="RATES" right={<Landmark size={14} className="text-term-amber" />}>
+            <MetricTable rows={data.domesticRates} />
           </Panel>
         </div>
 
-        {/* Middle column: markets */}
-        <div className="flex flex-col gap-2">
-          <Panel title="Global Markets" code="WEI" right={
-            <span className="flex items-center gap-1.5 text-3xs text-term-text-mute">
-              <span className={`inline-block h-1.5 w-1.5 rounded-full ${badgeSource === "SIM" ? "bg-term-amber" : "bg-term-up"}`} />
-              {badgeSource}{marketAsOf ? ` ${marketAsOf}` : ""}
-            </span>
-          }>
-            <div className="grid grid-cols-2 gap-px bg-term-border">
-              {indices.slice(0, 8).map((q) => (
-                <div key={q.symbol} className="flex items-center justify-between bg-term-panel px-2.5 py-1.5">
-                  <div>
-                    <div className="flex items-center gap-1">
-                      <span className="text-2xs font-semibold text-term-text-dim">{q.symbol}</span>
-                      {q.seriesId && <span className="text-3xs text-term-text-mute font-mono" title={`${q.source ?? "SIM"}${q.asOf ? ` ${q.asOf}` : ""}`}>{q.seriesId}</span>}
-                    </div>
-                    <div className="tnum text-xs text-term-text">{fmtNum(q.last, q.last > 1000 ? 0 : 2)}</div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Sparkline data={q.spark} width={48} height={20} />
-                    <span className={`tnum w-12 text-right text-2xs ${pnlClass(q.chgPct)}`}>{fmtSignedPct(q.chgPct)}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
+        <div className="flex min-h-0 flex-col gap-2">
+          <Panel title="Volatility & Credit Risk" code="VOL" accent right={<ShieldAlert size={14} className="text-term-amber" />}>
+            <MetricTable rows={data.volatility} />
           </Panel>
 
-          <Panel title="Equity Heat Map" code="HEAT" toolbar={
-            <div className="flex w-full items-center justify-between gap-2">
-              <TermToggleGroup value={heatHorizon} onChange={setHeatHorizon} options={HEAT_HORIZONS} size="sm" />
-              <span className="text-3xs text-term-text-mute">
-                {heatRange && <span className="font-mono">{heatRange}</span>}
-                {isAnnualized(heatHorizon) && <span className="ml-1 text-term-amber">ANNUALIZED</span>}
-              </span>
-            </div>
-          } right={
-            <span className="flex items-center gap-1.5 text-3xs text-term-text-mute">
-              <span className={`inline-block h-1.5 w-1.5 rounded-full ${hasCards ? "bg-term-up" : "bg-term-amber"}`} />
-              {pipelineLive ? "PIPELINE" : hasCards ? "SNAPSHOT" : "SIM"}
-            </span>
-          }>
-            <div className="p-1">
-              <Treemap cells={heat.map((h) => ({ label: h.ticker, weight: h.weight, value: h.chgPct, group: h.sector }))} height={200} maxAbs={isAnnualized(heatHorizon) ? 30 : heatHorizon === "YTD" || heatHorizon === "1Y" ? 20 : 4} />
-            </div>
+          <Panel title="Domestic Economic Health" code="US" right={<TrendingUp size={14} className="text-term-up" />}>
+            <MetricTable rows={data.domesticHealth} />
           </Panel>
         </div>
 
-        {/* Right column: alerts + movers */}
-        <div className="flex flex-col gap-2">
-          <Panel title="Live Alert Stream" code="ALRT" accent right={<Tag tone="down">{getActiveAlerts().filter((a) => a.severity === "CRITICAL").length} CRIT</Tag>}>
-            <DataGrid columns={alertCols} rows={alerts} rowKey={(a) => a.id} maxHeight="220px" />
+        <div className="flex min-h-0 flex-col gap-2">
+          <Panel title="Global Economic Health" code="GLBL" right={<Globe2 size={14} className="text-term-blue" />}>
+            <MetricTable rows={data.globalHealth} />
           </Panel>
 
-          <div className="grid grid-cols-2 gap-2">
-            <Panel title="Top Gainers" code="MOV+" right={<span className={`text-3xs ${hasCards ? "text-term-up" : "text-term-text-mute"}`}>{pipelineLive ? "LIVE" : hasCards ? "SNAPSHOT" : "SIM"}</span>}>
-              <div className="divide-y divide-term-border-soft">
-                {movers.gainers.slice(0, 6).map((m) => (
-                  <div key={m.ticker} className="flex items-center justify-between px-2 py-1 text-2xs">
-                    <span className="font-semibold text-term-text">{m.ticker}</span>
-                    <span className="tnum text-term-up">{fmtSignedPct(m.chgPct)}</span>
-                  </div>
-                ))}
-              </div>
-            </Panel>
-            <Panel title="Top Losers" code="MOV-" right={<span className={`text-3xs ${hasCards ? "text-term-up" : "text-term-text-mute"}`}>{pipelineLive ? "LIVE" : hasCards ? "SNAPSHOT" : "SIM"}</span>}>
-              <div className="divide-y divide-term-border-soft">
-                {movers.losers.slice(0, 6).map((m) => (
-                  <div key={m.ticker} className="flex items-center justify-between px-2 py-1 text-2xs">
-                    <span className="font-semibold text-term-text">{m.ticker}</span>
-                    <span className="tnum text-term-down">{fmtSignedPct(m.chgPct)}</span>
-                  </div>
-                ))}
-              </div>
-            </Panel>
-          </div>
+          <Panel title="Upcoming Macro Catalysts" code="CAL" right={<CalendarClock size={14} className="text-term-amber" />}>
+            <CatalystList catalysts={data.catalysts} />
+          </Panel>
 
-          <Panel title="Latest Optimization Runs" code="OPT">
-            <div className="divide-y divide-term-border-soft">
-              {runs.slice(0, 4).map((r) => (
-                <div key={r.id} className="flex items-center justify-between px-2 py-1.5 text-2xs">
-                  <div className="flex items-center gap-2">
-                    <Tag tone={r.status === "OPTIMAL" ? "up" : r.status === "INFEASIBLE" ? "down" : "amber"}>{r.status}</Tag>
-                    <span className="text-term-text-dim">{r.type}</span>
-                  </div>
-                  <span className="tnum text-term-up">{fmtUsdAbbr(r.savings)}</span>
-                </div>
-              ))}
+          <StatusPanel source={source} error={data.error} missing={data.missingSeries} warnings={data.warnings} />
+
+          <Panel title="Gold Boundary" code="LINEAGE" right={<Database size={14} className="text-term-up" />}>
+            <div className="grid grid-cols-2 gap-px bg-term-border text-2xs">
+              <div className="bg-term-panel px-2.5 py-2">
+                <div className="term-label">Observations</div>
+                <div className="font-mono text-term-text">gold_fred_latest_observation</div>
+              </div>
+              <div className="bg-term-panel px-2.5 py-2">
+                <div className="term-label">Catalysts</div>
+                <div className="font-mono text-term-text">gold_release_calendar</div>
+              </div>
+              <div className="bg-term-panel px-2.5 py-2">
+                <div className="term-label">Generated At</div>
+                <div className="font-mono text-term-text">{data.generatedAt ? data.generatedAt.slice(0, 19).replace("T", " ") : "-"}</div>
+              </div>
+              <div className="bg-term-panel px-2.5 py-2">
+                <div className="term-label">Fallbacks</div>
+                <div className="font-mono text-term-text">disabled</div>
+              </div>
             </div>
           </Panel>
         </div>

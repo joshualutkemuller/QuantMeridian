@@ -1,62 +1,70 @@
-
 import { useMemo } from "react";
-import { getIndices, mergeLiveIndices, mergeSnapshotIndices, latestFredAsOf, INDEX_FRED_IDS, type PipelineCard } from "@/data/markets";
-import { useLiveSeriesSet } from "@/lib/useEcon";
-import { useMarketView } from "@/lib/useMarket";
-import { fmtNum, fmtSignedPct } from "@/lib/format";
+import type { CommandCenterMetric } from "@/lib/commandCenter";
+import { useCommandCenter } from "@/lib/useCommandCenter";
+import { fmtNum, fmtSigned, fmtSignedPct } from "@/lib/format";
 
-/** Scrolling top marquee of headline indices/rates with live/snapshot data. */
+function valueText(metric: CommandCenterMetric): string {
+  if (metric.unit === "%") return `${fmtNum(metric.value, metric.decimals)}%`;
+  if (metric.unit.includes("%")) return `${fmtNum(metric.value, metric.decimals)} ${metric.unit}`;
+  if (metric.unit === "bps") return `${fmtNum(metric.value, metric.decimals)}bp`;
+  if (metric.unit === "$T") return `$${fmtNum(metric.value, metric.decimals)}T`;
+  if (metric.unit === "k") return `${fmtNum(metric.value, metric.decimals)}k`;
+  if (metric.unit === "$/oz" || metric.unit === "$/bbl") return `$${fmtNum(metric.value, metric.decimals)}`;
+  return fmtNum(metric.value, metric.decimals);
+}
+
+function changeText(metric: CommandCenterMetric): string {
+  if (metric.changeMode === "pct") return metric.changePct == null ? "-" : fmtSignedPct(metric.changePct, 2);
+  if (metric.changeMode === "bps") return metric.change == null ? "-" : `${fmtSigned(metric.change, 0)}bp`;
+  if (metric.changeMode === "points") return metric.change == null ? "-" : `${fmtSigned(metric.change, metric.decimals)}pt`;
+  return metric.change == null ? "-" : fmtSigned(metric.change, metric.decimals);
+}
+
+/** Scrolling top macro tape. Gold/FRED DB only; no market API, snapshot, or SIM fallback. */
 export function Ticker() {
-  const sim = getIndices();
+  const { data, source } = useCommandCenter();
+  const metrics = useMemo(() => {
+    const wanted = ["SP500", "NASDAQCOM", "DJIA", "VIXCLS", "DGS10", "T10Y2Y", "SOFR", "PCEPILFE", "UNRATE"];
+    const byId = new Map([
+      ...data.highLevelMarkets,
+      ...data.volatility,
+      ...data.domesticRates,
+      ...data.domesticHealth,
+    ].map((metric) => [metric.id, metric]));
+    return wanted.map((id) => byId.get(id)).filter((metric): metric is CommandCenterMetric => metric != null);
+  }, [data.domesticHealth, data.domesticRates, data.highLevelMarkets, data.volatility]);
 
-  const { data: indexFred } = useLiveSeriesSet(INDEX_FRED_IDS, "lin", 30);
-  const fredAsOf = useMemo(() => latestFredAsOf(indexFred), [indexFred]);
-  const anyFredLive = INDEX_FRED_IDS.some((id) => indexFred[id]?.source === "FRED");
+  if (!metrics.length) {
+    return (
+      <div className="relative h-6 overflow-hidden border-b border-term-border bg-term-panel">
+        <div className="flex h-full items-center px-3 text-2xs">
+          <span className="font-semibold text-term-amber">GOLD MACRO TAPE</span>
+          <span className="ml-3 text-term-text-mute">{source === "LOADING" ? "Loading FRED/Eco Gold DB metrics" : data.error ?? "No Gold DB metrics available"}</span>
+        </div>
+      </div>
+    );
+  }
 
-  const { data: marketData, source: mktSource } = useMarketView<{ cards: PipelineCard[] }>("market");
-  const pipelineLive = mktSource !== "SNAPSHOT" && mktSource !== "LOADING" && !!marketData?.cards?.length;
-  const hasCards = !!marketData?.cards?.length;
-  const pipelineAsOf = useMemo(() => {
-    if (!marketData?.cards?.length) return null;
-    return marketData.cards.reduce((best: string | null, c) => {
-      const d = (c as any).asof ?? null;
-      return d && (!best || d > best) ? d : best;
-    }, null);
-  }, [marketData]);
-
-  const merged = useMemo(() => {
-    let idx = sim;
-    if (hasCards && marketData?.cards) {
-      idx = mergeSnapshotIndices(idx, marketData.cards, pipelineAsOf);
-    }
-    if (anyFredLive) {
-      idx = mergeLiveIndices(idx, indexFred);
-    }
-    return idx;
-  }, [sim, indexFred, anyFredLive, marketData, hasCards, pipelineAsOf]);
-
-  const displayAsOf = fredAsOf ?? pipelineAsOf;
-  const sourceLabel = anyFredLive ? "FRED" : hasCards ? "SNAPSHOT" : "SIM";
-
-  const items = [...merged, ...merged];
+  const items = [...metrics, ...metrics];
   return (
     <div className="relative h-6 overflow-hidden border-b border-term-border bg-term-panel">
       <div className="ticker-track flex h-full items-center whitespace-nowrap">
-        {items.map((q, i) => {
-          const up = q.chgPct >= 0;
+        {items.map((metric, index) => {
+          const up = (metric.changeMode === "pct" ? metric.changePct : metric.change) ?? 0;
           return (
-            <span key={i} className="tnum mx-3 inline-flex items-center gap-1.5 text-2xs">
-              <span className="font-semibold text-term-text-dim">{q.symbol}</span>
-              <span className="text-term-text">{fmtNum(q.last, q.last > 1000 ? 1 : 2)}</span>
-              <span className={up ? "text-term-up" : "text-term-down"}>
-                {up ? "▲" : "▼"} {fmtSignedPct(q.chgPct)}
+            <span key={`${metric.id}-${index}`} className="tnum mx-3 inline-flex items-center gap-1.5 text-2xs" title={`${metric.label} · ${metric.id} · as of ${metric.asOf}`}>
+              <span className="font-semibold text-term-text-dim">{metric.short}</span>
+              <span className="text-term-text">{valueText(metric)}</span>
+              <span className={up >= 0 ? "text-term-up" : "text-term-down"}>
+                {up >= 0 ? "▲" : "▼"} {changeText(metric)}
               </span>
+              <span className="font-mono text-3xs text-term-text-mute">as of {metric.asOf}</span>
             </span>
           );
         })}
         <span className="mx-4 inline-flex items-center gap-1.5 text-3xs text-term-text-mute">
-          <span className={`inline-block h-1.5 w-1.5 rounded-full ${sourceLabel === "SIM" ? "bg-term-amber" : "bg-term-up"}`} />
-          {sourceLabel}{displayAsOf ? ` as of ${displayAsOf}` : ""}
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-term-up" />
+          {source}{data.asOf ? ` latest ${data.asOf}` : ""}
         </span>
       </div>
       <style>{`

@@ -31,7 +31,7 @@ Yahoo/FRED/vendor keys
   -> raw/silver/gold DuckDB + parquet + analytics_api_views + manifest
   -> one of MARKET_DB_URL, MARKET_DATA_DIR, MARKET_PIPELINE_URL
   -> /api/market/[view]
-  -> MKT/SNAP/IRET/QUILT/MKC/LENS/HOME/DESK market surfaces
+  -> MKT/SNAP/IRET/QUILT/MKC/LENS/DESK market surfaces
   -> fallback: committed src/data/market/*.json snapshots
 
 World Bank/BIS/IMF/CME/FRED-style sources
