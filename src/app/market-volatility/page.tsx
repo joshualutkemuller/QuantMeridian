@@ -82,13 +82,13 @@ function linePath(points: { x: number; y: number }[]): string {
   return points.map((point, index) => `${index ? "L" : "M"}${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
 }
 
-function sampleRows(rows: ReserveVixExperimentRow[], max = 260): ReserveVixExperimentRow[] {
+function thinRowsForChart(rows: ReserveVixExperimentRow[], max = 260): ReserveVixExperimentRow[] {
   if (rows.length <= max) return rows;
   const step = Math.ceil(rows.length / max);
   return rows.filter((_, index) => index % step === 0 || index === rows.length - 1);
 }
 
-function samplePoints(rows: MarketVolSeriesPoint[], max = 420): MarketVolSeriesPoint[] {
+function thinPointsForChart(rows: MarketVolSeriesPoint[], max = 420): MarketVolSeriesPoint[] {
   if (rows.length <= max) return rows;
   const step = Math.ceil(rows.length / max);
   return rows.filter((_, index) => index % step === 0 || index === rows.length - 1);
@@ -102,7 +102,7 @@ function dateMs(date: string): number {
 function ReserveMeanChart({ rows, loading }: { rows: ReserveVixExperimentRow[]; loading: boolean }) {
   if (rows.length < 2) return <EmptyChart label={loading ? "Loading reserve history" : "Reserve history unavailable"} />;
 
-  const data = sampleRows(rows);
+  const data = thinRowsForChart(rows);
   const W = 760;
   const H = 260;
   const padL = 54;
@@ -159,8 +159,8 @@ function ReserveMeanChart({ rows, loading }: { rows: ReserveVixExperimentRow[]; 
 function VixLevelChart({ points, rows, loading }: { points: MarketVolSeriesPoint[]; rows: ReserveVixExperimentRow[]; loading: boolean }) {
   if (points.length < 2) return <EmptyChart label={loading ? "Loading VIXCLS level history" : "VIXCLS level history unavailable"} />;
 
-  const data = samplePoints(points);
-  const signals = sampleRows(rows.filter((row) => row.signalEligible), 150);
+  const data = thinPointsForChart(points);
+  const signals = thinRowsForChart(rows.filter((row) => row.signalEligible), 150);
   const W = 760;
   const H = 260;
   const padL = 42;
@@ -224,7 +224,7 @@ function VixLevelChart({ points, rows, loading }: { points: MarketVolSeriesPoint
 function OutcomeChart({ rows, loading }: { rows: ReserveVixExperimentRow[]; loading: boolean }) {
   if (!rows.length) return <EmptyChart label={loading ? "Loading signal outcomes" : "Signal outcomes unavailable"} />;
 
-  const data = sampleRows(rows, 220);
+  const data = thinRowsForChart(rows, 220);
   const W = 760;
   const H = 240;
   const padL = 44;
@@ -504,7 +504,7 @@ const regimeCols: Column<VixRegimeStats>[] = [
               <EvidenceLine label="Base fall rate" value={nullablePct(data.readout.evidence.baseRatePct, 1)} />
               <EvidenceLine label="Signal fall rate" value={nullablePct(data.readout.evidence.signalRatePct, 1)} />
               <EvidenceLine label="Lift vs base" value={nullableSignedPct(data.readout.evidence.liftPctPoints, 1)} />
-              <EvidenceLine label="Signal sample" value={fmtNum(data.readout.evidence.signalN, 0)} />
+              <EvidenceLine label="Signal n" value={fmtNum(data.readout.evidence.signalN, 0)} />
               <EvidenceLine label="Mean VIX change" value={nullableNum(data.readout.evidence.meanVixPointChange, 2)} />
               <EvidenceLine label="Signal SPX rise rate" value={nullablePct(data.readout.evidence.spxRiseRatePct, 1)} />
               <EvidenceLine label="Mean SPX return" value={nullableSignedPct(data.readout.evidence.meanSpxPctChange, 2)} />

@@ -375,7 +375,7 @@ without it (returns the warm summary on success).
 
 ### Data provenance — what's live vs. simulated (post-Gold DB migration)
 
-**Post-2026-07-17 architecture:** All **economic/macro modules** (`ECON`, `CURV`, `INFL`, `GCPI`, `GPOL`, `CRDT`, `FOMC`, `CAL`, `STAT`, `REGIME`, `EML`, `SFE`, `FUND`, `BMRK`, `BRA`, `UTIL`, `YCURV`, `RVOL`, `FCOST`, `MGC`, `EDA`, `MOTN`) read **exclusively from the Gold DB** (`MACRO_DB_URL`). The Market Volatility module (`MVOL`) also reads its FRED-published reserve/VIX/SPX inputs exclusively from Gold DB. When Gold DB is configured, these modules show a green **LIVE · DB** badge; when not configured, they fall back to the committed snapshot (amber **SNAPSHOT** badge) or error state. There is **no fallback chain** anymore — the old FRED → SNAPSHOT → SIM fallback is retired.
+**Post-2026-07-17 architecture:** All **economic/macro modules** (`ECON`, `CURV`, `INFL`, `GCPI`, `GPOL`, `CRDT`, `FOMC`, `CAL`, `STAT`, `REGIME`, `EML`, `SFE`, `FUND`, `BMRK`, `BRA`, `UTIL`, `YCURV`, `RVOL`, `FCOST`, `MGC`, `EDA`, `MOTN`) read **exclusively from the Gold DB** (`MACRO_DB_URL`). The Market Volatility module (`MVOL`) also reads its FRED-published reserve/VIX/SPX inputs exclusively from Gold DB and returns explicit `ERR`/`UNAVAILABLE` states when those approved inputs are missing. MVOL does not use committed snapshots, SIM data, or any separate market-data provider. There is **no fallback chain** anymore — the old FRED → SNAPSHOT → SIM fallback is retired.
 
 The table below shows the **real-world data source** each module ultimately draws from (FRED, World Bank, BIS, CME, Yahoo, etc.), not the technical path to get it. The technical path is now **always** Gold DB for economic modules:
 

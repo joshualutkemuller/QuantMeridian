@@ -114,7 +114,7 @@ requested 2009 through mid-August 2026 reconstruction:
 - `WRESBAL`: 1984-01-04 through 2026-08-19.
 - `VIXCLS`: 1990-01-02 through 2026-08-20.
 - `SP500`: S&P 500 level history through FRED/Gold for risk-on/risk-off
-  context. If unavailable in a local Gold DB snapshot, MVOL should keep the VIX
+  context. If unavailable in a local Gold DB instance, MVOL should keep the VIX
   experiment running and mark SPX outcome fields unavailable rather than adding
   a separate data source.
 
@@ -409,7 +409,7 @@ Version one is complete when:
 
 ### Test Plan
 
-Add synthetic unit tests for the pure helper before wiring the route:
+Add fixture-based unit tests for the pure helper before wiring the route:
 
 - trailing 12-week mean excludes the current reserve row.
 - above-mean mode includes all eligible above-mean weeks.
@@ -538,7 +538,7 @@ These are likely follow-up candidates after the first implementation:
 1. Complete: pure calculation helper for weekly alignment, 12-week mean signal,
    forward VIX windows, base rates, conditional rates, lift, Wilson confidence
    intervals, and correlation in `src/lib/marketVolatility.ts`.
-2. Complete: synthetic tests for helper semantics in
+2. Complete: fixture-based tests for helper semantics in
    `src/lib/marketVolatility.test.ts`.
 3. Complete: Gold DB-only route at `/api/market-volatility/reserve-vix` in
    `src/app/api/market-volatility/reserve-vix/route.ts`.

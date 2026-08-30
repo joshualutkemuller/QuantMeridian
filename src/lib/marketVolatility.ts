@@ -390,7 +390,7 @@ export function buildReserveVixReadout(stats: MarketVolStats): MarketVolReadout 
   }
 
   if (signalN < 30) {
-    notes.push("Signal sample is below 30 observations; treat the readout as exploratory.");
+    notes.push("Signal n is below 30 observations; treat the readout as exploratory.");
     return {
       verdict: "Insufficient Sample",
       bias: "neutral",

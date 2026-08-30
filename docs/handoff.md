@@ -142,8 +142,8 @@ context.
 
 The spec now includes the version-one Gold DB data contract, calculation helper
 semantics, `/api/market-volatility/reserve-vix` route contract, acceptance
-criteria, and synthetic/route test plan. The implementation handoff lives in
-`docs/specs/spec003/HANDOFF.md`. The pure helper, synthetic tests, Gold DB-only
+criteria, and fixture-based route/helper test plan. The implementation handoff lives in
+`docs/specs/spec003/HANDOFF.md`. The pure helper, fixture-based tests, Gold DB-only
 route, route tests, client hook, and first static module UI are implemented on
 `MVOL-Implementation`. `MVOL` is enabled in module config, registered in the
 Markets navigation, and routed at `/market-volatility`. The static UI now plots

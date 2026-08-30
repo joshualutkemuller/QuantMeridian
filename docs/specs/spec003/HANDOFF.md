@@ -20,7 +20,7 @@ module, starting with a reserve-balances-versus-VIX claim audit.
 - Use `src/lib/server/goldStore.ts` for DB access.
 - Return explicit `ERR` for real failures and `UNAVAILABLE` when approved
   release timing is not yet available.
-- Do not silently fall back to SIM data.
+- Do not silently fall back to SIM data or committed snapshots.
 - Include source citations in any UI/API/export-facing payload.
 
 ## Approved Input Series
@@ -43,7 +43,7 @@ Build the calculation and route layer before UI:
 
 1. Pure reserve/VIX calculation helper. Complete in
    `src/lib/marketVolatility.ts`.
-2. Synthetic unit tests for all alignment and event-counting semantics.
+2. Fixture-based unit tests for all alignment and event-counting semantics.
    Complete in `src/lib/marketVolatility.test.ts`.
 3. Gold DB route at `/api/market-volatility/reserve-vix`. Complete in
    `src/app/api/market-volatility/reserve-vix/route.ts`.
@@ -216,7 +216,7 @@ Unit tests:
 
 Route tests:
 
-- `MACRO_DB_URL` unavailable returns `ERR`, no SIM fallback
+- `MACRO_DB_URL` unavailable returns `ERR`, no SIM or snapshot fallback
 - missing `WRESBAL` returns explicit error
 - missing `VIXCLS` returns explicit error
 - successful Gold rows return citations, stats, diagnostics, and row data
