@@ -2,8 +2,9 @@
 
 ## Status
 
-Draft implementation spec. High-level product direction is set; version-one
-data, alignment, and calculation semantics are being hardened before code.
+Implementation started. Version-one data, alignment, calculation semantics,
+Gold DB route, tests, and the first static module UI are implemented. Animated
+playback and release-timing work remain future slices.
 
 Implementation handoff: `docs/specs/spec003/HANDOFF.md`.
 
@@ -383,13 +384,17 @@ before seeing any trade framing.
 
 ## User Controls
 
-Initial controls can be simple:
+Initial implemented controls:
 
 - Signal mode: above 12-week mean, cross above 12-week mean.
-- Forward window: 1 week, 6-11 days, 2 weeks.
+- Alignment mode: Research Mode, Tradability Mode.
+- Forward window: +7 calendar days, +14 calendar days.
 - Date range: default 2009 through latest available.
-- Event handling: all weeks vs first cross only.
-- Show confidence band: on/off.
+- Claim threshold: default 71%.
+
+Deferred controls:
+
+- Confidence band visibility toggle.
 - Playback speed.
 
 ## Non-Goals
@@ -404,10 +409,6 @@ Initial controls can be simple:
 
 ## Open Questions
 
-- Should the module code be `MVOL`, `VOL`, or another mnemonic?
-- Should `MVOL` live under Markets, Intelligence, or Economics?
-- Should the first version be a standalone route or a Market Lens preset promoted
-  into its own module later?
 - Should the video-style visualization be rendered as a live animated UI only,
   or should the module also export a shareable `.mp4`/`.webm`?
 - Should FRED/Gold provide the weekly alignment directly, or should alignment be
@@ -419,6 +420,8 @@ These decisions are approved for the first implementation:
 
 - Primary default view: use Research Mode for the headline reconstruction, with
   Tradability Mode available as a toggle.
+- Module placement: `MVOL` lives as a standalone Markets module at
+  `/market-volatility`.
 - Forward endpoints: use deterministic `anchor + 7 calendar days` and
   `anchor + 14 calendar days` endpoint rules in both Research Mode and
   Tradability Mode.
@@ -452,14 +455,23 @@ These are likely follow-up candidates after the first implementation:
 - Add additional volatility claim audits after the reserve/VIX experiment is
   validated.
 
-## First Implementation Slice
+## Implementation Progress
 
-1. Write a pure calculation helper for weekly alignment, 12-week mean signal,
-   forward VIX windows, base rates, conditional rates, lift, and correlation.
-2. Add tests using small synthetic series to lock the event-window semantics.
-3. Create a route/API that reads only the approved FRED/Gold pipeline data.
-4. Build the first `MVOL` UI with static charts and metric cards.
-5. Add animated playback once the math and data provenance are stable.
+1. Complete: pure calculation helper for weekly alignment, 12-week mean signal,
+   forward VIX windows, base rates, conditional rates, lift, Wilson confidence
+   intervals, and correlation in `src/lib/marketVolatility.ts`.
+2. Complete: synthetic tests for helper semantics in
+   `src/lib/marketVolatility.test.ts`.
+3. Complete: Gold DB-only route at `/api/market-volatility/reserve-vix` in
+   `src/app/api/market-volatility/reserve-vix/route.ts`.
+4. Complete: route tests for Gold-only behavior, missing data, citations, and
+   Tradability Mode unavailable state in
+   `src/app/api/market-volatility/reserve-vix/route.test.ts`.
+5. Complete: first `MVOL` UI with static charts, metric cards, diagnostics, and
+   source citations in `src/app/market-volatility/page.tsx`, with
+   `src/lib/useMarketVolatility.ts` as the client fetch hook.
+6. Later: add animated playback once the static UI and data provenance are
+   stable.
 
 ## Validation
 

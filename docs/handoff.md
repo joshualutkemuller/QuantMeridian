@@ -140,11 +140,12 @@ using only existing FRED/Gold DB data paths: FRED `WRESBAL` for reserve balances
 and FRED `VIXCLS` for VIX closes.
 
 The spec now includes the version-one Gold DB data contract, calculation helper
-semantics, proposed `/api/market-volatility/reserve-vix` route contract,
-acceptance criteria, and synthetic/route test plan. The implementation handoff
-lives in `docs/specs/spec003/HANDOFF.md`. The next `MVOL` build step is
-implementation of the pure calculation helper and its synthetic tests before any
-UI work.
+semantics, `/api/market-volatility/reserve-vix` route contract, acceptance
+criteria, and synthetic/route test plan. The implementation handoff lives in
+`docs/specs/spec003/HANDOFF.md`. The pure helper, synthetic tests, Gold DB-only
+route, route tests, client hook, and first static module UI are implemented on
+`MVOL-Implementation`. `MVOL` is enabled in module config, registered in the
+Markets navigation, and routed at `/market-volatility`.
 
 Locked version-one decisions:
 
@@ -180,5 +181,6 @@ validated.
 5. Continue CPI expansion from `docs/specs/spec001/`, keeping Market Terminal
    DB-only: no new external data source should be added here without explicit
    owner approval.
-6. For `MVOL`, implement the pure calculation helper and synthetic tests from
-   `docs/specs/spec003/SPEC.md` before building UI or export surfaces.
+6. For `MVOL`, review the first static Market Volatility module surface, then
+   add animated playback/export surfaces only after chart labels, citations, and
+   current revised Gold history labeling are accepted.

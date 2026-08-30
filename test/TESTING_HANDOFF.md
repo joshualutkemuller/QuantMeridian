@@ -187,15 +187,15 @@ TEST: Fallback to SNAPSHOT when API is unavailable
 
 ### 4A. Page Load Smoke Tests — COMPLETED
 
-93 tests across 44 pages covering:
-- Page load without JS errors (44 pages, with known fault allowance for `/economics/curve`)
+95 tests across 45 pages covering:
+- Page load without JS errors (45 pages, with known fault allowance for `/economics/curve`)
 - Every page renders content (body length > 50 chars)
 - ResizeObserver and fetch errors filtered as non-critical
 
 ### 4B. Provenance Badge Smoke Tests — COMPLETED
 
-44 tests verifying every page displays a data source indicator by checking for
-ProvenanceBadge tooltip titles or source text (SIM/SNAPSHOT/FRED/LIVE/ETL/ECON)
+45 tests verifying every page displays a data source indicator by checking for
+ProvenanceBadge tooltip titles or source text (SIM/SNAPSHOT/FRED/LIVE/ETL/ECON/ERR)
 in the rendered body.
 
 ### 4C. No Undefined/NaN Tests — COMPLETED

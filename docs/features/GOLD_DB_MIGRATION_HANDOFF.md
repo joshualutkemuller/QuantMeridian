@@ -234,12 +234,12 @@ client TS off `src/data/*.ts`; point them at these instead.)
 
 ---
 
-## 7. Module tiering (all 45)
+## 7. Module tiering (all 46)
 
 ### Tier A — series-backed, full DB cutover (remove FRED/Yahoo/SNAP/SIM)
 
 `ECON, CAL, STAT, EDA, CURV, YCURV, RVOL, BMRK, BRA, FUND, CRDT, INFL, GCPI,
-GPOL, REGIME, EML, MKT, SNAP, QUILT, IRET, LENS, MKC, MGC, MOTN`
+GPOL, REGIME, EML, MKT, SNAP, QUILT, IRET, LENS, MKC, MVOL, MGC, MOTN`
 
 These read Gold **only**. Client hooks (`useEcon`, `useMarket`) drop the
 "render SIM, then upgrade" pattern — they render DB or an empty/error state.

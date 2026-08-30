@@ -4,7 +4,7 @@
 
 Updated: 2026-08-30
 
-Branch: `news-expansion`
+Branch: `MVOL-Implementation`
 
 Spec: `docs/specs/spec003/SPEC.md`
 
@@ -40,25 +40,34 @@ Approved Gold table for version one:
 
 Build the calculation and route layer before UI:
 
-1. Pure reserve/VIX calculation helper.
+1. Pure reserve/VIX calculation helper. Complete in
+   `src/lib/marketVolatility.ts`.
 2. Synthetic unit tests for all alignment and event-counting semantics.
-3. Gold DB route at `/api/market-volatility/reserve-vix`.
+   Complete in `src/lib/marketVolatility.test.ts`.
+3. Gold DB route at `/api/market-volatility/reserve-vix`. Complete in
+   `src/app/api/market-volatility/reserve-vix/route.ts`.
 4. Route tests for Gold-only behavior, missing data, citations, and
    Tradability Mode unavailable state.
-5. Static UI after the route is stable.
-6. Animated playback after the static UI and math are verified.
+   Complete in `src/app/api/market-volatility/reserve-vix/route.test.ts`.
+5. Static UI after the route is stable. Complete in
+   `src/app/market-volatility/page.tsx`, with the fetch hook in
+   `src/lib/useMarketVolatility.ts`.
+6. Animated playback after the static UI and math are verified. Next priority
+   after review of the first module surface.
 
 ## Proposed Files
 
-Suggested first files:
+Implemented first files:
 
 - `src/lib/marketVolatility.ts`
 - `src/lib/marketVolatility.test.ts`
 - `src/app/api/market-volatility/reserve-vix/route.ts`
 - `src/app/api/market-volatility/reserve-vix/route.test.ts`
+- `src/lib/useMarketVolatility.ts`
+- `src/app/market-volatility/page.tsx`
 
-Later UI files should follow the existing module/page structure after the route
-contract is stable.
+The module is enabled as `MVOL` in `settings/modules.config.json`, registered in
+`src/lib/nav.ts`, and routed from `src/App.tsx` at `/market-volatility`.
 
 ## Calculation Defaults
 
@@ -186,6 +195,21 @@ Route tests:
 
 ## Validation Commands
 
+Latest validation on 2026-08-30 after the static UI wiring:
+
+```bash
+npm test -- src/lib/marketVolatility.test.ts src/app/api/market-volatility/reserve-vix/route.test.ts src/lib/nav.test.ts
+npm run check:gold-policy
+npm run build:client
+npm run build:server
+git diff --check
+```
+
+Result: passed. The route also returned real Gold DB data locally for
+`mode=research&signal=above_mean&forwardDays=7&start=2009-01-01`. Client build
+retained the existing large-chunk warning; server build retained existing eval
+warnings in chart template/market manifest files.
+
 After helper implementation:
 
 ```bash
@@ -208,6 +232,7 @@ outside this workstream. Do not add new typecheck failures.
 
 ## Roadmap After Version One
 
+- Review the first static module surface and refine chart layout/labels.
 - Add point-in-time/vintage-aware reserve history when the upstream FRED/Gold
   pipeline exposes it.
 - Add richer uncertainty bands after Wilson intervals are in place.

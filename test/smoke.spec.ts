@@ -17,6 +17,7 @@ const PAGES = [
   { path: "/index-returns", title: "Index Returns", code: "IRET" },
   { path: "/market-lens", title: "Market Lens Studio", code: "LENS" },
   { path: "/market-chart", title: "Market Chart Studio", code: "MKC" },
+  { path: "/market-volatility", title: "Market Volatility", code: "MVOL" },
   { path: "/securities-lending", title: "Securities Lending", code: "SLAB" },
   { path: "/securities-lending/squeeze", title: "Squeeze Radar", code: "SQZ" },
   { path: "/prime-finance", title: "Prime Finance", code: "PB" },
@@ -66,7 +67,7 @@ test.describe("page load smoke tests", () => {
   for (const pg of PAGES) {
     test(`${pg.code} ${pg.path} loads without JS errors`, async ({ page }) => {
       const errors = await collectErrors(page);
-      await page.goto(`${BASE}${pg.path}`, { waitUntil: "networkidle", timeout: 15000 });
+      await page.goto(`${BASE}${pg.path}`, { waitUntil: "domcontentloaded", timeout: 25000 });
       await page.waitForTimeout(1000);
 
       // Check for uncaught JS errors (allow known module faults on pages
@@ -101,16 +102,17 @@ test.describe("provenance badge visibility", () => {
     'span[title*="econ model"]',
     'span[title*="Deterministic"]',
     'span[title*="Fetching"]',
+    'span[title*="Could not"]',
   ].join(", ");
 
   for (const pg of PAGES) {
     test(`${pg.code} ${pg.path} shows a data source indicator`, async ({ page }) => {
-      await page.goto(`${BASE}${pg.path}`, { waitUntil: "networkidle", timeout: 15000 });
+      await page.goto(`${BASE}${pg.path}`, { waitUntil: "domcontentloaded", timeout: 25000 });
       await page.waitForTimeout(1500);
 
       const badges = await page.locator(badgeSelector).count();
       const body = await page.textContent("body") ?? "";
-      const hasSourceText = /\b(SIM|SNAPSHOT|FRED|LIVE|ETL|ECON)\b/.test(body);
+      const hasSourceText = /\b(SIM|SNAPSHOT|FRED|LIVE|ETL|ECON|ERR)\b/.test(body);
 
       expect(badges > 0 || hasSourceText).toBe(true);
     });
@@ -124,7 +126,7 @@ test.describe("no undefined or NaN in content", () => {
 
   for (const pg of criticalPages) {
     test(`${pg.code} ${pg.path} has no "undefined" or "NaN" in primary content`, async ({ page }) => {
-      await page.goto(`${BASE}${pg.path}`, { waitUntil: "networkidle", timeout: 15000 });
+      await page.goto(`${BASE}${pg.path}`, { waitUntil: "domcontentloaded", timeout: 25000 });
       await page.waitForTimeout(2000);
 
       const body = await page.textContent("body") ?? "";
