@@ -299,6 +299,9 @@ Response shape should include:
     claimThresholdPct: number;
     claimDeltaPctPoints: number | null;
   };
+  series: {
+    vix: MarketVolSeriesPoint[];
+  };
   rows: ReserveVixExperimentRow[];
   diagnostics: {
     droppedRows: number;
@@ -332,7 +335,8 @@ Version one is complete when:
 - The API exposes base rate, conditional rate, lift, sample size, Wilson
   confidence interval, mean/median VIX point change, mean/median VIX percent
   change, and reserve/VIX correlation.
-- Every UI/export-facing payload includes the FRED/CBOE citations and labels the
+- Every UI/export-facing payload includes the FRED/CBOE citations, the
+  `VIXCLS` level series used to derive forward outcomes, and labels the
   calculation as current revised Gold DB history.
 - Missing data, stale endpoint coverage, or unavailable Tradability Mode never
   silently fall back to simulated data.
@@ -468,7 +472,8 @@ These are likely follow-up candidates after the first implementation:
    Tradability Mode unavailable state in
    `src/app/api/market-volatility/reserve-vix/route.test.ts`.
 5. Complete: first `MVOL` UI with static charts, metric cards, diagnostics, and
-   source citations in `src/app/market-volatility/page.tsx`, with
+   source citations in `src/app/market-volatility/page.tsx`, including a
+   `VIXCLS` level chart plus derived forward-outcome bars, with
    `src/lib/useMarketVolatility.ts` as the client fetch hook.
 6. Later: add animated playback once the static UI and data provenance are
    stable.

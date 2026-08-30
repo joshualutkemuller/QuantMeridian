@@ -51,7 +51,8 @@ Build the calculation and route layer before UI:
    Complete in `src/app/api/market-volatility/reserve-vix/route.test.ts`.
 5. Static UI after the route is stable. Complete in
    `src/app/market-volatility/page.tsx`, with the fetch hook in
-   `src/lib/useMarketVolatility.ts`.
+   `src/lib/useMarketVolatility.ts`. The page plots both the `VIXCLS` level
+   series and the derived forward VIX outcomes.
 6. Animated playback after the static UI and math are verified. Next priority
    after review of the first module surface.
 
@@ -166,6 +167,7 @@ Response must include:
 - aggregate stats: unconditional rate, conditional rate, lift, sample size,
   Wilson confidence interval, mean/median VIX point change, mean/median VIX
   percent change, reserve/VIX correlation, claim threshold delta
+- compact `series.vix` level history for the actual `VIXCLS` chart
 - compact row-level data for charting
 - diagnostics: dropped rows, missing VIX start, missing VIX endpoint,
   insufficient trailing mean, warnings
@@ -232,7 +234,9 @@ outside this workstream. Do not add new typecheck failures.
 
 ## Roadmap After Version One
 
-- Review the first static module surface and refine chart layout/labels.
+- Review the first static module surface and refine chart layout/labels,
+  especially the distinction between the actual `VIXCLS` level chart and the
+  derived forward-outcome bars.
 - Add point-in-time/vintage-aware reserve history when the upstream FRED/Gold
   pipeline exposes it.
 - Add richer uncertainty bands after Wilson intervals are in place.

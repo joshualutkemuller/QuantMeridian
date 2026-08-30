@@ -93,6 +93,9 @@ describe("/api/market-volatility/reserve-vix", () => {
     expect(body.stats.conditional.n).toBeGreaterThan(0);
     expect(body.diagnostics.confidenceIntervalMethod).toBe("wilson");
     expect(body.citations.map((citation: { seriesId: string }) => citation.seriesId)).toEqual(["WRESBAL", "VIXCLS"]);
+    expect(body.series.vix.length).toBeGreaterThan(0);
+    expect(body.series.vix[0]).toHaveProperty("date");
+    expect(body.series.vix[0]).toHaveProperty("value");
     expect(body.rows[0]).toHaveProperty("trailing12WeekMean");
     expect(mocks.raw).toHaveBeenCalledTimes(1);
     expect(String(mocks.raw.mock.calls[0][0])).toContain("gold_fred_latest_observation");

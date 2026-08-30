@@ -18,7 +18,8 @@ export function devApiPlugin(): Plugin {
       void (async () => {
         try {
           const url = new URL(rawUrl, `http://${req.headers.host ?? "localhost"}`);
-          const body = await readBody(req);
+          const method = (req.method ?? "GET").toUpperCase();
+          const body = method === "GET" || method === "HEAD" ? undefined : await readBody(req);
           const request = toWebRequest(req, url, body);
 
           // Re-loaded per request so route edits hot-reload; Vite's module graph

@@ -145,7 +145,9 @@ criteria, and synthetic/route test plan. The implementation handoff lives in
 `docs/specs/spec003/HANDOFF.md`. The pure helper, synthetic tests, Gold DB-only
 route, route tests, client hook, and first static module UI are implemented on
 `MVOL-Implementation`. `MVOL` is enabled in module config, registered in the
-Markets navigation, and routed at `/market-volatility`.
+Markets navigation, and routed at `/market-volatility`. The static UI now plots
+the actual `VIXCLS` level series separately from the derived forward VIX outcome
+bars.
 
 Locked version-one decisions:
 
@@ -183,4 +185,5 @@ validated.
    owner approval.
 6. For `MVOL`, review the first static Market Volatility module surface, then
    add animated playback/export surfaces only after chart labels, citations, and
-   current revised Gold history labeling are accepted.
+   current revised Gold history labeling are accepted. Keep the actual `VIXCLS`
+   level chart visually distinct from derived forward-outcome statistics.

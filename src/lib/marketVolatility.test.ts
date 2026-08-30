@@ -47,6 +47,7 @@ describe("computeReserveVixExperiment", () => {
       trailing12WeekMean: 100,
       reserveAboveMean: true,
     });
+    expect(result.series.vix[0]).toMatchObject({ date: "2026-03-01" });
   });
 
   test("above-mean mode includes all eligible weekly above-mean observations", () => {
@@ -153,6 +154,7 @@ describe("computeReserveVixExperiment", () => {
 
     expect(result.source).toBe("ERR");
     expect(result.rows).toEqual([]);
+    expect(result.series.vix).toEqual([{ date: "2026-04-01", value: 20 }]);
     expect(result.diagnostics.missingVixEndpoint).toBe(1);
     expect(result.diagnostics.droppedRows).toBe(1);
   });

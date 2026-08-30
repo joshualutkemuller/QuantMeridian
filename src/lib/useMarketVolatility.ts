@@ -53,6 +53,9 @@ function emptyReserveVix(options: ReserveVixOptions, source: MarketVolUiSource, 
       claimThresholdPct: options.claimThresholdPct,
       claimDeltaPctPoints: null,
     },
+    series: {
+      vix: [],
+    },
     rows: [],
     diagnostics: {
       droppedRows: 0,
@@ -85,7 +88,6 @@ export function useReserveVixExperiment(options: ReserveVixOptions): { data: Com
 
   useEffect(() => {
     let alive = true;
-    const controller = new AbortController();
 
     const apply = (body: ComputeReserveVixExperimentResult) => {
       const nextSource: MarketVolUiSource = body.source === "DB" ? "DB" : "ERR";
@@ -100,7 +102,7 @@ export function useReserveVixExperiment(options: ReserveVixOptions): { data: Com
       setSource("LOADING");
     }
 
-    fetchJson<ComputeReserveVixExperimentResult>(url, { signal: controller.signal })
+    fetchJson<ComputeReserveVixExperimentResult>(url)
       .then((body) => {
         if (alive) apply(body);
       })
@@ -113,7 +115,6 @@ export function useReserveVixExperiment(options: ReserveVixOptions): { data: Com
 
     return () => {
       alive = false;
-      controller.abort();
     };
   }, [options, url]);
 

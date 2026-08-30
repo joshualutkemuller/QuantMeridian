@@ -94,6 +94,9 @@ export interface ComputeReserveVixExperimentResult {
     latestVixDate: string | null;
   };
   stats: MarketVolStats;
+  series: {
+    vix: MarketVolSeriesPoint[];
+  };
   rows: ReserveVixExperimentRow[];
   diagnostics: MarketVolDiagnostics;
   citations: Citation[];
@@ -148,6 +151,15 @@ function sortSeries(rows: MarketVolSeriesPoint[]): MarketVolSeriesPoint[] {
 
 function latestDate(rows: MarketVolSeriesPoint[]): string | null {
   return rows.length ? rows[rows.length - 1].date : null;
+}
+
+function betweenDates(rows: MarketVolSeriesPoint[], startDate: string, endDate: string): MarketVolSeriesPoint[] {
+  const start = parseDate(startDate);
+  const end = parseDate(endDate);
+  return rows.filter((row) => {
+    const date = parseDate(row.date);
+    return date >= start && date <= end;
+  });
 }
 
 function firstOnOrAfter(rows: MarketVolSeriesPoint[], date: string): MarketVolSeriesPoint | null {
@@ -257,6 +269,9 @@ function emptyResult(input: Required<Pick<ComputeReserveVixExperimentInput, "ali
       reservePctChangeVixPointChangeCorr: null,
       claimThresholdPct: input.claimThresholdPct,
       claimDeltaPctPoints: null,
+    },
+    series: {
+      vix: betweenDates(vixRows, input.startDate, input.endDate),
     },
     rows: [],
     diagnostics,
@@ -421,6 +436,9 @@ export function computeReserveVixExperiment(input: ComputeReserveVixExperimentIn
       reservePctChangeVixPointChangeCorr: pearson(corrPairs.map((row) => row.x), corrPairs.map((row) => row.y)),
       claimThresholdPct,
       claimDeltaPctPoints: conditional.hitRatePct === null ? null : conditional.hitRatePct - claimThresholdPct,
+    },
+    series: {
+      vix: betweenDates(vix, startDate, endDate),
     },
     rows,
     diagnostics,

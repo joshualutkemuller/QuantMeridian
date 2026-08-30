@@ -5,7 +5,7 @@ import { DataGrid, type Column } from "@/components/ui/DataGrid";
 import { ProvenanceBadge } from "@/components/ui/ProvenanceBadge";
 import { fmtAbbr, fmtNum, fmtPct, fmtSigned, fmtSignedPct } from "@/lib/format";
 import { useReserveVixExperiment, type ReserveVixOptions } from "@/lib/useMarketVolatility";
-import type { ReserveVixExperimentRow } from "@/lib/marketVolatility";
+import type { MarketVolSeriesPoint, ReserveVixExperimentRow } from "@/lib/marketVolatility";
 
 function nullablePct(value: number | null | undefined, dp = 1): string {
   return value == null ? "-" : fmtPct(value, dp);
@@ -61,8 +61,19 @@ function sampleRows(rows: ReserveVixExperimentRow[], max = 260): ReserveVixExper
   return rows.filter((_, index) => index % step === 0 || index === rows.length - 1);
 }
 
-function ReserveMeanChart({ rows }: { rows: ReserveVixExperimentRow[] }) {
-  if (rows.length < 2) return <EmptyChart label="Reserve history unavailable" />;
+function samplePoints(rows: MarketVolSeriesPoint[], max = 420): MarketVolSeriesPoint[] {
+  if (rows.length <= max) return rows;
+  const step = Math.ceil(rows.length / max);
+  return rows.filter((_, index) => index % step === 0 || index === rows.length - 1);
+}
+
+function dateMs(date: string): number {
+  const parsed = Date.parse(`${date}T00:00:00Z`);
+  return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
+function ReserveMeanChart({ rows, loading }: { rows: ReserveVixExperimentRow[]; loading: boolean }) {
+  if (rows.length < 2) return <EmptyChart label={loading ? "Loading reserve history" : "Reserve history unavailable"} />;
 
   const data = sampleRows(rows);
   const W = 760;
@@ -118,8 +129,73 @@ function ReserveMeanChart({ rows }: { rows: ReserveVixExperimentRow[] }) {
   );
 }
 
-function OutcomeChart({ rows }: { rows: ReserveVixExperimentRow[] }) {
-  if (!rows.length) return <EmptyChart label="Signal outcomes unavailable" />;
+function VixLevelChart({ points, rows, loading }: { points: MarketVolSeriesPoint[]; rows: ReserveVixExperimentRow[]; loading: boolean }) {
+  if (points.length < 2) return <EmptyChart label={loading ? "Loading VIXCLS level history" : "VIXCLS level history unavailable"} />;
+
+  const data = samplePoints(points);
+  const signals = sampleRows(rows.filter((row) => row.signalEligible), 150);
+  const W = 760;
+  const H = 260;
+  const padL = 42;
+  const padR = 14;
+  const padT = 12;
+  const padB = 24;
+  const minTs = dateMs(data[0].date);
+  const maxTs = dateMs(data[data.length - 1].date);
+  const min = Math.min(...data.map((point) => point.value));
+  const max = Math.max(...data.map((point) => point.value));
+  const valueRange = max - min || 1;
+  const dateRange = maxTs - minTs || 1;
+  const x = (date: string) => padL + ((dateMs(date) - minTs) / dateRange) * (W - padL - padR);
+  const y = (value: number) => padT + (1 - (value - min) / valueRange) * (H - padT - padB);
+  const vixPath = data.map((point) => ({ x: x(point.date), y: y(point.value) }));
+  const ticks = Array.from({ length: 5 }, (_, index) => min + (valueRange * index) / 4);
+  const labelEvery = Math.max(1, Math.ceil(data.length / 5));
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="block h-[260px] w-full min-w-[520px]">
+      {ticks.map((tick) => (
+        <g key={tick}>
+          <line x1={padL} x2={W - padR} y1={y(tick)} y2={y(tick)} stroke="#1F1F23" strokeWidth={1} />
+          <text x={padL - 7} y={y(tick) + 3} textAnchor="end" fontSize={9} fill="#5E5E66" fontFamily="var(--font-mono)">
+            {fmtNum(tick, 0)}
+          </text>
+        </g>
+      ))}
+      {signals.map((row) => {
+        const x0 = x(row.vixStartDate);
+        const x1 = x(row.vixEndDate);
+        const y0 = y(row.vixStart);
+        const y1 = y(row.vixEnd);
+        const color = row.vixFell ? "#2ECC71" : "#FF3B3B";
+        return (
+          <g key={`${row.anchorDate}-${row.vixEndDate}`}>
+            <line x1={x0} x2={x1} y1={y0} y2={y1} stroke={color} strokeWidth={1.2} opacity={0.36} />
+            <circle cx={x0} cy={y0} r={2.4} fill={color} opacity={0.9} />
+          </g>
+        );
+      })}
+      {data.map((point, index) =>
+        index % labelEvery === 0 || index === data.length - 1 ? (
+          <text key={point.date} x={x(point.date)} y={H - 7} textAnchor="middle" fontSize={9} fill="#5E5E66" fontFamily="var(--font-mono)">
+            {point.date.slice(0, 4)}
+          </text>
+        ) : null,
+      )}
+      <path d={linePath(vixPath)} fill="none" stroke="#C9C9D1" strokeWidth={1.6} />
+      <g transform={`translate(${padL + 4},${padT + 4})`}>
+        <rect x={0} y={0} width={236} height={19} fill="#0A0A0A" opacity={0.72} />
+        <line x1={8} x2={28} y1={10} y2={10} stroke="#C9C9D1" strokeWidth={2} />
+        <text x={34} y={13} fontSize={9} fill="#C9C9D1" fontFamily="var(--font-mono)">VIXCLS LEVEL</text>
+        <circle cx={136} cy={10} r={3} fill="#2ECC71" />
+        <text x={144} y={13} fontSize={9} fill="#C9C9D1" fontFamily="var(--font-mono)">SIGNAL HIT/MISS</text>
+      </g>
+    </svg>
+  );
+}
+
+function OutcomeChart({ rows, loading }: { rows: ReserveVixExperimentRow[]; loading: boolean }) {
+  if (!rows.length) return <EmptyChart label={loading ? "Loading signal outcomes" : "Signal outcomes unavailable"} />;
 
   const data = sampleRows(rows, 220);
   const W = 760;
@@ -183,6 +259,7 @@ export default function MarketVolatilityPage() {
   const latestDate = data.inputs.latestVixDate ?? data.inputs.latestReserveDate;
   const lift = data.stats.liftPctPoints;
   const claimDelta = data.stats.claimDeltaPctPoints;
+  const loading = source === "LOADING";
 
   const eventCols: Column<ReserveVixExperimentRow>[] = [
     { key: "anchor", header: "Anchor", render: (row) => row.anchorDate, sortVal: (row) => row.anchorDate },
@@ -293,13 +370,16 @@ export default function MarketVolatilityPage() {
         )}
 
         <div className="grid min-h-0 grid-cols-1 gap-2 xl:grid-cols-12">
-          <Panel title="Reserve Balance Signal" code="WRESBAL" className="xl:col-span-7" scroll>
-            <ReserveMeanChart rows={data.rows} />
+          <Panel title="Reserve Balance Signal" code="WRESBAL" className="xl:col-span-6" scroll>
+            <ReserveMeanChart rows={data.rows} loading={loading} />
           </Panel>
-          <Panel title="Forward VIX Outcomes" code="VIXCLS" className="xl:col-span-5" scroll>
-            <OutcomeChart rows={data.rows} />
+          <Panel title="VIX Level" code="VIXCLS" className="xl:col-span-6" scroll>
+            <VixLevelChart points={data.series.vix} rows={data.rows} loading={loading} />
           </Panel>
-          <Panel title="Signal Rows" code="OBS" className="xl:col-span-8" scroll>
+          <Panel title="Forward VIX Outcomes" code="OUT" className="xl:col-span-5" scroll>
+            <OutcomeChart rows={data.rows} loading={loading} />
+          </Panel>
+          <Panel title="Signal Rows" code="OBS" className="xl:col-span-7" scroll>
             <DataGrid
               columns={eventCols}
               rows={signalRows.slice(-80).reverse()}
@@ -336,7 +416,7 @@ export default function MarketVolatilityPage() {
               ))}
             </div>
           </Panel>
-          <Panel title="Citations" code="SRC" className="xl:col-span-12" bodyClassName="p-3" resizable={false}>
+          <Panel title="Citations" code="SRC" className="xl:col-span-8" bodyClassName="p-3" resizable={false}>
             <div className="grid gap-2 md:grid-cols-2">
               {data.citations.length ? data.citations.map((citation) => (
                 <a

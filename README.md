@@ -44,7 +44,7 @@ BlackRock.
 | `IRET` | **Index Return Analytics** | Monthly index return matrix, calendar-year totals, and intra-year drawdowns (Yahoo-ready via the `market_data_pipeline`) |
 | `LENS` | **Market Lens Studio** | Build/compare market & cross-asset series from the lens engine (committed snapshots + FRED) |
 | `MKC`  | **Market Chart Studio** | Charting studio over market series (`/api/chart/series?source=market`) |
-| `MVOL` | **Market Volatility** | Reserve-balances-versus-VIX claim audit using Gold DB `WRESBAL`/`VIXCLS`, base-rate lift, confidence bands, and claim-threshold diagnostics |
+| `MVOL` | **Market Volatility** | Reserve-balances-versus-VIX claim audit using Gold DB `WRESBAL`/`VIXCLS`, actual VIX level path, derived forward outcomes, base-rate lift, confidence bands, and claim-threshold diagnostics |
 | `SLAB` | **Securities Lending** | Inventory (internal / beneficial owner / prime), loan book, borrow demand, HTB & specials, revenue analytics (waterfall, Sankey, by borrower/security/asset class) |
 | `SQZ`  | **Squeeze Radar** | Borrow-demand / squeeze radar on the lending spine — composite heat score, fee×utilization quadrant (re-rate vs special), squeeze candidates, specials watch, sector heat, ALRT-ready heat-up alerts |
 | `PB`   | **Prime Finance** | Gross/net/long/short exposure, top hedge-fund clients, financing revenue & RoA, VaR / stress testing, financing optimization opportunities |
