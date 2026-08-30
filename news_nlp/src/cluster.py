@@ -80,3 +80,18 @@ def cluster(rows: list[ScoredHeadline]) -> list[NewsCluster]:
             )
         )
     return sorted(clusters, key=lambda c: c.size, reverse=True)
+
+
+def health() -> dict:
+    embedder = _embedder()
+    if embedder is None:
+        return {
+            "ok": True,
+            "model": "token-overlap-fallback",
+            "backend": "token-overlap",
+        }
+    return {
+        "ok": True,
+        "model": settings.embed_model,
+        "backend": "sentence-transformers",
+    }

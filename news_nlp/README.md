@@ -47,7 +47,22 @@ news-nlp serve --port 8088
 |---|---|
 | `POST /score` `{texts:[...]}` → `{model, scores:[{score,label}]}` | what the Next `enrichWithNlp()` calls |
 | `GET /headlines` | latest gold `ScoredHeadline` rows (Next can read as a primary feed) |
-| `GET /health` | model in use (`ProsusAI/finbert` or `lexicon-fallback`) |
+| `GET /health` | service status plus separate sentiment, clustering, NER, lexicon fallback, device, and runtime fields |
+
+Health response shape:
+
+```json
+{
+  "status": "ok",
+  "model": "ProsusAI/finbert",
+  "sentiment": { "ok": true, "model": "ProsusAI/finbert", "backend": "transformers" },
+  "clustering": { "ok": true, "model": "sentence-transformers/all-MiniLM-L6-v2", "backend": "sentence-transformers" },
+  "ner": { "ok": true, "model": "en_core_web_sm", "backend": "spacy" },
+  "lexiconFallback": { "enabled": false, "model": "finance-lexicon", "version": "1" },
+  "device": "cpu",
+  "runtime": "python 3.12.0"
+}
+```
 
 ## Connecting to the terminal
 

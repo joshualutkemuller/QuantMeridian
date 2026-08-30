@@ -1,8 +1,8 @@
 # Market Terminal Handoff
 
 **Updated:** 2026-08-29
-**Branch:** `spec001_expand_cpi_component_coverage`
-**Latest pushed commit:** `9e32af6` — `Harden live news provider diagnostics`
+**Branch:** `news-expansion`
+**Latest pushed main commit:** `a37a829` — `Merge branch 'spec001_expand_cpi_component_coverage'`
 
 ## Current Focus
 
@@ -12,6 +12,7 @@ real NEWS provider wiring. Detailed source docs live in:
 - `docs/features/GOLD_DB_MIGRATION_HANDOFF.md`
 - `docs/gold-db/MODULE_DATA_AUDIT.md`
 - `docs/specs/spec001/`
+- `docs/specs/spec002_news_live_intelligence/`
 - `docs/gold-db/FRED_PIPELINE_CPI_COMPONENT_HANDOFF.md`
 - `docs/features/completed/Feature Addition - NEWS Terminal Module (Market News & Signal Intelligence).md`
 - `docs/features/completed/Feature Completion - NEWS NLP (Attention, Clusters, Signals).md`
@@ -92,6 +93,15 @@ Current local NEWS work expands DataOps and module-facing diagnostics:
 - `/api/news` now returns `clusterSource` and `nlp` runtime metadata so
   `src/app/news/page.tsx` can label NEWS-6 as FinBERT clusters, keyword
   clusters, or no clusters, and show NLP health in the header.
+- `src/app/news/page.tsx` includes a compact diagnostics drawer for inspecting
+  the raw NEWS/SOCIAL/NLP provider-attempt payloads from the UI.
+- The NEWS diagnostics drawer now supports direct smoke-check refresh, JSON
+  copy/download, and Escape-key close.
+- `news_nlp` `/health` now reports structured sentiment, clustering, NER,
+  lexicon fallback, device, and runtime metadata; Market Terminal normalizes
+  both the new shape and the legacy `{ model }` shape.
+- `docs/specs/spec002_news_live_intelligence/SPEC.md` is the active NEWS spec
+  for diagnostics, `NEWS_NLP` health, and future persistence handoffs.
 
 Validation for the NEWS slices:
 
@@ -121,9 +131,7 @@ the Gold calendar or NEWS provider work and should be reviewed separately.
 4. Continue CPI expansion from `docs/specs/spec001/`, keeping Market Terminal
    DB-only: no new external data source should be added here without explicit
    owner approval.
-5. Review and commit the expanded NEWS/SOCIAL/NLP diagnostics slice, excluding
-   the unrelated `TESTING_HANDOFF.md` move unless the owner confirms it should
-   be included.
-6. Next NEWS pass: add a compact diagnostics drawer/modal with the raw
-   provider-attempt payloads, then decide whether `news_nlp` should expose a
-   richer `/health` payload for scoring and clustering model versions separately.
+5. Commit the `news-expansion` Phase 2 `NEWS_NLP` health-contract slice.
+6. Next NEWS pass: create the upstream-pipeline persistence handoff for raw
+   headlines, raw social posts, scored headlines, entity links, cluster
+   memberships, and DataOps audit tables before any historical storage work.

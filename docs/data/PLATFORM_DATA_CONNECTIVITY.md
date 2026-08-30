@@ -50,8 +50,10 @@ Provenance is observable at runtime — the platform probes its own backends rat
 
 | Endpoint | Returns |
 |---|---|
-| `GET /api/dataops/health` | Per-provider live status — FRED key presence, market-pipeline resolver (DB/FILE/PIPELINE reachability), news/social provider config, and a live `/health` ping to the `news_nlp` FinBERT service (with model name). |
-| `GET /api/dataops/runs` | Live ingestion **runs / series outcomes / lineage** aggregated from the `market_data_pipeline` ingestion manifest, resolved **`MARKET_DB_URL` (Postgres/DuckDB) → `MARKET_PIPELINE_URL`** (mirrors the market-views resolver). Includes real per-series **latency** (the pipeline now records `latency_ms`). Empty → the page keeps fixtures. |
+| `GET /api/dataops/health` | Per-provider live status — FRED key presence, market-pipeline resolver (DB/FILE/PIPELINE reachability), an `INTELLIGENCE_FEEDS` umbrella row, separate `NEWS` / `SOCIAL` provider-chain rows, and a live `/health` ping to the `NEWS_NLP` service with sentiment, clustering, NER, fallback, device, and runtime metadata. |
+| `GET /api/dataops/runs` | Live ingestion **runs / series outcomes / lineage** aggregated from the `market_data_pipeline` ingestion manifest, resolved **`MARKET_DB_URL` (Postgres/DuckDB) → `MARKET_PIPELINE_URL`** (mirrors the market-views resolver), plus route-time `INTELLIGENCE_FEEDS` diagnostics for `NEWS`, `SOCIAL`, and `NEWS_NLP`. Includes real per-series/provider-attempt **latency**. Empty → the page keeps fixtures. |
+| `GET /api/news/diagnostics` | Headline provider smoke check: configured providers, winning source, per-provider attempts, newest headline age, and structured `NEWS_NLP` health. |
+| `GET /api/social/diagnostics` | Social provider smoke check: Reddit/StockTwits attempts, post volume, platform count, top ticker, and top theme. |
 
 Where it surfaces:
 
@@ -68,7 +70,7 @@ Both probes are config + reachability based (paid/keyed feeds report *configured
 |---|---|---|
 | ✅ **Live-capable now** | Backend exists; set a key/env and it's live | ECONOMICS (14), MARKETS (7), AI (1) |
 | 🟡 **Partial** | Some components live, others need a new feed | FUND, GCPI, GPOL, SENT, REINV, LIQ, DESK |
-| 🔴 **Needs a new feed** | No backend yet — requires an external vendor/source | FINANCE book (SLAB/PB), SQZ, NEWS, OPTIMIZATION book, CAL, FOMC |
+| 🔴 **Needs a new feed** | No backend yet — requires an external vendor/source | FINANCE book (SLAB/PB), SQZ, OPTIMIZATION book, FOMC |
 
 ---
 
@@ -175,7 +177,7 @@ Ordered by **coverage per unit of effort**:
    - set a **headline** key (`ALPHAVANTAGE_API_KEY` → Marketaux/Finnhub/NewsAPI) → NEWS tape/narratives/attention go live;
    - set **social** env (`REDDIT_USER_AGENT`, `STOCKTWITS_ENABLED`) → NEWS-3 **and** SENT social (one integration, two modules);
    - run the **`news_nlp` FinBERT** service and set `NEWS_NLP_URL` → upgrades heuristic sentiment to FinBERT and unlocks NEWS-6 clusters. Start *persisting* social for SENT-6 divergence history.
-   - All of the above surface in **DATAOPS** under the `NEWS_NLP` provider.
+   - All of the above surface in **DATAOPS** under `INTELLIGENCE_FEEDS`, with separate `NEWS`, `SOCIAL`, and `NEWS_NLP` rows for drilldown.
 6. **Options (CBOE)** → SENT put/call component + SQZ options fields.
 7. **Securities-finance / short-interest vendor** *(paid)* → SQZ and the live SLAB book.
 8. **Internal firm books + Gurobi** *(largest integration)* → FINANCE + OPTIMIZATION + DESK on real positions.

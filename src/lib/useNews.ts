@@ -20,6 +20,24 @@ export interface NewsNlpStatus {
   ok: boolean;
   latencyMs: number;
   model?: string;
+  sentiment?: NewsNlpComponentStatus;
+  clustering?: NewsNlpComponentStatus;
+  ner?: NewsNlpComponentStatus;
+  lexiconFallback?: {
+    enabled: boolean;
+    model?: string;
+    version?: string;
+  };
+  device?: string;
+  runtime?: string;
+  error?: string;
+}
+
+export interface NewsNlpComponentStatus {
+  ok: boolean;
+  model?: string;
+  backend?: string;
+  version?: string;
   error?: string;
 }
 

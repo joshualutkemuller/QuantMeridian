@@ -40,12 +40,25 @@ function qualityScore(status: ProviderRun["status"]): number {
   return status === "OK" ? 98 : status === "PARTIAL" ? 84 : 45;
 }
 
+function nlpHealthSummary(nlp: NewsDiagnostics["nlp"]): string {
+  if (!nlp.ok) return nlp.error ?? "NEWS_NLP offline";
+  const parts = [
+    nlp.sentiment?.model ? `sentiment=${nlp.sentiment.model}` : nlp.model ? `model=${nlp.model}` : null,
+    nlp.clustering?.model ? `cluster=${nlp.clustering.model}` : null,
+    nlp.ner?.model ? `NER=${nlp.ner.model}` : null,
+    nlp.lexiconFallback?.enabled ? `fallback=${nlp.lexiconFallback.model ?? "lexicon"}` : null,
+    nlp.device ? `device=${nlp.device}` : null,
+    nlp.runtime,
+  ].filter(Boolean);
+  return parts.length ? parts.join(" · ") : `model=${nlp.model ?? "?"}`;
+}
+
 export async function getIntelligenceFeedDiagnostics(): Promise<IntelligenceFeedDiagnostics> {
   const [news, social] = await Promise.all([getNewsDiagnostics(20), getSocialDiagnostics()]);
   const checkedAt = new Date().toISOString();
   const configured = news.configuredProviders.length > 0 || social.configuredProviders.length > 0 || news.nlp.configured;
   const live = news.live || social.live || news.nlp.ok;
-  const detail = `NEWS ${news.live ? `${news.source} ${news.headlineCount} headlines` : "offline"}; SOCIAL ${social.live ? `${social.source} ${social.totalPosts} posts` : "offline"}; NLP ${news.nlp.ok ? news.nlp.model ?? "up" : news.nlp.configured ? "unreachable" : "off"}`;
+  const detail = `NEWS ${news.live ? `${news.source} ${news.headlineCount} headlines` : "offline"}; SOCIAL ${social.live ? `${social.source} ${social.totalPosts} posts` : "offline"}; NLP ${news.nlp.ok ? nlpHealthSummary(news.nlp) : news.nlp.configured ? "unreachable" : "off"}`;
 
   return { checkedAt, live, configured, news, social, detail };
 }
@@ -168,7 +181,7 @@ export async function fetchIntelligenceFeedManifest(): Promise<IntelligenceFeedM
       rows: nlpSuccess,
       asOf: checkedAt.slice(0, 10),
       latencyMs: diagnostics.news.nlp.latencyMs,
-      message: diagnostics.news.nlp.ok ? `model=${diagnostics.news.nlp.model ?? "?"}` : diagnostics.news.nlp.error ?? "NEWS_NLP offline",
+      message: nlpHealthSummary(diagnostics.news.nlp),
     },
     ...diagnostics.news.attempts.map((attempt): SeriesRunResult => ({
       runId: runs[1].runId,
@@ -204,7 +217,7 @@ export async function fetchIntelligenceFeedManifest(): Promise<IntelligenceFeedM
       rows: nlpSuccess,
       asOf: checkedAt.slice(0, 10),
       latencyMs: diagnostics.news.nlp.latencyMs,
-      message: diagnostics.news.nlp.ok ? `model=${diagnostics.news.nlp.model ?? "?"}` : diagnostics.news.nlp.error ?? "NEWS_NLP offline",
+      message: nlpHealthSummary(diagnostics.news.nlp),
     },
   ];
 
