@@ -150,7 +150,7 @@ Most public macro ETL sources do not use one universal key, but production use n
 3. Optionally run `news_nlp` and set `NEWS_NLP_URL`.
 4. `/api/news` fetches headlines, applies provider-native sentiment or in-house scoring, and optionally upgrades scoring/clustering through `news_nlp`.
 5. `/api/news/diagnostics` and `/api/social/diagnostics` expose route-time provider attempts without generated fallback rows.
-6. `/api/dataops/health` and `/api/dataops/runs` surface the shared `INTELLIGENCE_FEEDS` manifest with separate `NEWS`, `SOCIAL`, and `NEWS_NLP` rows.
+6. `/api/dataops/health` and `/api/dataops/runs` surface the shared `INTELLIGENCE_FEEDS` manifest with separate `NEWS`, `SOCIAL`, and `NEWS_NLP` rows. `NEWS_NLP` health includes sentiment, clustering, NER, fallback, device, and runtime metadata when the service is configured.
 7. NEWS and SENT render live provider data when present; otherwise deterministic fixtures remain only behind explicit SIM mode.
 
 ### Required environment/config
@@ -167,6 +167,14 @@ Most public macro ETL sources do not use one universal key, but production use n
 - Pick a production headline provider and record SLA/entitlement constraints.
 - Persist headline/social raw and scored outputs after an upstream-pipeline schema is approved; current request-time behavior is not a full historical pipeline.
 - Add AAII/NAAIM survey ingestion for SENT.
+
+### Current handoff priority
+
+Before adding historical NEWS storage, create the Phase 3 upstream-pipeline
+persistence handoff in `docs/specs/spec002_news_live_intelligence/`. It should
+define raw headline, raw social post, scored headline, entity/ticker link,
+cluster membership, and DataOps audit/run tables, plus the Market Terminal
+read-only consumption contract.
 
 ## 7. Market Lens and charting flow
 

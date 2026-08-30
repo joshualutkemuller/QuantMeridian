@@ -1,13 +1,13 @@
 # Market Terminal Handoff
 
-**Updated:** 2026-08-29
+**Updated:** 2026-08-30
 **Branch:** `news-expansion`
-**Latest pushed main commit:** `a37a829` — `Merge branch 'spec001_expand_cpi_component_coverage'`
+**Latest pushed branch commit:** `ba8cad7` — `Add structured NEWS_NLP health contract`
 
 ## Current Focus
 
-The active workstreams are the Gold DB conversion, CPI component expansion, and
-real NEWS provider wiring. Detailed source docs live in:
+The active workstreams are the NEWS persistence handoff, Gold DB conversion, and
+CPI component expansion. Detailed source docs live in:
 
 - `docs/features/GOLD_DB_MIGRATION_HANDOFF.md`
 - `docs/gold-db/MODULE_DATA_AUDIT.md`
@@ -58,7 +58,8 @@ Only Vite's existing large-chunk warning appeared during the client build.
 
 ## NEWS Status
 
-NEWS provider hardening is pushed in `9e32af6`:
+NEWS provider hardening and live-intelligence diagnostics are pushed on
+`news-expansion` through `ba8cad7`:
 
 - `src/lib/server/newsProviders.ts` uses the documented provider priority:
   Alpha Vantage -> Marketaux -> Finnhub -> NewsAPI.
@@ -68,7 +69,7 @@ NEWS provider hardening is pushed in `9e32af6`:
   unless `sim=1` explicitly opts into generated demo headlines.
 - `src/lib/useNews.ts` comments describe the SIM-gated behavior.
 
-Current local NEWS work expands DataOps and module-facing diagnostics:
+Completed NEWS work expands DataOps and module-facing diagnostics:
 
 - `src/lib/server/newsDiagnostics.ts` wraps the provider chain plus NEWS_NLP
   health into one diagnostics object.
@@ -103,6 +104,15 @@ Current local NEWS work expands DataOps and module-facing diagnostics:
 - `docs/specs/spec002_news_live_intelligence/SPEC.md` is the active NEWS spec
   for diagnostics, `NEWS_NLP` health, and future persistence handoffs.
 
+Current NEWS priority:
+
+- Create the upstream-pipeline persistence handoff before any historical storage
+  work. The handoff should define raw headline, raw social post, scored
+  headline, entity/ticker link, cluster membership, and DataOps audit/run
+  tables. Market Terminal should remain a read-only consumer of the approved
+  pipeline/database contract; do not add a new Market Terminal data source
+  without explicit owner approval.
+
 Validation for the NEWS slices:
 
 ```bash
@@ -122,16 +132,16 @@ the Gold calendar or NEWS provider work and should be reviewed separately.
 
 ## Next Work
 
-1. Finish the CPI expanded weight pipeline handoff in the FRED/eco pipeline for
+1. Create the NEWS upstream-pipeline persistence handoff from
+   `docs/specs/spec002_news_live_intelligence/SPEC.md` Phase 3. This is the next
+   NEWS priority and must happen before storage code or historical warehouse
+   wiring.
+2. Finish the CPI expanded weight pipeline handoff in the FRED/eco pipeline for
    the eight CPI rows that need weights.
-2. Replace or explicitly retain legacy snapshot fixtures, then delete unused
+3. Replace or explicitly retain legacy snapshot fixtures, then delete unused
    `econSnapshot`/SIM generator paths once non-route callers are audited.
-3. Add the `gold.powerbi_catalog` join test so every Tier A module maps to at
+4. Add the `gold.powerbi_catalog` join test so every Tier A module maps to at
    least one Gold object.
-4. Continue CPI expansion from `docs/specs/spec001/`, keeping Market Terminal
+5. Continue CPI expansion from `docs/specs/spec001/`, keeping Market Terminal
    DB-only: no new external data source should be added here without explicit
    owner approval.
-5. Commit the `news-expansion` Phase 2 `NEWS_NLP` health-contract slice.
-6. Next NEWS pass: create the upstream-pipeline persistence handoff for raw
-   headlines, raw social posts, scored headlines, entity links, cluster
-   memberships, and DataOps audit tables before any historical storage work.

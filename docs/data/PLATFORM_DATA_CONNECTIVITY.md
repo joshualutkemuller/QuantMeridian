@@ -1,6 +1,6 @@
 # Platform Data Connectivity — Holistic View
 
-Date: 2026-06-21
+Date: 2026-08-30
 Status: Living reference
 Scope: All 37 modules across 6 groups; what each needs to run on live data.
 
@@ -34,7 +34,7 @@ Every module follows the same **provenance-first** contract:
 | `ANTHROPIC_API_KEY` | AI Copilot LLM |
 | `ALPHAVANTAGE_API_KEY` / `MARKETAUX_API_KEY` / `FINNHUB_API_KEY` / `NEWSAPI_API_KEY` | NEWS headline provider chain (first configured wins) |
 | `REDDIT_USER_AGENT` / `STOCKTWITS_ENABLED` / `STOCKTWITS_ACCESS_TOKEN` | NEWS-3 + SENT social feeds (Reddit / StockTwits) |
-| `NEWS_NLP_URL` | `news_nlp` FinBERT service — re-scores headlines (sentiment becomes `… + FinBERT`) |
+| `NEWS_NLP_URL` | `news_nlp` service — re-scores headlines, builds clusters, extracts entities, and reports structured component health |
 | `MARKET_CRON_*`, `CRON_SECRET`, `CRON_TARGET_URL` | scheduled market ingestion |
 
 ### NLP layering (NEWS / SENT sentiment)
@@ -87,7 +87,7 @@ Each external source, what it powers, and where it stands.
 | 5 | **NAAIM Exposure Index** | SENT (positioning, index) | Free weekly (`naaim.org`) | 🔴 ingest needed |
 | 6 | **Social APIs** — Reddit (free, UA-gated), StockTwits (free-ish), X (paid) | NEWS-3, SENT (social mood, divergence, ticker drill) | Reddit/StockTwits adapters built (`socialProviders.ts`); set `REDDIT_USER_AGENT` / `STOCKTWITS_ENABLED` | 🟡 adapters wired |
 | 7 | **News headlines** — Alpha Vantage / Marketaux / Finnhub / NewsAPI | NEWS-1/2/5, header KPIs | Free/paid tiers; chain falls through | 🟡 chain wired — set a key |
-| 7b | **`news_nlp` FinBERT stage** — sentiment, NER, event clustering | NEWS sentiment + NEWS-6 clusters, SENT | Scaffolded (`news_nlp/`); run service + set `NEWS_NLP_URL` | 🟡 scaffolded |
+| 7b | **`news_nlp` stage** — sentiment, NER, event clustering, structured health | NEWS sentiment + NEWS-6 clusters, SENT | Implemented (`news_nlp/`); run service + set `NEWS_NLP_URL` | 🟡 implemented; service env required |
 | 8 | **Options data** (CBOE put/call + skew) | SENT (put/call comp), SQZ | Free/paid | 🔴 |
 | 9 | **Securities-finance / short-interest vendor** (S&P Global, FIS Astec, exchange SI) | SQZ, SLAB | Paid | 🔴 |
 | 10 | **Fund flows** (ICI free; EPFR/Lipper paid) | SENT (positioning) | Mixed | 🔴 |
@@ -176,7 +176,8 @@ Ordered by **coverage per unit of effort**:
 5. **News + social + NLP** — the chains are already built; finish them:
    - set a **headline** key (`ALPHAVANTAGE_API_KEY` → Marketaux/Finnhub/NewsAPI) → NEWS tape/narratives/attention go live;
    - set **social** env (`REDDIT_USER_AGENT`, `STOCKTWITS_ENABLED`) → NEWS-3 **and** SENT social (one integration, two modules);
-   - run the **`news_nlp` FinBERT** service and set `NEWS_NLP_URL` → upgrades heuristic sentiment to FinBERT and unlocks NEWS-6 clusters. Start *persisting* social for SENT-6 divergence history.
+   - run the **`news_nlp`** service and set `NEWS_NLP_URL` → upgrades heuristic sentiment, unlocks NEWS-6 clusters, and reports structured sentiment/clustering/NER health.
+   - next: write the upstream persistence handoff before storing headline/social history; Market Terminal should consume the approved pipeline/database contract, not invent a separate source.
    - All of the above surface in **DATAOPS** under `INTELLIGENCE_FEEDS`, with separate `NEWS`, `SOCIAL`, and `NEWS_NLP` rows for drilldown.
 6. **Options (CBOE)** → SENT put/call component + SQZ options fields.
 7. **Securities-finance / short-interest vendor** *(paid)* → SQZ and the live SLAB book.

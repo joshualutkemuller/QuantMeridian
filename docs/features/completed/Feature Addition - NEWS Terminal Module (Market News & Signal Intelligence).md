@@ -13,7 +13,14 @@ Module code: **`NEWS`** — Market News & Signal Intelligence
 > them live (Alpha Vantage / Marketaux / Reddit / SEC EDGAR) without UI changes.
 > The NLP/clustering/historical-impact *backends* described below are the next
 > phase.
-Related: `docs/MARKET_TERMINAL_ROADMAP.md`, `docs/features/Feature Addition - Intelligence Layer (SEC Edgar, Stocktwits, X, and News).md`, `docs/features/Feature Addition - EDGAR Filing Intelligence (Regime, NLP & Exposure Analytics).md`
+>
+> **Update 2026-08-30.** NEWS now has live-capable headline/social provider
+> chains, `/api/news/diagnostics`, `/api/social/diagnostics`, DATAOPS
+> `INTELLIGENCE_FEEDS`, a diagnostics drawer, and structured `news_nlp`
+> component health. Current active work lives in
+> `docs/specs/spec002_news_live_intelligence/SPEC.md`; next priority is the
+> upstream-pipeline persistence handoff before any historical storage code.
+Related: `docs/MARKET_TERMINAL_ROADMAP.md`, `docs/features/Feature Addition - Intelligence Layer (SEC Edgar, Stocktwits, X, and News).md`, `docs/features/Feature Addition - EDGAR Filing Intelligence (Regime, NLP & Exposure Analytics).md`, `docs/specs/spec002_news_live_intelligence/SPEC.md`
 
 ---
 

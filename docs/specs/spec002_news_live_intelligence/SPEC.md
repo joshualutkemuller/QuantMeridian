@@ -2,7 +2,9 @@
 
 ## Status
 
-Draft
+Active — Phase 1 diagnostics polish and Phase 2 `NEWS_NLP` health contract are
+implemented on `news-expansion`; Phase 3 persistence handoff is the current
+priority.
 
 ## Owner
 
@@ -24,6 +26,13 @@ Existing source docs:
 - `docs/data/DATA_PIPELINE_OVERVIEW.md`
 - `docs/handoff.md`
 
+## Current Priority
+
+Create the upstream-pipeline persistence handoff before any historical NEWS
+storage code is written. Market Terminal should remain a read-only consumer of
+the approved pipeline/database contract and should not add a new data source
+without explicit owner approval.
+
 ## Current Implementation
 
 ### Headline Feed
@@ -35,7 +44,7 @@ Existing source docs:
 - Generated headlines are only exposed when `sim=1` explicitly opts into SIM.
 - `/api/news/diagnostics` exposes a no-SIM smoke check with configured
   providers, attempts, winning provider, headline count, newest headline age,
-  and `NEWS_NLP` health.
+  and structured `NEWS_NLP` health.
 
 ### Social Feed
 
@@ -51,6 +60,9 @@ Existing source docs:
 - `/api/news` returns `clusterSource` and `nlp` runtime metadata.
 - `NEWS_NLP_URL` upgrades headline sentiment and NEWS-6 clustering through the
   `news_nlp` service when available.
+- `news_nlp` `/health` reports separate sentiment, clustering, NER, lexicon
+  fallback, device, and runtime fields. Market Terminal normalizes both the
+  structured shape and the legacy `{ model }` shape.
 - Without `NEWS_NLP_URL`, NEWS-6 uses keyword clusters over the current tape and
   labels them accordingly.
 - The NEWS page header and EVENTS view display whether clusters came from
@@ -61,7 +73,7 @@ Existing source docs:
 - `src/lib/server/intelligenceFeedManifest.ts` converts NEWS, SOCIAL, and
   NEWS_NLP diagnostics into DataOps-native runs, series outcomes, and lineage.
 - `/api/dataops/health` reports `INTELLIGENCE_FEEDS`, `NEWS`, `SOCIAL`, and
-  `NEWS_NLP`.
+  `NEWS_NLP`, including structured NLP component metadata when available.
 - `/api/dataops/runs` appends route-time intelligence feed manifests alongside
   Gold/market pipeline manifests.
 - The NEWS page includes a compact diagnostics drawer for the raw NEWS/SOCIAL/NLP
@@ -136,6 +148,11 @@ Create a separate upstream-pipeline handoff before any persistence work:
 Market Terminal should consume that pipeline/database only after the schema and
 source policy are approved.
 
+Deliverable: add a handoff/spec document under
+`docs/specs/spec002_news_live_intelligence/` that defines the upstream schema,
+source policy, retention expectations, freshness/watermark fields, replay
+strategy, and Market Terminal read-only consumption rules.
+
 ### Phase 4: Event Impact
 
 Define the approved data source and schema for NEWS-4 historical event studies.
@@ -151,8 +168,14 @@ npm test -- src/lib/server/newsProviders.test.ts src/app/api/news/route.test.ts 
 npm run check:gold-policy
 npm run build:client
 npm run build:server
+python3 -m pytest news_nlp/tests
+python3 -m py_compile news_nlp/src/api.py news_nlp/src/schema.py news_nlp/src/sentiment.py news_nlp/src/entities.py news_nlp/src/cluster.py
 git diff --check
 ```
+
+For UI changes to the drawer, run a browser smoke that opens `/news`, opens the
+diagnostics drawer, and verifies provider attempts plus `NEWS_NLP` component
+fields render when present.
 
 Known caveat: full `npm run typecheck` currently fails on the broader non-NEWS
 Gold/market TypeScript backlog. NEWS-specific files should not appear in that

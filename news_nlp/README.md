@@ -18,6 +18,11 @@ The model stack is an **optional extra**: without it the stage runs on a lexicon
 fallback (kept in sync with the TS scorer) so it installs, imports, and tests
 green on any machine.
 
+Active Market Terminal work is tracked in
+`docs/specs/spec002_news_live_intelligence/SPEC.md`. The next priority is the
+Phase 3 upstream-pipeline persistence handoff; do not add historical NEWS
+storage to Market Terminal until that pipeline/database contract is approved.
+
 ## Install
 
 ```bash
@@ -78,6 +83,12 @@ NEWS_NLP_URL=http://localhost:8088   # → /api/news enriches sentiment with Fin
 - `data/gold/news_clusters.parquet` — event clusters (powers NEWS-6)
 - `data/gold/news_scored.json` — JSON export for a file-mount integration
 - `data/news_nlp.duckdb` — `analytics_news_sentiment`, `analytics_news_clusters` views
+
+Persistence note: these local medallion outputs are the service-side shape, not
+an approved Market Terminal historical warehouse contract. The Phase 3 handoff
+must define raw headline, raw social post, scored headline, entity/ticker link,
+cluster membership, and DataOps audit/run tables before terminal read paths are
+wired to persisted NEWS history.
 
 ## Layout
 

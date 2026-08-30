@@ -264,7 +264,9 @@ These scores assume the dev environment where `/api/*` routes resolve. The "Prod
 - `market_data_pipeline` includes storage, scheduler, quality, and FastAPI services; the Vite + React app only consumes it when env vars/service are configured and otherwise uses committed JSON.
 - `macro_data_etl` includes connectors and medallion directories, but repo data directories are placeholders and frontend mainly consumes committed JSON exports.
 - `market_lens_studio` includes rich analytics APIs/orchestrator; frontend falls back to embedded snapshots when `MARKET_LENS_URL` is absent.
-- `news_nlp` can run FinBERT/lexicon services; default terminal behavior is heuristic/SIM without `NEWS_NLP_URL` or feed keys.
+- `news_nlp` can run FinBERT/lexicon services and now reports structured
+  sentiment, clustering, NER, fallback, device, and runtime health. Default
+  terminal behavior remains heuristic/SIM without `NEWS_NLP_URL` or feed keys.
 - Optional DB drivers are partial: `pg` is optional dependency; DuckDB is dynamically required but not declared in `package.json`, so DuckDB runtime path may silently fall through.
 - DataOps lineage/run tables exist as fixture generators; they should become consumers of real pipeline manifests.
 
@@ -282,7 +284,7 @@ Priority score = Business Value × Data Availability × Implementation Ease. Sco
 | 4 | Add market cache age/as-of manifest to all market views | 80 | Low effort, high trust gain |
 | 5 | Connect official economic calendar | 74 | High UX value, tractable |
 | 6 | Wire AAII/NAAIM feeds | 70 | Improves sentiment with modest effort |
-| 7 | Run NEWS_NLP service + one real news provider | 68 | Converts NEWS from demo to partial live |
+| 7 | Create NEWS persistence handoff, then run NEWS_NLP + one real provider | 68 | Diagnostics and structured NLP health are wired; historical storage needs an approved upstream schema first |
 | 8 | Add CME/Fed funds futures robust feed | 65 | Fixes FOMC credibility |
 | 9 | Build internal book ingestion contract/schema | 64 | Huge value, higher complexity |
 | 10 | Solver artifact store for OPT | 60 | Needed before optimization features |
@@ -304,9 +306,9 @@ MKT, SNAP, QUILT, IRET, ECON, CURV, STAT, and chart studios are ready for limite
 
 ### Phase 1: Governance truth and visible provenance (Days 1-30)
 
-Phase 1 execution has started in this branch. The operational flow and setup checklist now live in [Data Pipeline Overview](./DATA_PIPELINE_OVERVIEW.md).
+Phase 1 execution has started in this branch. The operational flow and setup checklist now live in [Data Pipeline Overview](../data/DATA_PIPELINE_OVERVIEW.md).
 
-- Replace DataOps fixture health/runs/lineage with real manifests from market pipeline, macro ETL, FRED API cache, news NLP, and provider probes.
+- Replace DataOps fixture health/runs/lineage with real manifests from market pipeline, macro ETL, FRED API cache, and approved intelligence-feed persistence. NEWS/SOCIAL/NEWS_NLP already contribute route-time provider probes.
 - Change synthetic provider status from `LIVE` to `FALLBACK_AVAILABLE` everywhere. **Started:** the DataOps fixture provider and runtime health probe now report deterministic synthetic data as fallback-available, not live.
 - Add module-level and row-level provenance contract: source, provider, observation date, processing timestamp, cache timestamp, fallback reason, and simulation flag.
 - Add UI watermarks for simulated internal-book modules.
@@ -318,7 +320,7 @@ Phase 1 execution has started in this branch. The operational flow and setup che
 - Harden FRED fetch/cache/error semantics and expose per-series fallback.
 - Add official economic calendar provider.
 - Replace CME deterministic fallback with licensed/robust futures settlement ingestion or clearly demote FOMC to simulation.
-- Run NEWS_NLP and one real news provider in a controlled environment; log feed freshness and model version.
+- Create the NEWS upstream-pipeline persistence handoff before historical storage; then run NEWS_NLP and one real news provider in a controlled environment, logging feed freshness plus structured sentiment/clustering/NER health.
 
 ### Phase 3: Start internal-book integration before new features (Days 61-90)
 
