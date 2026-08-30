@@ -13,6 +13,7 @@ CPI component expansion. Detailed source docs live in:
 - `docs/gold-db/MODULE_DATA_AUDIT.md`
 - `docs/specs/spec001/`
 - `docs/specs/spec002_news_live_intelligence/`
+- `docs/specs/spec003/`
 - `docs/gold-db/FRED_PIPELINE_CPI_COMPONENT_HANDOFF.md`
 - `docs/features/completed/Feature Addition - NEWS Terminal Module (Market News & Signal Intelligence).md`
 - `docs/features/completed/Feature Completion - NEWS NLP (Attention, Clusters, Signals).md`
@@ -130,6 +131,32 @@ Worktree caveat: `TESTING_HANDOFF.md` appears deleted at repo root with an
 untracked replacement at `test/TESTING_HANDOFF.md`. That move was not part of
 the Gold calendar or NEWS provider work and should be reviewed separately.
 
+## Market Volatility Status
+
+`docs/specs/spec003/SPEC.md` is the draft scaffold for a proposed `MVOL` Market
+Volatility module. The first experiment reconstructs a reserves-versus-VIX claim
+using only existing FRED/Gold DB data paths: FRED `WRESBAL` for reserve balances
+and FRED `VIXCLS` for VIX closes.
+
+Locked version-one decisions:
+
+- Support both Research Mode, anchored to the `WRESBAL` Wednesday observation
+  date, and Tradability Mode, anchored to the first actionable close after the
+  reserve data is publicly available.
+- Use deterministic `anchor + 7 calendar days` and `anchor + 14 calendar days`
+  VIX endpoints in both modes.
+- Include all weekly above-mean observations for the broad conditional study,
+  while using event-only, non-overlapping handling for cross-above studies.
+- Use binomial confidence intervals, VIX point change as the primary outcome,
+  current revised Gold DB history for version one, live UI before video export,
+  and a default 71% claim threshold that can become configurable.
+
+Roadmap considerations called out in the spec: point-in-time/vintage-aware
+reserve history once available from the upstream FRED/Gold pipeline, richer
+uncertainty bands, citation-safe video export, configurable claim-audit presets,
+and additional volatility experiments after the first reserve/VIX study is
+validated.
+
 ## Next Work
 
 1. Create the NEWS upstream-pipeline persistence handoff from
@@ -145,3 +172,5 @@ the Gold calendar or NEWS provider work and should be reviewed separately.
 5. Continue CPI expansion from `docs/specs/spec001/`, keeping Market Terminal
    DB-only: no new external data source should be added here without explicit
    owner approval.
+6. For `MVOL`, implement the pure calculation helper and synthetic tests from
+   `docs/specs/spec003/SPEC.md` before building UI or export surfaces.

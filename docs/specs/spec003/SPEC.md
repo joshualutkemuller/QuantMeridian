@@ -76,12 +76,6 @@ respect applicable FRED and CBOE usage terms. Reserve balances are sourced from
 the Board of Governors H.4.1 release through FRED and should cite both the
 original source and FRED.
 
-Because the inputs have different native frequencies, every result must declare
-the alignment convention. The default implementation should anchor on each
-`WRESBAL` weekly observation date, use the first available `VIXCLS` close on or
-after that anchor, and select forward endpoints using the first available VIX
-close on or after the target horizon.
-
 Current local Gold/FRED DB coverage checked on 2026-08-30 is sufficient for the
 requested 2009 through mid-August 2026 reconstruction:
 
@@ -109,11 +103,48 @@ requested 2009 through mid-August 2026 reconstruction:
 
 Evaluate whether VIX falls over:
 
-- Next week.
-- Approximately 6-11 calendar days.
-- Two weeks.
+- Next week: first available VIX close on or after `anchor + 7 calendar days`.
+- Approximately 6-11 calendar days: version one uses the same deterministic
+  `anchor + 7 calendar days` endpoint and labels the broader 6-11 day framing
+  as claim language, not an inside-window optimization.
+- Two weeks: first available VIX close on or after `anchor + 14 calendar days`.
 
-The exact alignment rules should be explicit before implementation and repeated
+### Alignment Modes
+
+The module should support two explicit alignment modes. The selected mode must
+be visible in the UI and repeated in any exported visual/report.
+
+#### Research Mode
+
+Research Mode is the default for recreating the public-data experiment exactly
+from FRED-labeled observations.
+
+- Anchor date: each `WRESBAL` weekly observation date, which is the week ending
+  Wednesday.
+- VIX start: `VIXCLS` close on the anchor date if available; otherwise first
+  available VIX close after the anchor date.
+- Forward endpoints: first available VIX close on or after `anchor + 7 calendar
+  days` and `anchor + 14 calendar days`.
+- Purpose: faithful public-data reconstruction and charting.
+- Caveat: this mode is not a real-time tradability test because the weekly
+  reserve reading may not have been known before the anchor close.
+
+#### Tradability Mode
+
+Tradability Mode is the default for any claim that implies a market participant
+could act on the signal.
+
+- Anchor date: first actionable market close after the reserve balance data is
+  publicly available.
+- VIX start: first available `VIXCLS` close after the actionable anchor.
+- Forward endpoints: first available VIX close on or after `anchor + 7 calendar
+  days` and `anchor + 14 calendar days` from the actionable anchor.
+- Purpose: avoids lookahead bias when evaluating any trading-system framing.
+- Caveat: this mode depends on the release timing encoded in the Gold/FRED
+  pipeline or an approved release-calendar field; do not introduce a new source
+  for release timing without owner approval.
+
+The exact alignment rules should be implemented as named parameters and repeated
 in any exported visual/report:
 
 - weekly anchor date
@@ -121,6 +152,7 @@ in any exported visual/report:
 - first available VIX close after the anchor
 - forward endpoint selection
 - overlapping vs non-overlapping event handling
+- research vs tradability mode
 
 ### Metrics
 
@@ -132,6 +164,16 @@ in any exported visual/report:
 - True cross-above event hit rate and sample size.
 - Correlation between weekly reserve percent change and forward VIX change.
 - Confidence intervals or binomial bands for claimed hit rates.
+
+### Event Counting
+
+- Above-mean studies should include all weekly observations where reserves are
+  above their trailing 12-week mean.
+- Cross-above studies should use event-only handling and avoid overlapping
+  forward windows when comparing event hit rates, sample sizes, or claim
+  thresholds.
+- The UI should label the event-counting mode so users can distinguish all-week
+  conditional statistics from cross-above event studies.
 
 ## Visual Direction
 
@@ -186,6 +228,45 @@ Initial controls can be simple:
   or should the module also export a shareable `.mp4`/`.webm`?
 - Should FRED/Gold provide the weekly alignment directly, or should alignment be
   computed in the terminal route?
+
+## Locked Decisions
+
+These decisions are approved for the first implementation:
+
+- Primary default view: use Research Mode for the headline reconstruction, with
+  Tradability Mode available as a toggle.
+- Forward endpoints: use deterministic `anchor + 7 calendar days` and
+  `anchor + 14 calendar days` endpoint rules in both Research Mode and
+  Tradability Mode.
+- Overlapping windows: include all weekly above-mean observations for the broad
+  conditional base-rate study; use event-only, non-overlapping handling for
+  cross-above studies.
+- Statistical framing: show binomial confidence intervals for hit rates in
+  version one.
+- VIX change definition: use VIX point change as the primary outcome and VIX
+  percent change as a secondary outcome.
+- Revisions/vintage handling: version one uses current revised Gold DB history
+  and labels that fact clearly; point-in-time vintage testing is deferred until
+  the FRED pipeline exposes vintage-aware data.
+- Export policy: live UI first. Shared video export is deferred because it needs
+  explicit CBOE/FRED citation and usage handling.
+- Claim threshold handling: default to the 71% benchmark for this experiment,
+  while allowing configurable claim thresholds so the module can audit other
+  volatility claims later.
+
+## Roadmap Considerations
+
+These are likely follow-up candidates after the first implementation:
+
+- Add point-in-time/vintage-aware reserve history once exposed by the upstream
+  FRED/Gold pipeline.
+- Add richer uncertainty views such as bootstrap bands or regime-conditioned
+  confidence intervals.
+- Add video export with embedded citations, data as-of metadata, and FRED/CBOE
+  usage safeguards.
+- Add user-defined claim thresholds and saved claim-audit presets.
+- Add additional volatility claim audits after the reserve/VIX experiment is
+  validated.
 
 ## First Implementation Slice
 
