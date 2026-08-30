@@ -44,7 +44,7 @@ BlackRock.
 | `IRET` | **Index Return Analytics** | Monthly index return matrix, calendar-year totals, and intra-year drawdowns (Yahoo-ready via the `market_data_pipeline`) |
 | `LENS` | **Market Lens Studio** | Build/compare market & cross-asset series from the lens engine (committed snapshots + FRED) |
 | `MKC`  | **Market Chart Studio** | Charting studio over market series (`/api/chart/series?source=market`) |
-| `MVOL` | **Market Volatility** | Reserve-balances-versus-VIX claim audit using Gold DB `WRESBAL`/`VIXCLS`, actual VIX level path, derived forward outcomes, base-rate lift, confidence bands, and claim-threshold diagnostics |
+| `MVOL` | **Market Volatility** | Reserve-balances-versus-VIX claim audit using Gold DB `WRESBAL`/`VIXCLS` plus Gold/FRED `SP500` outcome context, actual VIX level path, VIX-regime buckets, derived forward outcomes, base-rate lift, confidence bands, claim-threshold diagnostics, and cautious EDGE readout |
 | `SLAB` | **Securities Lending** | Inventory (internal / beneficial owner / prime), loan book, borrow demand, HTB & specials, revenue analytics (waterfall, Sankey, by borrower/security/asset class) |
 | `SQZ`  | **Squeeze Radar** | Borrow-demand / squeeze radar on the lending spine — composite heat score, fee×utilization quadrant (re-rate vs special), squeeze candidates, specials watch, sector heat, ALRT-ready heat-up alerts |
 | `PB`   | **Prime Finance** | Gross/net/long/short exposure, top hedge-fund clients, financing revenue & RoA, VaR / stress testing, financing optimization opportunities |
@@ -375,7 +375,7 @@ without it (returns the warm summary on success).
 
 ### Data provenance — what's live vs. simulated (post-Gold DB migration)
 
-**Post-2026-07-17 architecture:** All **economic/macro modules** (`ECON`, `CURV`, `INFL`, `GCPI`, `GPOL`, `CRDT`, `FOMC`, `CAL`, `STAT`, `REGIME`, `EML`, `SFE`, `FUND`, `BMRK`, `BRA`, `UTIL`, `YCURV`, `RVOL`, `FCOST`, `MGC`, `EDA`, `MOTN`) read **exclusively from the Gold DB** (`MACRO_DB_URL`). The Market Volatility module (`MVOL`) also reads its FRED-published reserve/VIX inputs exclusively from Gold DB. When Gold DB is configured, these modules show a green **LIVE · DB** badge; when not configured, they fall back to the committed snapshot (amber **SNAPSHOT** badge) or error state. There is **no fallback chain** anymore — the old FRED → SNAPSHOT → SIM fallback is retired.
+**Post-2026-07-17 architecture:** All **economic/macro modules** (`ECON`, `CURV`, `INFL`, `GCPI`, `GPOL`, `CRDT`, `FOMC`, `CAL`, `STAT`, `REGIME`, `EML`, `SFE`, `FUND`, `BMRK`, `BRA`, `UTIL`, `YCURV`, `RVOL`, `FCOST`, `MGC`, `EDA`, `MOTN`) read **exclusively from the Gold DB** (`MACRO_DB_URL`). The Market Volatility module (`MVOL`) also reads its FRED-published reserve/VIX/SPX inputs exclusively from Gold DB. When Gold DB is configured, these modules show a green **LIVE · DB** badge; when not configured, they fall back to the committed snapshot (amber **SNAPSHOT** badge) or error state. There is **no fallback chain** anymore — the old FRED → SNAPSHOT → SIM fallback is retired.
 
 The table below shows the **real-world data source** each module ultimately draws from (FRED, World Bank, BIS, CME, Yahoo, etc.), not the technical path to get it. The technical path is now **always** Gold DB for economic modules:
 
@@ -394,7 +394,7 @@ The table below shows the **real-world data source** each module ultimately draw
 | Benchmark Rates (BMRK) | 🟢 FRED | 33-rate status board across 7 categories; read from Gold DB |
 | Yield Curve Analytics (YCURV) | 🟢 FRED | Daily curve shape, slope history, regime shifts; read from Gold DB |
 | Rate Volatility (RVOL) | 🟢 FRED | Realized-vol surface and vol regimes; read from Gold DB |
-| Market Volatility (MVOL) | 🟢 FRED + CBOE via FRED | `WRESBAL`/`VIXCLS` reserve-VIX claim audit; read from Gold DB |
+| Market Volatility (MVOL) | 🟢 FRED + CBOE/S&P via FRED | `WRESBAL`/`VIXCLS` reserve-VIX claim audit plus `SP500` outcome context; read from Gold DB |
 | Funding Cost Monitor (FCOST) | 🟡 FRED-derived rates | Blended borrowing costs by tier; read from Gold DB |
 | Utilization Analytics (UTIL) | 🟡 Internal-book + FRED rates | Lending utilization, rate overlays; read from Gold DB |
 | Rate Analysis Hub (BRA) | 🟡 Composite (BMRK + YCURV + RVOL + FCOST + UTIL) | Unified rate workflow; read from Gold DB |

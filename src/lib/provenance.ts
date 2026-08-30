@@ -17,6 +17,7 @@
  *   ECON      deterministic econ model standing in for a macro level
  *   SIM       deterministic synthetic series (no real data available)
  *   LOADING   request in flight
+ *   UNAVAILABLE approved source exists, but required upstream contract is not ready
  *   ERR       resolution failed
  *
  * Tier B sources (kept live — deliberate exceptions to DB-only policy):
@@ -34,6 +35,7 @@ export type ProvenanceSource =
   | "ECON"
   | "SIM"
   | "LOADING"
+  | "UNAVAILABLE"
   | "ERR";
 
 export type ProvenanceTone = "live" | "snapshot" | "model" | "etl" | "loading" | "error";
@@ -58,6 +60,7 @@ export const PROVENANCE_META: Record<ProvenanceSource, ProvenanceMeta> = {
   ECON: { label: "ECON MODEL", live: false, tone: "model", title: "Deterministic econ model standing in for this macro level (set FRED_API_KEY for live data)." },
   SIM: { label: "SIM", live: false, tone: "model", title: "Deterministic simulation — no real data available for this series." },
   LOADING: { label: "SYNC", live: false, tone: "loading", title: "Fetching…" },
+  UNAVAILABLE: { label: "PENDING", live: false, tone: "model", title: "Approved source path exists, but the required upstream contract is not ready." },
   ERR: { label: "ERR", live: false, tone: "error", title: "Could not resolve this series." },
 };
 
@@ -136,7 +139,7 @@ export function classifyDbStaleness(
  * If sources are mixed across live/non-live, returns the worst one present.
  */
 const SOURCE_TIER: Record<string, number> = {
-  FRED: 0, LIVE: 1, POLY: 2, DB: 3, FILE: 4, ETL: 5, SNAPSHOT: 6, ECON: 7, SIM: 8, ERR: 9,
+  FRED: 0, LIVE: 1, POLY: 2, DB: 3, FILE: 4, ETL: 5, SNAPSHOT: 6, ECON: 7, SIM: 8, UNAVAILABLE: 9, ERR: 10,
 };
 
 export function worstSource<T extends string>(sources: T[]): T {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { computeReserveVixExperiment, wilsonInterval, type MarketVolSeriesPoint } from "./marketVolatility";
+import { buildReserveVixReadout, computeReserveVixExperiment, wilsonInterval, type MarketVolSeriesPoint, type MarketVolStats } from "./marketVolatility";
 
 function dateFrom(base: string, days: number): string {
   return new Date(Date.UTC(
@@ -89,6 +89,88 @@ describe("computeReserveVixExperiment", () => {
     expect(oneWeek.rows[0].vixStartDate).toBe("2026-04-01");
     expect(oneWeek.rows[0].vixEndDate).toBe("2026-04-09");
     expect(twoWeeks.rows[0].vixEndDate).toBe("2026-04-16");
+  });
+
+  test("computes matched SPX forward outcomes without changing VIX row eligibility", () => {
+    const reserves = weeklyReserves([...Array(12).fill(100), 150]);
+    const result = computeReserveVixExperiment({
+      reserves,
+      vix: dailyVix({
+        "2026-04-01": 20,
+        "2026-04-08": 19,
+      }),
+      spx: dailyVix({
+        "2026-04-01": 1000,
+        "2026-04-08": 1010,
+      }),
+      startDate: "2026-04-01",
+      forwardDays: 7,
+    });
+
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].spxStartDate).toBe("2026-04-01");
+    expect(result.rows[0].spxEndDate).toBe("2026-04-08");
+    expect(result.rows[0].spxPctChange).toBeCloseTo(1, 6);
+    expect(result.rows[0].spxRose).toBe(true);
+    expect(result.stats.spxConditionalRise).toMatchObject({ n: 1, hits: 1, hitRatePct: 100 });
+    expect(result.stats.meanSpxPctChange).toBeCloseTo(1, 6);
+  });
+
+  test("does not match distant future SPX rows to earlier reserve anchors", () => {
+    const reserves = weeklyReserves([...Array(12).fill(100), 150]);
+    const result = computeReserveVixExperiment({
+      reserves,
+      vix: dailyVix({
+        "2026-04-01": 20,
+        "2026-04-08": 19,
+      }),
+      spx: dailyVix({
+        "2026-06-01": 1000,
+        "2026-06-08": 1010,
+      }),
+      startDate: "2026-04-01",
+      forwardDays: 7,
+    });
+
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].spxStartDate).toBeUndefined();
+    expect(result.stats.spxConditionalRise.n).toBe(0);
+    expect(result.diagnostics.missingSpxStart).toBe(1);
+    expect(result.diagnostics.warnings).toContain("Some rows have no matched SP500 forward outcome; SPX outcome rates use the matched subset.");
+  });
+
+  test("segments signal performance by VIX level regime", () => {
+    const reserves = weeklyReserves([...Array(12).fill(100), 150, 160, 170, 180]);
+    const result = computeReserveVixExperiment({
+      reserves,
+      vix: dailyVix({
+        "2026-04-01": 14,
+        "2026-04-08": 17,
+        "2026-04-15": 25,
+        "2026-04-22": 35,
+        "2026-04-29": 32,
+      }),
+      spx: dailyVix({
+        "2026-04-01": 100,
+        "2026-04-08": 101,
+        "2026-04-15": 103,
+        "2026-04-22": 102,
+        "2026-04-29": 104,
+      }),
+      startDate: "2026-04-01",
+      forwardDays: 7,
+    });
+
+    expect(result.stats.vixRegimes.map((row) => row.label)).toEqual([
+      "VIX < 15",
+      "15 <= VIX < 20",
+      "20 <= VIX < 30",
+      "VIX >= 30",
+    ]);
+    expect(result.stats.vixRegimes.map((row) => row.signal.n)).toEqual([1, 1, 1, 1]);
+    expect(result.stats.vixRegimes[0].signal.hitRatePct).toBe(0);
+    expect(result.stats.vixRegimes[3].signal.hitRatePct).toBe(100);
+    expect(result.stats.vixRegimes[3].spxRiseRatePct).toBe(100);
   });
 
   test("tradability mode anchors on the approved actionable date when provided", () => {
@@ -196,5 +278,75 @@ describe("computeReserveVixExperiment", () => {
     expect(result.source).toBe("ERR");
     expect(result.diagnostics.missingActionableDate).toBe(1);
     expect(result.diagnostics.warnings).toContain("Some rows were dropped because no approved actionable release date was provided.");
+  });
+});
+
+function stats(overrides: Partial<MarketVolStats>): MarketVolStats {
+  return {
+    unconditional: { n: 100, hits: 53, hitRatePct: 53, ciLowPct: 48, ciHighPct: 58 },
+    conditional: { n: 80, hits: 43, hitRatePct: 54, ciLowPct: 47, ciHighPct: 61 },
+    spxUnconditionalRise: { n: 100, hits: 55, hitRatePct: 55, ciLowPct: 50, ciHighPct: 60 },
+    spxConditionalRise: { n: 80, hits: 45, hitRatePct: 56.25, ciLowPct: 49, ciHighPct: 63 },
+    liftPctPoints: 1,
+    meanVixPointChange: -0.1,
+    medianVixPointChange: -0.1,
+    meanVixPctChange: null,
+    medianVixPctChange: null,
+    meanSpxPctChange: 0.2,
+    medianSpxPctChange: 0.1,
+    reservePctChangeVixPointChangeCorr: null,
+    claimThresholdPct: 71,
+    claimDeltaPctPoints: -17,
+    vixRegimes: [],
+    ...overrides,
+  };
+}
+
+describe("buildReserveVixReadout", () => {
+  test("classifies unavailable stats with no eligible signal rows", () => {
+    const readout = buildReserveVixReadout(stats({
+      unconditional: { n: 0, hits: 0, hitRatePct: null, ciLowPct: null, ciHighPct: null },
+      conditional: { n: 0, hits: 0, hitRatePct: null, ciLowPct: null, ciHighPct: null },
+      liftPctPoints: null,
+      claimDeltaPctPoints: null,
+    }));
+
+    expect(readout.verdict).toBe("Unavailable");
+    expect(readout.bias).toBe("unavailable");
+  });
+
+  test("classifies strong lower-vol evidence as a context signal", () => {
+    const readout = buildReserveVixReadout(stats({
+      unconditional: { n: 900, hits: 477, hitRatePct: 53, ciLowPct: 50, ciHighPct: 56 },
+      conditional: { n: 260, hits: 159, hitRatePct: 61, ciLowPct: 57, ciHighPct: 65 },
+      liftPctPoints: 8,
+      meanVixPointChange: -0.7,
+      claimDeltaPctPoints: -10,
+    }));
+
+    expect(readout.verdict).toBe("Potential Context Signal");
+    expect(readout.bias).toBe("risk_on");
+    expect(readout.confidence).toBe("medium");
+    expect(readout.ciOverlap).toBe(false);
+  });
+
+  test("classifies small lift with overlapping intervals as no meaningful edge", () => {
+    const readout = buildReserveVixReadout(stats({}));
+
+    expect(readout.verdict).toBe("No Meaningful Edge");
+    expect(readout.bias).toBe("neutral");
+    expect(readout.notes).toContain("Base-rate and signal-rate confidence intervals overlap.");
+  });
+
+  test("classifies adverse evidence as risk-off or no short-vol support", () => {
+    const readout = buildReserveVixReadout(stats({
+      conditional: { n: 140, hits: 63, hitRatePct: 45, ciLowPct: 39, ciHighPct: 51 },
+      liftPctPoints: -8,
+      meanVixPointChange: 0.8,
+      claimDeltaPctPoints: -26,
+    }));
+
+    expect(readout.verdict).toBe("Risk-Off / No Short-Vol Support");
+    expect(readout.bias).toBe("risk_off");
   });
 });

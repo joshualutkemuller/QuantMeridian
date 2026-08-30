@@ -34,7 +34,13 @@ function goldRows() {
     value: 30 - index * 0.05,
     realtime_start: dateFrom("2026-01-07", index),
   }));
-  return [...reserves, ...vix];
+  const spx = Array.from({ length: 120 }, (_, index) => ({
+    series_id: "SP500",
+    date: dateFrom("2026-01-07", index),
+    value: 5000 + index * 2,
+    realtime_start: dateFrom("2026-01-07", index),
+  }));
+  return [...reserves, ...vix, ...spx];
 }
 
 async function callReserveVix(path = "http://local.test/api/market-volatility/reserve-vix?start=2026-03-01") {
@@ -91,22 +97,32 @@ describe("/api/market-volatility/reserve-vix", () => {
     expect(body.forwardDays).toBe(7);
     expect(body.stats.unconditional.n).toBeGreaterThan(0);
     expect(body.stats.conditional.n).toBeGreaterThan(0);
+    expect(body.stats.spxConditionalRise.n).toBeGreaterThan(0);
+    expect(body.stats.meanSpxPctChange).toBeGreaterThan(0);
+    expect(body.stats.vixRegimes).toHaveLength(4);
+    expect(body.readout.verdict).toBeTruthy();
+    expect(body.readout.evidence.signalN).toBe(body.stats.conditional.n);
+    expect(body.readout.evidence.spxRiseRatePct).toBe(body.stats.spxConditionalRise.hitRatePct);
     expect(body.diagnostics.confidenceIntervalMethod).toBe("wilson");
-    expect(body.citations.map((citation: { seriesId: string }) => citation.seriesId)).toEqual(["WRESBAL", "VIXCLS"]);
+    expect(body.citations.map((citation: { seriesId: string }) => citation.seriesId)).toEqual(["WRESBAL", "VIXCLS", "SP500"]);
     expect(body.series.vix.length).toBeGreaterThan(0);
+    expect(body.series.spx.length).toBeGreaterThan(0);
     expect(body.series.vix[0]).toHaveProperty("date");
     expect(body.series.vix[0]).toHaveProperty("value");
     expect(body.rows[0]).toHaveProperty("trailing12WeekMean");
+    expect(body.rows[0]).toHaveProperty("spxPctChange");
     expect(mocks.raw).toHaveBeenCalledTimes(1);
     expect(String(mocks.raw.mock.calls[0][0])).toContain("gold_fred_latest_observation");
+    expect(String(mocks.raw.mock.calls[0][0])).toContain("?3");
   });
 
   test("does not guess Tradability Mode release timing", async () => {
     const body = await callReserveVix("http://local.test/api/market-volatility/reserve-vix?mode=tradability");
 
-    expect(body.source).toBe("ERR");
+    expect(body.source).toBe("UNAVAILABLE");
     expect(body.mode).toBe("tradability");
     expect(body.error).toBe("Tradability Mode is unavailable until approved Gold release timing is exposed.");
+    expect(body.readout.notes).toContain("Tradability Mode is unavailable until approved Gold release timing is exposed.");
     expect(mocks.raw).not.toHaveBeenCalled();
   });
 });

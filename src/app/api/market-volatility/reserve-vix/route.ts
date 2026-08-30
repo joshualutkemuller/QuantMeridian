@@ -5,13 +5,13 @@ import { json } from "@/lib/server/http";
 export const runtime = "nodejs";
 
 interface GoldObservationRow {
-  series_id: "WRESBAL" | "VIXCLS";
+  series_id: "WRESBAL" | "VIXCLS" | "SP500";
   date: string;
   value: number;
   realtime_start?: string | null;
 }
 
-const SERIES_IDS = ["WRESBAL", "VIXCLS"] as const;
+const SERIES_IDS = ["WRESBAL", "VIXCLS", "SP500"] as const;
 const DEFAULT_START = "2009-01-01";
 
 function parseMode(value: string | null): MarketVolAlignmentMode {
@@ -53,7 +53,7 @@ function unavailable(req: {
   startDate: string;
   endDate?: string;
   claimThresholdPct: number;
-}, error: string) {
+}, error: string, source: "ERR" | "UNAVAILABLE" = "ERR") {
   const result = computeReserveVixExperiment({
     reserves: [],
     vix: [],
@@ -66,7 +66,12 @@ function unavailable(req: {
   });
   return json({
     ...result,
+    source,
     error,
+    readout: {
+      ...result.readout,
+      notes: [...result.readout.notes, error],
+    },
     diagnostics: {
       ...result.diagnostics,
       warnings: [...result.diagnostics.warnings, error],
@@ -90,7 +95,7 @@ export async function GET(req: Request) {
   const requestConfig = { mode, signal, forwardDays, startDate, endDate, claimThresholdPct };
 
   if (mode === "tradability") {
-    return unavailable(requestConfig, "Tradability Mode is unavailable until approved Gold release timing is exposed.");
+    return unavailable(requestConfig, "Tradability Mode is unavailable until approved Gold release timing is exposed.", "UNAVAILABLE");
   }
 
   if (!goldEnabled()) {
@@ -99,16 +104,18 @@ export async function GET(req: Request) {
 
   try {
     const lookbackStart = addDays(startDate, -120);
-    const params: unknown[] = [SERIES_IDS[0], SERIES_IDS[1], lookbackStart];
+    const params: unknown[] = [...SERIES_IDS, lookbackStart];
     const upperBound = endDate ? addDays(endDate, forwardDays + 10) : null;
-    const upperClause = upperBound ? `AND observation_date <= ${goldParam(4)}` : "";
+    const lookbackParam = SERIES_IDS.length + 1;
+    const upperParam = SERIES_IDS.length + 2;
+    const upperClause = upperBound ? `AND observation_date <= ${goldParam(upperParam)}` : "";
     if (upperBound) params.push(upperBound);
 
     const rows = await goldStore().raw<GoldObservationRow>(
       `SELECT series_id, observation_date AS date, value, realtime_start
        FROM ${goldTable("fred_latest_observation")}
-       WHERE series_id IN (${goldParam(1)}, ${goldParam(2)})
-         AND observation_date >= ${goldParam(3)}
+       WHERE series_id IN (${SERIES_IDS.map((_, index) => goldParam(index + 1)).join(", ")})
+         AND observation_date >= ${goldParam(lookbackParam)}
          ${upperClause}
          AND value IS NOT NULL
        ORDER BY series_id, observation_date ASC`,
@@ -117,11 +124,13 @@ export async function GET(req: Request) {
 
     const reserves: MarketVolSeriesPoint[] = [];
     const vix: MarketVolSeriesPoint[] = [];
+    const spx: MarketVolSeriesPoint[] = [];
     for (const row of rows) {
       const point = { date: row.date, value: Number(row.value) };
       if (!Number.isFinite(point.value)) continue;
       if (row.series_id === "WRESBAL") reserves.push(point);
       if (row.series_id === "VIXCLS") vix.push(point);
+      if (row.series_id === "SP500") spx.push(point);
     }
 
     if (!reserves.length) {
@@ -134,6 +143,7 @@ export async function GET(req: Request) {
     const result = computeReserveVixExperiment({
       reserves,
       vix,
+      spx,
       startDate,
       endDate,
       alignmentMode: mode,
@@ -141,6 +151,9 @@ export async function GET(req: Request) {
       forwardDays,
       claimThresholdPct,
     });
+    if (!spx.length) {
+      result.diagnostics.warnings.push("No Gold DB observations found for SP500; SPX outcome fields are unavailable.");
+    }
 
     return json(result);
   } catch (err) {

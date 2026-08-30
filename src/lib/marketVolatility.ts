@@ -1,6 +1,6 @@
 export type MarketVolAlignmentMode = "research" | "tradability";
 export type MarketVolSignalMode = "above_mean" | "cross_above";
-export type MarketVolSource = "DB" | "ERR";
+export type MarketVolSource = "DB" | "ERR" | "UNAVAILABLE";
 
 export interface MarketVolSeriesPoint {
   date: string;
@@ -42,6 +42,12 @@ export interface ReserveVixExperimentRow {
   vixPointChange: number;
   vixPctChange: number | null;
   vixFell: boolean;
+  spxStartDate?: string;
+  spxStart?: number;
+  spxEndDate?: string;
+  spxEnd?: number;
+  spxPctChange?: number | null;
+  spxRose?: boolean;
 }
 
 export interface MarketVolDiagnostics {
@@ -50,26 +56,75 @@ export interface MarketVolDiagnostics {
   missingVixEndpoint: number;
   insufficientTrailingMean: number;
   missingActionableDate: number;
+  missingSpxStart: number;
+  missingSpxEndpoint: number;
   confidenceIntervalMethod: "wilson";
   warnings: string[];
+}
+
+export type VixRegimeId = "lt15" | "15_20" | "20_30" | "gte30";
+
+export interface VixRegimeStats {
+  id: VixRegimeId;
+  label: string;
+  all: HitRateStats;
+  signal: HitRateStats;
+  liftPctPoints: number | null;
+  meanVixPointChange: number | null;
+  spxRiseRatePct: number | null;
+  meanSpxPctChange: number | null;
 }
 
 export interface MarketVolStats {
   unconditional: HitRateStats;
   conditional: HitRateStats;
+  spxUnconditionalRise: HitRateStats;
+  spxConditionalRise: HitRateStats;
   liftPctPoints: number | null;
   meanVixPointChange: number | null;
   medianVixPointChange: number | null;
   meanVixPctChange: number | null;
   medianVixPctChange: number | null;
+  meanSpxPctChange: number | null;
+  medianSpxPctChange: number | null;
   reservePctChangeVixPointChangeCorr: number | null;
   claimThresholdPct: number;
   claimDeltaPctPoints: number | null;
+  vixRegimes: VixRegimeStats[];
+}
+
+export type MarketVolBias = "risk_on" | "neutral" | "risk_off" | "unavailable";
+export type MarketVolConfidence = "low" | "medium" | "high";
+export type MarketVolVerdict =
+  | "Unavailable"
+  | "Insufficient Sample"
+  | "No Meaningful Edge"
+  | "Weak Lower-Vol Association"
+  | "Potential Context Signal"
+  | "Risk-Off / No Short-Vol Support";
+
+export interface MarketVolReadout {
+  verdict: MarketVolVerdict;
+  bias: MarketVolBias;
+  confidence: MarketVolConfidence;
+  ciOverlap: boolean | null;
+  evidence: {
+    baseRatePct: number | null;
+    signalRatePct: number | null;
+    liftPctPoints: number | null;
+    signalN: number;
+    meanVixPointChange: number | null;
+    spxRiseRatePct: number | null;
+    meanSpxPctChange: number | null;
+    claimDeltaPctPoints: number | null;
+  };
+  notes: string[];
 }
 
 export interface ComputeReserveVixExperimentInput {
   reserves: MarketVolSeriesPoint[];
   vix: MarketVolSeriesPoint[];
+  spx?: MarketVolSeriesPoint[];
   startDate?: string;
   endDate?: string;
   alignmentMode?: MarketVolAlignmentMode;
@@ -88,14 +143,19 @@ export interface ComputeReserveVixExperimentResult {
   inputs: {
     reservesSeriesId: "WRESBAL";
     vixSeriesId: "VIXCLS";
+    spxSeriesId: "SP500";
     reservesRows: number;
     vixRows: number;
+    spxRows: number;
     latestReserveDate: string | null;
     latestVixDate: string | null;
+    latestSpxDate: string | null;
   };
   stats: MarketVolStats;
+  readout: MarketVolReadout;
   series: {
     vix: MarketVolSeriesPoint[];
+    spx: MarketVolSeriesPoint[];
   };
   rows: ReserveVixExperimentRow[];
   diagnostics: MarketVolDiagnostics;
@@ -120,6 +180,12 @@ export const RESERVE_VIX_CITATIONS: Citation[] = [
     source: "Chicago Board Options Exchange, retrieved from FRED, Federal Reserve Bank of St. Louis",
     url: "https://fred.stlouisfed.org/series/VIXCLS",
     note: "FRED displays CBOE copyright/reprint notes for this series; externally shared exports should respect applicable FRED and CBOE usage terms.",
+  },
+  {
+    seriesId: "SP500",
+    title: "S&P 500",
+    source: "S&P Dow Jones Indices LLC, retrieved from FRED, Federal Reserve Bank of St. Louis",
+    url: "https://fred.stlouisfed.org/series/SP500",
   },
 ];
 
@@ -162,10 +228,13 @@ function betweenDates(rows: MarketVolSeriesPoint[], startDate: string, endDate: 
   });
 }
 
-function firstOnOrAfter(rows: MarketVolSeriesPoint[], date: string): MarketVolSeriesPoint | null {
+function firstOnOrAfterWithin(rows: MarketVolSeriesPoint[], date: string, maxLagDays: number): MarketVolSeriesPoint | null {
   const target = parseDate(date);
+  const latestAllowed = target + maxLagDays * DAY_MS;
   for (const row of rows) {
-    if (parseDate(row.date) >= target) return row;
+    const rowDate = parseDate(row.date);
+    if (rowDate < target) continue;
+    return rowDate <= latestAllowed ? row : null;
   }
   return null;
 }
@@ -195,9 +264,9 @@ export function wilsonInterval(hits: number, n: number, z = 1.959963984540054): 
   };
 }
 
-function hitRate(rows: ReserveVixExperimentRow[]): HitRateStats {
+function hitRateBy<T>(rows: T[], predicate: (row: T) => boolean): HitRateStats {
   const n = rows.length;
-  const hits = rows.filter((row) => row.vixFell).length;
+  const hits = rows.filter(predicate).length;
   const ci = wilsonInterval(hits, n);
   return {
     n,
@@ -206,6 +275,10 @@ function hitRate(rows: ReserveVixExperimentRow[]): HitRateStats {
     ciLowPct: ci.lowPct,
     ciHighPct: ci.highPct,
   };
+}
+
+function hitRate(rows: ReserveVixExperimentRow[]): HitRateStats {
+  return hitRateBy(rows, (row) => row.vixFell);
 }
 
 function pearson(xs: number[], ys: number[]): number | null {
@@ -241,8 +314,166 @@ function nonOverlapping(rows: ReserveVixExperimentRow[]): ReserveVixExperimentRo
   return selected;
 }
 
-function emptyResult(input: Required<Pick<ComputeReserveVixExperimentInput, "alignmentMode" | "signalMode" | "forwardDays" | "claimThresholdPct">> & { startDate: string; endDate: string }, reservesRows: MarketVolSeriesPoint[], vixRows: MarketVolSeriesPoint[], diagnostics: MarketVolDiagnostics, error?: string): ComputeReserveVixExperimentResult {
+function intervalsOverlap(a: HitRateStats, b: HitRateStats): boolean | null {
+  if (a.ciLowPct === null || a.ciHighPct === null || b.ciLowPct === null || b.ciHighPct === null) return null;
+  return a.ciLowPct <= b.ciHighPct && b.ciLowPct <= a.ciHighPct;
+}
+
+const VIX_REGIMES: Array<{ id: VixRegimeId; label: string; test: (value: number) => boolean }> = [
+  { id: "lt15", label: "VIX < 15", test: (value) => value < 15 },
+  { id: "15_20", label: "15 <= VIX < 20", test: (value) => value >= 15 && value < 20 },
+  { id: "20_30", label: "20 <= VIX < 30", test: (value) => value >= 20 && value < 30 },
+  { id: "gte30", label: "VIX >= 30", test: (value) => value >= 30 },
+];
+
+function signalRowsForMode(rows: ReserveVixExperimentRow[], signalMode: MarketVolSignalMode): ReserveVixExperimentRow[] {
+  const eligible = rows.filter((row) => row.signalEligible);
+  return signalMode === "cross_above" ? nonOverlapping(eligible) : eligible;
+}
+
+function spxRowsWithOutcomes(rows: ReserveVixExperimentRow[]): Array<ReserveVixExperimentRow & { spxRose: boolean; spxPctChange: number }> {
+  return rows.filter((row): row is ReserveVixExperimentRow & { spxRose: boolean; spxPctChange: number } => (
+    typeof row.spxRose === "boolean" && isFiniteNumber(row.spxPctChange)
+  ));
+}
+
+function buildVixRegimes(rows: ReserveVixExperimentRow[], signalMode: MarketVolSignalMode): VixRegimeStats[] {
+  return VIX_REGIMES.map(({ id, label, test }) => {
+    const allRows = rows.filter((row) => test(row.vixStart));
+    const signalRows = signalRowsForMode(allRows, signalMode);
+    const all = hitRate(allRows);
+    const signal = hitRate(signalRows);
+    const signalSpxRows = spxRowsWithOutcomes(signalRows);
+    const liftPctPoints = all.hitRatePct !== null && signal.hitRatePct !== null
+      ? signal.hitRatePct - all.hitRatePct
+      : null;
+
+    return {
+      id,
+      label,
+      all,
+      signal,
+      liftPctPoints,
+      meanVixPointChange: mean(signalRows.map((row) => row.vixPointChange).filter(isFiniteNumber)),
+      spxRiseRatePct: hitRateBy(signalSpxRows, (row) => row.spxRose).hitRatePct,
+      meanSpxPctChange: mean(signalSpxRows.map((row) => row.spxPctChange)),
+    };
+  });
+}
+
+export function buildReserveVixReadout(stats: MarketVolStats): MarketVolReadout {
+  const signalN = stats.conditional.n;
+  const ciOverlap = intervalsOverlap(stats.unconditional, stats.conditional);
+  const lift = stats.liftPctPoints;
+  const meanVix = stats.meanVixPointChange;
+  const notes: string[] = [];
+  const evidence = {
+    baseRatePct: stats.unconditional.hitRatePct,
+    signalRatePct: stats.conditional.hitRatePct,
+    liftPctPoints: lift,
+    signalN,
+    meanVixPointChange: meanVix,
+    spxRiseRatePct: stats.spxConditionalRise.hitRatePct,
+    meanSpxPctChange: stats.meanSpxPctChange,
+    claimDeltaPctPoints: stats.claimDeltaPctPoints,
+  };
+
+  if (stats.unconditional.hitRatePct === null || stats.conditional.hitRatePct === null || lift === null) {
+    return {
+      verdict: "Unavailable",
+      bias: "unavailable",
+      confidence: "low",
+      ciOverlap,
+      evidence,
+      notes: ["Gold DB data is unavailable or produced no eligible signal rows."],
+    };
+  }
+
+  if (signalN < 30) {
+    notes.push("Signal sample is below 30 observations; treat the readout as exploratory.");
+    return {
+      verdict: "Insufficient Sample",
+      bias: "neutral",
+      confidence: "low",
+      ciOverlap,
+      evidence,
+      notes,
+    };
+  }
+
+  if (ciOverlap) {
+    notes.push("Base-rate and signal-rate confidence intervals overlap.");
+  }
+  if (stats.claimDeltaPctPoints !== null && stats.claimDeltaPctPoints < -5) {
+    notes.push("Observed signal rate is well below the claim threshold.");
+  }
+
+  const lowerVolSupport = lift >= 3 && (meanVix === null || meanVix < 0);
+  const adverseSupport = lift <= -3 || (meanVix !== null && meanVix > 0.25);
+  const confidence: MarketVolConfidence = !ciOverlap && signalN >= 150 && Math.abs(lift) >= 6 ? "medium" : "low";
+
+  if (lowerVolSupport && lift >= 6) {
+    return {
+      verdict: "Potential Context Signal",
+      bias: "risk_on",
+      confidence,
+      ciOverlap,
+      evidence,
+      notes,
+    };
+  }
+
+  if (lowerVolSupport) {
+    return {
+      verdict: "Weak Lower-Vol Association",
+      bias: "risk_on",
+      confidence: "low",
+      ciOverlap,
+      evidence,
+      notes,
+    };
+  }
+
+  if (adverseSupport) {
+    return {
+      verdict: "Risk-Off / No Short-Vol Support",
+      bias: "risk_off",
+      confidence,
+      ciOverlap,
+      evidence,
+      notes,
+    };
+  }
+
+  return {
+    verdict: "No Meaningful Edge",
+    bias: "neutral",
+    confidence: "low",
+    ciOverlap,
+    evidence,
+    notes,
+  };
+}
+
+function emptyResult(input: Required<Pick<ComputeReserveVixExperimentInput, "alignmentMode" | "signalMode" | "forwardDays" | "claimThresholdPct">> & { startDate: string; endDate: string }, reservesRows: MarketVolSeriesPoint[], vixRows: MarketVolSeriesPoint[], spxRows: MarketVolSeriesPoint[], diagnostics: MarketVolDiagnostics, error?: string): ComputeReserveVixExperimentResult {
   const emptyStats = hitRate([]);
+  const stats: MarketVolStats = {
+    unconditional: emptyStats,
+    conditional: emptyStats,
+    spxUnconditionalRise: emptyStats,
+    spxConditionalRise: emptyStats,
+    liftPctPoints: null,
+    meanVixPointChange: null,
+    medianVixPointChange: null,
+    meanVixPctChange: null,
+    medianVixPctChange: null,
+    meanSpxPctChange: null,
+    medianSpxPctChange: null,
+    reservePctChangeVixPointChangeCorr: null,
+    claimThresholdPct: input.claimThresholdPct,
+    claimDeltaPctPoints: null,
+    vixRegimes: buildVixRegimes([], input.signalMode),
+  };
   return {
     source: "ERR",
     experimentId: "reserve-vix",
@@ -253,25 +484,19 @@ function emptyResult(input: Required<Pick<ComputeReserveVixExperimentInput, "ali
     inputs: {
       reservesSeriesId: "WRESBAL",
       vixSeriesId: "VIXCLS",
+      spxSeriesId: "SP500",
       reservesRows: reservesRows.length,
       vixRows: vixRows.length,
+      spxRows: spxRows.length,
       latestReserveDate: latestDate(reservesRows),
       latestVixDate: latestDate(vixRows),
+      latestSpxDate: latestDate(spxRows),
     },
-    stats: {
-      unconditional: emptyStats,
-      conditional: emptyStats,
-      liftPctPoints: null,
-      meanVixPointChange: null,
-      medianVixPointChange: null,
-      meanVixPctChange: null,
-      medianVixPctChange: null,
-      reservePctChangeVixPointChangeCorr: null,
-      claimThresholdPct: input.claimThresholdPct,
-      claimDeltaPctPoints: null,
-    },
+    stats,
+    readout: buildReserveVixReadout(stats),
     series: {
       vix: betweenDates(vixRows, input.startDate, input.endDate),
+      spx: betweenDates(spxRows, input.startDate, input.endDate),
     },
     rows: [],
     diagnostics,
@@ -283,6 +508,7 @@ function emptyResult(input: Required<Pick<ComputeReserveVixExperimentInput, "ali
 export function computeReserveVixExperiment(input: ComputeReserveVixExperimentInput): ComputeReserveVixExperimentResult {
   const reserves = sortSeries(input.reserves);
   const vix = sortSeries(input.vix);
+  const spx = sortSeries(input.spx ?? []);
   const alignmentMode = input.alignmentMode ?? "research";
   const signalMode = input.signalMode ?? "above_mean";
   const forwardDays = input.forwardDays ?? 7;
@@ -296,16 +522,18 @@ export function computeReserveVixExperiment(input: ComputeReserveVixExperimentIn
     missingVixEndpoint: 0,
     insufficientTrailingMean: 0,
     missingActionableDate: 0,
+    missingSpxStart: 0,
+    missingSpxEndpoint: 0,
     confidenceIntervalMethod: "wilson",
     warnings: [],
   };
   const normalized = { alignmentMode, signalMode, forwardDays, claimThresholdPct, startDate, endDate };
 
   if (forwardDays !== 7 && forwardDays !== 14) {
-    return emptyResult(normalized, reserves, vix, diagnostics, "forwardDays must be 7 or 14.");
+    return emptyResult(normalized, reserves, vix, spx, diagnostics, "forwardDays must be 7 or 14.");
   }
   if (!reserves.length || !vix.length) {
-    return emptyResult(normalized, reserves, vix, diagnostics, "WRESBAL and VIXCLS observations are required.");
+    return emptyResult(normalized, reserves, vix, spx, diagnostics, "WRESBAL and VIXCLS observations are required.");
   }
 
   const rows: ReserveVixExperimentRow[] = [];
@@ -349,7 +577,7 @@ export function computeReserveVixExperiment(input: ComputeReserveVixExperimentIn
       continue;
     }
 
-    const vixStart = firstOnOrAfter(vix, anchorDate);
+    const vixStart = firstOnOrAfterWithin(vix, anchorDate, 7);
     if (!vixStart) {
       diagnostics.missingVixStart += 1;
       diagnostics.droppedRows += 1;
@@ -357,7 +585,7 @@ export function computeReserveVixExperiment(input: ComputeReserveVixExperimentIn
     }
 
     const endpointDate = addDays(anchorDate, forwardDays);
-    const vixEnd = firstOnOrAfter(vix, endpointDate);
+    const vixEnd = firstOnOrAfterWithin(vix, endpointDate, 7);
     if (!vixEnd) {
       diagnostics.missingVixEndpoint += 1;
       diagnostics.droppedRows += 1;
@@ -367,6 +595,27 @@ export function computeReserveVixExperiment(input: ComputeReserveVixExperimentIn
     const vixPointChange = vixEnd.value - vixStart.value;
     const vixPctChange = vixStart.value !== 0 ? ((vixEnd.value / vixStart.value) - 1) * 100 : null;
     const signalEligible = signalMode === "above_mean" ? reserveAboveMean : crossAbove;
+    const spxStart = spx.length ? firstOnOrAfterWithin(spx, anchorDate, 7) : null;
+    let spxFields: Pick<ReserveVixExperimentRow, "spxStartDate" | "spxStart" | "spxEndDate" | "spxEnd" | "spxPctChange" | "spxRose"> = {};
+
+    if (spx.length && !spxStart) {
+      diagnostics.missingSpxStart += 1;
+    } else if (spxStart) {
+      const spxEnd = firstOnOrAfterWithin(spx, endpointDate, 7);
+      if (!spxEnd) {
+        diagnostics.missingSpxEndpoint += 1;
+      } else {
+        const spxPctChange = spxStart.value !== 0 ? ((spxEnd.value / spxStart.value) - 1) * 100 : null;
+        spxFields = {
+          spxStartDate: spxStart.date,
+          spxStart: spxStart.value,
+          spxEndDate: spxEnd.date,
+          spxEnd: spxEnd.value,
+          spxPctChange,
+          spxRose: spxEnd.value > spxStart.value,
+        };
+      }
+    }
 
     rows.push({
       observationDate: reserve.date,
@@ -386,19 +635,21 @@ export function computeReserveVixExperiment(input: ComputeReserveVixExperimentIn
       vixPointChange,
       vixPctChange,
       vixFell: vixPointChange < 0,
+      ...spxFields,
     });
   }
 
-  const conditionalRows = signalMode === "cross_above"
-    ? nonOverlapping(rows.filter((row) => row.signalEligible))
-    : rows.filter((row) => row.signalEligible);
+  const conditionalRows = signalRowsForMode(rows, signalMode);
   const unconditional = hitRate(rows);
   const conditional = hitRate(conditionalRows);
+  const spxUnconditionalRows = spxRowsWithOutcomes(rows);
+  const spxConditionalRows = spxRowsWithOutcomes(conditionalRows);
   const liftPctPoints = unconditional.hitRatePct !== null && conditional.hitRatePct !== null
     ? conditional.hitRatePct - unconditional.hitRatePct
     : null;
   const pointChanges = conditionalRows.map((row) => row.vixPointChange).filter(isFiniteNumber);
   const pctChanges = conditionalRows.map((row) => row.vixPctChange).filter(isFiniteNumber);
+  const spxPctChanges = spxConditionalRows.map((row) => row.spxPctChange);
   const corrPairs = rows
     .map((row) => ({ x: row.reservePctChange, y: row.vixPointChange }))
     .filter((row): row is { x: number; y: number } => isFiniteNumber(row.x) && isFiniteNumber(row.y));
@@ -409,6 +660,26 @@ export function computeReserveVixExperiment(input: ComputeReserveVixExperimentIn
   if (diagnostics.missingVixEndpoint > 0) {
     diagnostics.warnings.push("Some rows were dropped because the forward VIX endpoint was unavailable.");
   }
+  if (diagnostics.missingSpxStart > 0 || diagnostics.missingSpxEndpoint > 0) {
+    diagnostics.warnings.push("Some rows have no matched SP500 forward outcome; SPX outcome rates use the matched subset.");
+  }
+  const stats: MarketVolStats = {
+    unconditional,
+    conditional,
+    spxUnconditionalRise: hitRateBy(spxUnconditionalRows, (row) => row.spxRose),
+    spxConditionalRise: hitRateBy(spxConditionalRows, (row) => row.spxRose),
+    liftPctPoints,
+    meanVixPointChange: mean(pointChanges),
+    medianVixPointChange: median(pointChanges),
+    meanVixPctChange: mean(pctChanges),
+    medianVixPctChange: median(pctChanges),
+    meanSpxPctChange: mean(spxPctChanges),
+    medianSpxPctChange: median(spxPctChanges),
+    reservePctChangeVixPointChangeCorr: pearson(corrPairs.map((row) => row.x), corrPairs.map((row) => row.y)),
+    claimThresholdPct,
+    claimDeltaPctPoints: conditional.hitRatePct === null ? null : conditional.hitRatePct - claimThresholdPct,
+    vixRegimes: buildVixRegimes(rows, signalMode),
+  };
 
   return {
     source: rows.length ? "DB" : "ERR",
@@ -420,25 +691,19 @@ export function computeReserveVixExperiment(input: ComputeReserveVixExperimentIn
     inputs: {
       reservesSeriesId: "WRESBAL",
       vixSeriesId: "VIXCLS",
+      spxSeriesId: "SP500",
       reservesRows: reserves.length,
       vixRows: vix.length,
+      spxRows: spx.length,
       latestReserveDate: latestDate(reserves),
       latestVixDate: latestDate(vix),
+      latestSpxDate: latestDate(spx),
     },
-    stats: {
-      unconditional,
-      conditional,
-      liftPctPoints,
-      meanVixPointChange: mean(pointChanges),
-      medianVixPointChange: median(pointChanges),
-      meanVixPctChange: mean(pctChanges),
-      medianVixPctChange: median(pctChanges),
-      reservePctChangeVixPointChangeCorr: pearson(corrPairs.map((row) => row.x), corrPairs.map((row) => row.y)),
-      claimThresholdPct,
-      claimDeltaPctPoints: conditional.hitRatePct === null ? null : conditional.hitRatePct - claimThresholdPct,
-    },
+    stats,
+    readout: buildReserveVixReadout(stats),
     series: {
       vix: betweenDates(vix, startDate, endDate),
+      spx: betweenDates(spx, startDate, endDate),
     },
     rows,
     diagnostics,

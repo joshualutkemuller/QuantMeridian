@@ -5,7 +5,7 @@ import { DataGrid, type Column } from "@/components/ui/DataGrid";
 import { ProvenanceBadge } from "@/components/ui/ProvenanceBadge";
 import { fmtAbbr, fmtNum, fmtPct, fmtSigned, fmtSignedPct } from "@/lib/format";
 import { useReserveVixExperiment, type ReserveVixOptions } from "@/lib/useMarketVolatility";
-import type { MarketVolSeriesPoint, ReserveVixExperimentRow } from "@/lib/marketVolatility";
+import type { MarketVolBias, MarketVolConfidence, MarketVolSeriesPoint, ReserveVixExperimentRow, VixRegimeStats } from "@/lib/marketVolatility";
 
 function nullablePct(value: number | null | undefined, dp = 1): string {
   return value == null ? "-" : fmtPct(value, dp);
@@ -22,6 +22,33 @@ function nullableNum(value: number | null | undefined, dp = 2): string {
 function hitRateSub(n: number, low: number | null, high: number | null): string {
   const interval = low == null || high == null ? "CI -" : `CI ${fmtPct(low, 0)}-${fmtPct(high, 0)}`;
   return `n=${n} | ${interval}`;
+}
+
+function biasTone(bias: MarketVolBias): "up" | "down" | "amber" | "neutral" {
+  if (bias === "risk_on") return "up";
+  if (bias === "risk_off") return "down";
+  if (bias === "unavailable") return "amber";
+  return "neutral";
+}
+
+function confidenceTone(confidence: MarketVolConfidence): "up" | "amber" | "neutral" {
+  if (confidence === "high") return "up";
+  if (confidence === "medium") return "amber";
+  return "neutral";
+}
+
+function biasLabel(bias: MarketVolBias): string {
+  if (bias === "risk_on") return "Risk-On Tilt";
+  if (bias === "risk_off") return "Risk-Off Tilt";
+  if (bias === "unavailable") return "Unavailable";
+  return "Neutral";
+}
+
+function tradeUseLabel(bias: MarketVolBias): string {
+  if (bias === "risk_on") return "Lower-vol context only; confirm with broader risk signals.";
+  if (bias === "risk_off") return "No short-vol support from this setup.";
+  if (bias === "unavailable") return "Waiting for eligible Gold DB observations.";
+  return "No advantage over normal VIX behavior.";
 }
 
 function Button({
@@ -243,6 +270,15 @@ function EmptyChart({ label }: { label: string }) {
   );
 }
 
+function EvidenceLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex min-w-0 items-center justify-between gap-2 border-b border-term-border-soft py-1.5 last:border-b-0">
+      <span className="truncate text-term-text-mute" title={label}>{label}</span>
+      <span className="tnum shrink-0 text-term-text">{value}</span>
+    </div>
+  );
+}
+
 export default function MarketVolatilityPage() {
   const [mode, setMode] = useState<ReserveVixOptions["mode"]>("research");
   const [signal, setSignal] = useState<ReserveVixOptions["signal"]>("above_mean");
@@ -256,10 +292,12 @@ export default function MarketVolatilityPage() {
   );
   const { data, source } = useReserveVixExperiment(options);
   const signalRows = useMemo(() => data.rows.filter((row) => row.signalEligible), [data.rows]);
+  const regimeRows = data.stats.vixRegimes ?? [];
   const latestDate = data.inputs.latestVixDate ?? data.inputs.latestReserveDate;
   const lift = data.stats.liftPctPoints;
   const claimDelta = data.stats.claimDeltaPctPoints;
   const loading = source === "LOADING";
+  const unavailable = source === "UNAVAILABLE";
 
   const eventCols: Column<ReserveVixExperimentRow>[] = [
     { key: "anchor", header: "Anchor", render: (row) => row.anchorDate, sortVal: (row) => row.anchorDate },
@@ -274,6 +312,23 @@ export default function MarketVolatilityPage() {
       sortVal: (row) => row.vixPointChange,
     },
     {
+      key: "spxRet",
+      header: "SPX Ret",
+      align: "right",
+      render: (row) => {
+        if (row.spxPctChange == null) return "-";
+        return <span className={row.spxPctChange >= 0 ? "text-term-up" : "text-term-down"}>{fmtSignedPct(row.spxPctChange, 2)}</span>;
+      },
+      sortVal: (row) => row.spxPctChange ?? -Infinity,
+    },
+    {
+      key: "spxRose",
+      header: "SPX Up",
+      align: "center",
+      render: (row) => row.spxRose == null ? "-" : <Tag tone={row.spxRose ? "up" : "down"}>{row.spxRose ? "YES" : "NO"}</Tag>,
+      sortVal: (row) => row.spxRose == null ? -1 : row.spxRose ? 1 : 0,
+    },
+    {
       key: "hit",
       header: "Fell",
       align: "center",
@@ -281,6 +336,29 @@ export default function MarketVolatilityPage() {
       sortVal: (row) => (row.vixFell ? 1 : 0),
     },
     { key: "end", header: "End", render: (row) => row.vixEndDate, sortVal: (row) => row.vixEndDate },
+  ];
+
+const regimeCols: Column<VixRegimeStats>[] = [
+    { key: "regime", header: "Regime", render: (row) => row.label, sortVal: (row) => ({ lt15: 0, "15_20": 1, "20_30": 2, gte30: 3 })[row.id] },
+    { key: "base", header: "Base VIX Fall", align: "right", render: (row) => nullablePct(row.all.hitRatePct, 1), sortVal: (row) => row.all.hitRatePct ?? -Infinity },
+    { key: "signal", header: "Signal VIX Fall", align: "right", render: (row) => nullablePct(row.signal.hitRatePct, 1), sortVal: (row) => row.signal.hitRatePct ?? -Infinity },
+    {
+      key: "lift",
+      header: "Lift",
+      align: "right",
+      render: (row) => <span className={row.liftPctPoints != null && row.liftPctPoints >= 3 ? "text-term-up" : row.liftPctPoints != null && row.liftPctPoints <= -3 ? "text-term-down" : ""}>{nullableSignedPct(row.liftPctPoints, 1)}</span>,
+      sortVal: (row) => row.liftPctPoints ?? -Infinity,
+    },
+    { key: "vixChg", header: "Mean VIX", align: "right", render: (row) => nullableNum(row.meanVixPointChange, 2), sortVal: (row) => row.meanVixPointChange ?? Infinity },
+    { key: "spxRise", header: "SPX Up", align: "right", render: (row) => nullablePct(row.spxRiseRatePct, 1), sortVal: (row) => row.spxRiseRatePct ?? -Infinity },
+    { key: "spxRet", header: "Mean SPX", align: "right", render: (row) => nullableSignedPct(row.meanSpxPctChange, 2), sortVal: (row) => row.meanSpxPctChange ?? -Infinity },
+    {
+      key: "n",
+      header: "n",
+      align: "right",
+      render: (row) => `${fmtNum(row.signal.n, 0)} / ${fmtNum(row.all.n, 0)}`,
+      sortVal: (row) => row.signal.n,
+    },
   ];
 
   return (
@@ -314,6 +392,13 @@ export default function MarketVolatilityPage() {
         />
         <Stat label="Lift" value={nullableSignedPct(lift, 1)} sub="pct points vs base" tone={lift != null && lift > 0 ? "up" : lift != null && lift < 0 ? "down" : "neutral"} />
         <Stat label="Mean VIX Chg" value={nullableNum(data.stats.meanVixPointChange, 2)} sub="signal rows" tone={data.stats.meanVixPointChange != null && data.stats.meanVixPointChange < 0 ? "up" : "down"} />
+        <Stat
+          label="Signal SPX Rise"
+          value={nullablePct(data.stats.spxConditionalRise.hitRatePct, 1)}
+          sub={hitRateSub(data.stats.spxConditionalRise.n, data.stats.spxConditionalRise.ciLowPct, data.stats.spxConditionalRise.ciHighPct)}
+          tone={data.stats.spxConditionalRise.hitRatePct != null && data.stats.spxConditionalRise.hitRatePct >= 50 ? "up" : "neutral"}
+        />
+        <Stat label="Mean SPX Ret" value={nullableSignedPct(data.stats.meanSpxPctChange, 2)} sub="signal rows" tone={data.stats.meanSpxPctChange != null && data.stats.meanSpxPctChange > 0 ? "up" : data.stats.meanSpxPctChange != null && data.stats.meanSpxPctChange < 0 ? "down" : "neutral"} />
         <Stat label="Reserve/VIX Corr" value={nullableNum(data.stats.reservePctChangeVixPointChangeCorr, 2)} sub="reserve pct vs VIX points" />
         <Stat label="Claim Gap" value={nullableSignedPct(claimDelta, 1)} sub={`${claimThresholdPct}% threshold`} tone={claimDelta != null && claimDelta >= 0 ? "up" : "down"} />
       </KpiStrip>
@@ -363,6 +448,12 @@ export default function MarketVolatilityPage() {
           </div>
         </Panel>
 
+        {unavailable && (
+          <Panel title="Tradability Mode Pending" code="PEND" bodyClassName="p-3" resizable={false}>
+            <div className="text-xs text-term-text-dim">{data.error ?? "Tradability Mode is unavailable until approved Gold release timing is exposed."}</div>
+          </Panel>
+        )}
+
         {source === "ERR" && (
           <Panel title="Data State" code="ERR" bodyClassName="p-3" resizable={false}>
             <div className="text-xs text-term-text-dim">{data.error ?? "Market volatility data unavailable."}</div>
@@ -379,7 +470,20 @@ export default function MarketVolatilityPage() {
           <Panel title="Forward VIX Outcomes" code="OUT" className="xl:col-span-5" scroll>
             <OutcomeChart rows={data.rows} loading={loading} />
           </Panel>
-          <Panel title="Signal Rows" code="OBS" className="xl:col-span-7" scroll>
+          <Panel title="VIX Regimes" code="REG" className="xl:col-span-7" scroll>
+            <DataGrid
+              columns={regimeCols}
+              rows={regimeRows}
+              rowKey={(row) => row.id}
+              maxHeight="360px"
+              initialSort={{ key: "regime", dir: "asc" }}
+              zebra
+            />
+            <div className="border-t border-term-border px-2 py-1.5 text-2xs text-term-text-mute">
+              Buckets use VIX at the anchor date; n is signal rows / all eligible weekly observations in the regime.
+            </div>
+          </Panel>
+          <Panel title="Signal Rows" code="OBS" className="xl:col-span-8" scroll>
             <DataGrid
               columns={eventCols}
               rows={signalRows.slice(-80).reverse()}
@@ -389,12 +493,41 @@ export default function MarketVolatilityPage() {
               zebra
             />
           </Panel>
+          <Panel title="Readout" code="EDGE" className="xl:col-span-4" bodyClassName="p-3">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Tag tone={biasTone(data.readout.bias)}>{data.readout.verdict}</Tag>
+              <Tag tone={biasTone(data.readout.bias)}>{biasLabel(data.readout.bias)}</Tag>
+              <Tag tone={confidenceTone(data.readout.confidence)}>{data.readout.confidence} confidence</Tag>
+            </div>
+            <div className="mt-3 text-sm font-semibold text-term-text">{tradeUseLabel(data.readout.bias)}</div>
+            <div className="mt-3 border-y border-term-border text-2xs">
+              <EvidenceLine label="Base fall rate" value={nullablePct(data.readout.evidence.baseRatePct, 1)} />
+              <EvidenceLine label="Signal fall rate" value={nullablePct(data.readout.evidence.signalRatePct, 1)} />
+              <EvidenceLine label="Lift vs base" value={nullableSignedPct(data.readout.evidence.liftPctPoints, 1)} />
+              <EvidenceLine label="Signal sample" value={fmtNum(data.readout.evidence.signalN, 0)} />
+              <EvidenceLine label="Mean VIX change" value={nullableNum(data.readout.evidence.meanVixPointChange, 2)} />
+              <EvidenceLine label="Signal SPX rise rate" value={nullablePct(data.readout.evidence.spxRiseRatePct, 1)} />
+              <EvidenceLine label="Mean SPX return" value={nullableSignedPct(data.readout.evidence.meanSpxPctChange, 2)} />
+              <EvidenceLine label="Claim gap" value={nullableSignedPct(data.readout.evidence.claimDeltaPctPoints, 1)} />
+              <EvidenceLine label="CI overlap" value={data.readout.ciOverlap == null ? "-" : data.readout.ciOverlap ? "YES" : "NO"} />
+            </div>
+            {data.readout.notes.length > 0 && (
+              <div className="mt-3 space-y-1.5 text-2xs text-term-text-dim">
+                {data.readout.notes.map((note) => (
+                  <div key={note} className="border border-term-border bg-term-panel-2 px-2 py-1.5">
+                    {note}
+                  </div>
+                ))}
+              </div>
+            )}
+          </Panel>
           <Panel title="Diagnostics" code="DQ" className="xl:col-span-4" bodyClassName="p-3">
             <div className="grid grid-cols-2 gap-2">
               <Stat label="Rows" value={fmtNum(data.rows.length, 0)} sub="eligible anchors" className="min-w-0 px-0 py-0" />
               <Stat label="Signals" value={fmtNum(signalRows.length, 0)} sub={signal.replace("_", " ")} className="min-w-0 px-0 py-0" />
               <Stat label="Dropped" value={fmtNum(data.diagnostics.droppedRows, 0)} sub="excluded rows" className="min-w-0 px-0 py-0" />
-              <Stat label="Missing End" value={fmtNum(data.diagnostics.missingVixEndpoint, 0)} sub={`+${forwardDays}D VIX`} className="min-w-0 px-0 py-0" />
+              <Stat label="Missing VIX" value={fmtNum(data.diagnostics.missingVixEndpoint, 0)} sub={`+${forwardDays}D end`} className="min-w-0 px-0 py-0" />
+              <Stat label="Missing SPX" value={fmtNum(data.diagnostics.missingSpxEndpoint, 0)} sub={`+${forwardDays}D end`} className="min-w-0 px-0 py-0" />
             </div>
             <div className="mt-3 space-y-2 border-t border-term-border pt-3 text-2xs text-term-text-dim">
               <div className="flex items-center justify-between gap-2">
@@ -407,7 +540,7 @@ export default function MarketVolatilityPage() {
               </div>
               <div className="flex items-center justify-between gap-2">
                 <span>Inputs</span>
-                <span className="tnum text-term-text">{fmtNum(data.inputs.reservesRows, 0)} / {fmtNum(data.inputs.vixRows, 0)}</span>
+                <span className="tnum text-term-text">{fmtNum(data.inputs.reservesRows, 0)} / {fmtNum(data.inputs.vixRows, 0)} / {fmtNum(data.inputs.spxRows, 0)}</span>
               </div>
               {data.diagnostics.warnings.map((warning) => (
                 <div key={warning} className="border border-term-amber/30 bg-term-amber/10 p-2 text-term-amber">

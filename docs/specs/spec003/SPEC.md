@@ -67,6 +67,9 @@ flowing through the FRED / Gold DB economic pipeline:
 - VIX: FRED `VIXCLS`, "CBOE Volatility Index: VIX", or the Gold DB equivalent
   series. Cite as Chicago Board Options Exchange, `VIXCLS`, retrieved from FRED,
   Federal Reserve Bank of St. Louis: https://fred.stlouisfed.org/series/VIXCLS.
+- Equity outcome context: FRED `SP500`, "S&P 500", or the Gold DB equivalent
+  series. Cite as S&P Dow Jones Indices LLC, `SP500`, retrieved from FRED,
+  Federal Reserve Bank of St. Louis: https://fred.stlouisfed.org/series/SP500.
 
 Market Terminal should not add a new volatility vendor, scraped dataset, or
 separate external API for this module without explicit owner approval.
@@ -79,7 +82,7 @@ layer in `src/lib/server/goldStore.ts`.
 Required level-history inputs:
 
 - Table: Gold `fred_latest_observation`.
-- Series filter: `series_id IN ('WRESBAL', 'VIXCLS')`.
+- Series filter: `series_id IN ('WRESBAL', 'VIXCLS', 'SP500')`.
 - Required columns: `series_id`, `observation_date`, `value`, and
   `realtime_start` when available.
 - Sort order for calculations: ascending by `observation_date`.
@@ -110,6 +113,10 @@ requested 2009 through mid-August 2026 reconstruction:
 
 - `WRESBAL`: 1984-01-04 through 2026-08-19.
 - `VIXCLS`: 1990-01-02 through 2026-08-20.
+- `SP500`: S&P 500 level history through FRED/Gold for risk-on/risk-off
+  context. If unavailable in a local Gold DB snapshot, MVOL should keep the VIX
+  experiment running and mark SPX outcome fields unavailable rather than adding
+  a separate data source.
 
 ## Experiment Scaffold
 
@@ -119,6 +126,8 @@ requested 2009 through mid-August 2026 reconstruction:
   dollars, not seasonally adjusted.
 - Daily VIX closes: `VIXCLS`, daily close, index value, not seasonally adjusted,
   converted to weekly observations aligned to the reserve balance calendar.
+- Daily S&P 500 levels: `SP500`, daily index level, aligned to the same anchor
+  and forward endpoint rules as VIX for equity-return context.
 
 ### Signal Construction
 
@@ -193,6 +202,11 @@ in any exported visual/report:
 - True cross-above event hit rate and sample size.
 - Correlation between weekly reserve percent change and forward VIX change.
 - Confidence intervals or binomial bands for claimed hit rates.
+- SPX rise rate and mean/median SPX percent return over the same +7D/+14D
+  outcome windows.
+- VIX-regime breakdown by starting VIX level: below 15, 15-20, 20-30, and above
+  30. Each bucket should show base VIX fall rate, signal VIX fall rate, lift,
+  mean VIX point change, SPX rise rate, and mean SPX return where available.
 
 ### Event Counting
 
@@ -215,6 +229,7 @@ Proposed helper:
 computeReserveVixExperiment({
   reserves,
   vix,
+  spx,
   startDate,
   endDate,
   alignmentMode,
@@ -227,7 +242,8 @@ computeReserveVixExperiment({
 Required semantics:
 
 - `reserves` is weekly `WRESBAL` level history; `vix` is daily `VIXCLS` level
-  history.
+  history; optional `spx` is daily `SP500` level history from the same Gold/FRED
+  path.
 - Drop reserve rows until at least 12 prior weekly observations are available
   for the trailing mean. The trailing mean should use the 12 completed reserve
   observations before the anchor row, not include the current row.
@@ -240,6 +256,13 @@ Required semantics:
 - `vixPointChange = vixEnd - vixStart`.
 - `vixPctChange = (vixEnd / vixStart - 1) * 100`, when `vixStart` is nonzero.
 - `vixFell = vixPointChange < 0`.
+- `spxPctChange = (spxEnd / spxStart - 1) * 100`, when `SP500` is available and
+  `spxStart` is nonzero.
+- `spxRose = spxEnd > spxStart`, when matched SPX start/end values exist.
+- SPX matching should use the same anchor and forward endpoint dates as VIX. Do
+  not drop otherwise valid reserve/VIX rows if SPX is unavailable; count missing
+  SPX matches in diagnostics and expose SPX rates from the matched subset.
+- VIX-regime buckets use the starting `vixStart` level at the anchor.
 - Rows without a valid start or endpoint VIX close should be excluded from hit
   rate denominators and counted in a dropped-row diagnostic.
 - Correlation should be Pearson correlation between `reservePctChange` and
@@ -273,7 +296,7 @@ Response shape should include:
 
 ```ts
 {
-  source: "DB" | "ERR";
+  source: "DB" | "ERR" | "UNAVAILABLE";
   experimentId: "reserve-vix";
   mode: "research" | "tradability";
   signal: "above_mean" | "cross_above";
@@ -282,25 +305,57 @@ Response shape should include:
   inputs: {
     reservesSeriesId: "WRESBAL";
     vixSeriesId: "VIXCLS";
+    spxSeriesId: "SP500";
     reservesRows: number;
     vixRows: number;
+    spxRows: number;
     latestReserveDate: string | null;
     latestVixDate: string | null;
+    latestSpxDate: string | null;
   };
   stats: {
     unconditional: HitRateStats;
     conditional: HitRateStats;
+    spxUnconditionalRise: HitRateStats;
+    spxConditionalRise: HitRateStats;
     liftPctPoints: number | null;
     meanVixPointChange: number | null;
     medianVixPointChange: number | null;
     meanVixPctChange: number | null;
     medianVixPctChange: number | null;
+    meanSpxPctChange: number | null;
+    medianSpxPctChange: number | null;
     reservePctChangeVixPointChangeCorr: number | null;
     claimThresholdPct: number;
     claimDeltaPctPoints: number | null;
+    vixRegimes: VixRegimeStats[];
+  };
+  readout: {
+    verdict:
+      | "Unavailable"
+      | "Insufficient Sample"
+      | "No Meaningful Edge"
+      | "Weak Lower-Vol Association"
+      | "Potential Context Signal"
+      | "Risk-Off / No Short-Vol Support";
+    bias: "risk_on" | "neutral" | "risk_off" | "unavailable";
+    confidence: "low" | "medium" | "high";
+    ciOverlap: boolean | null;
+    evidence: {
+      baseRatePct: number | null;
+      signalRatePct: number | null;
+      liftPctPoints: number | null;
+      signalN: number;
+      meanVixPointChange: number | null;
+      spxRiseRatePct: number | null;
+      meanSpxPctChange: number | null;
+      claimDeltaPctPoints: number | null;
+    };
+    notes: string[];
   };
   series: {
     vix: MarketVolSeriesPoint[];
+    spx: MarketVolSeriesPoint[];
   };
   rows: ReserveVixExperimentRow[];
   diagnostics: {
@@ -308,6 +363,8 @@ Response shape should include:
     missingVixStart: number;
     missingVixEndpoint: number;
     insufficientTrailingMean: number;
+    missingSpxStart: number;
+    missingSpxEndpoint: number;
     confidenceIntervalMethod: "wilson";
     warnings: string[];
   };
@@ -324,7 +381,8 @@ and keep aggregate stats computed from the full eligible set.
 
 Version one is complete when:
 
-- The route reads `WRESBAL` and `VIXCLS` only from the approved Gold DB path.
+- The route reads `WRESBAL`, `VIXCLS`, and optional `SP500` only from the
+  approved Gold DB path.
 - Research Mode and Tradability Mode are both represented in the route contract;
   Tradability Mode returns an explicit unavailable state if release timing is
   not available in Gold.
@@ -335,11 +393,19 @@ Version one is complete when:
 - The API exposes base rate, conditional rate, lift, sample size, Wilson
   confidence interval, mean/median VIX point change, mean/median VIX percent
   change, and reserve/VIX correlation.
+- The API exposes VIX-regime breakdowns and SPX outcome context from Gold/FRED
+  `SP500`: unconditional/conditional SPX rise rate and mean/median SPX return.
 - Every UI/export-facing payload includes the FRED/CBOE citations, the
-  `VIXCLS` level series used to derive forward outcomes, and labels the
-  calculation as current revised Gold DB history.
+  `VIXCLS` level series used to derive forward outcomes, the `SP500` context
+  series when available, and labels the calculation as current revised Gold DB
+  history.
+- The UI includes an `EDGE` readout panel that turns the stats into a cautious
+  context verdict, never a standalone buy/sell instruction.
 - Missing data, stale endpoint coverage, or unavailable Tradability Mode never
   silently fall back to simulated data.
+- Tradability Mode without approved Gold release timing returns
+  `source: "UNAVAILABLE"` with an explanatory pending state, not a generic
+  calculation failure.
 
 ### Test Plan
 
@@ -356,6 +422,9 @@ Add synthetic unit tests for the pure helper before wiring the route:
 - Wilson confidence interval and hit-rate denominators are stable on small
   samples.
 - correlation ignores non-finite reserve percent changes or VIX changes.
+- SPX forward outcomes use the same anchors/endpoints and do not affect VIX row
+  eligibility when SPX is missing.
+- VIX-regime buckets classify rows by starting VIX level.
 
 Add route tests after the helper tests:
 
@@ -377,10 +446,15 @@ Potential visual layout:
 - Bottom lane: event dots for cross-above signals, colored by whether VIX fell
   over the selected window.
 - Side panel: base rate, conditional rate, lift, sample size, mean VIX change,
-  and correlation.
+  SPX outcome context, and correlation.
+- Regime panel: VIX below 15, 15-20, 20-30, and above 30, showing whether the
+  reserve signal only works in specific volatility states.
 - Playback controls: play/pause, scrubber, window selector, and event stepper.
 - Claim-audit panel: compares the observed conditional result against a claimed
   threshold such as 71%.
+- Readout panel: verdict, risk-on/risk-off tilt, confidence label, evidence
+  fields including SPX rise/return context, and warnings when confidence
+  intervals overlap or the observed rate is well below the claim threshold.
 
 The visual should make base-rate context impossible to miss. A viewer should see
 whether the conditional result is materially better than normal VIX behavior
@@ -475,7 +549,10 @@ These are likely follow-up candidates after the first implementation:
    source citations in `src/app/market-volatility/page.tsx`, including a
    `VIXCLS` level chart plus derived forward-outcome bars, with
    `src/lib/useMarketVolatility.ts` as the client fetch hook.
-6. Later: add animated playback once the static UI and data provenance are
+6. Complete: `EDGE` readout panel and tested readout classifier for cautious
+   risk-on/risk-off context language.
+7. Complete: VIX-regime buckets and Gold/FRED `SP500` forward outcome context.
+8. Later: add animated playback once the static UI and data provenance are
    stable.
 
 ## Validation

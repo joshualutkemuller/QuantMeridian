@@ -136,8 +136,9 @@ the Gold calendar or NEWS provider work and should be reviewed separately.
 
 `docs/specs/spec003/SPEC.md` is the draft scaffold for a proposed `MVOL` Market
 Volatility module. The first experiment reconstructs a reserves-versus-VIX claim
-using only existing FRED/Gold DB data paths: FRED `WRESBAL` for reserve balances
-and FRED `VIXCLS` for VIX closes.
+using only existing FRED/Gold DB data paths: FRED `WRESBAL` for reserve
+balances, FRED `VIXCLS` for VIX closes, and FRED/Gold `SP500` for equity-return
+context.
 
 The spec now includes the version-one Gold DB data contract, calculation helper
 semantics, `/api/market-volatility/reserve-vix` route contract, acceptance
@@ -147,13 +148,17 @@ route, route tests, client hook, and first static module UI are implemented on
 `MVOL-Implementation`. `MVOL` is enabled in module config, registered in the
 Markets navigation, and routed at `/market-volatility`. The static UI now plots
 the actual `VIXCLS` level series separately from the derived forward VIX outcome
-bars.
+bars, includes VIX-regime buckets for starting VIX below 15, 15-20, 20-30, and
+above 30, adds Gold/FRED `SP500` forward outcome context, and includes an `EDGE`
+readout panel backed by tested threshold logic for cautious risk-on/risk-off
+context language.
 
 Locked version-one decisions:
 
 - Support both Research Mode, anchored to the `WRESBAL` Wednesday observation
   date, and Tradability Mode, anchored to the first actionable close after the
-  reserve data is publicly available.
+  reserve data is publicly available. Until approved Gold release timing exists,
+  Tradability Mode returns `UNAVAILABLE`, not a generic `ERR`.
 - Use deterministic `anchor + 7 calendar days` and `anchor + 14 calendar days`
   VIX endpoints in both modes.
 - Include all weekly above-mean observations for the broad conditional study,
@@ -186,4 +191,7 @@ validated.
 6. For `MVOL`, review the first static Market Volatility module surface, then
    add animated playback/export surfaces only after chart labels, citations, and
    current revised Gold history labeling are accepted. Keep the actual `VIXCLS`
-   level chart visually distinct from derived forward-outcome statistics.
+   level chart visually distinct from derived forward-outcome statistics, and
+   refine readout thresholds after reviewing real Gold DB outputs across modes.
+   SPX context must continue to come only from Gold/FRED `SP500`; do not add a
+   separate market-data provider without explicit owner approval.

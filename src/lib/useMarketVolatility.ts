@@ -7,7 +7,7 @@ import type {
   MarketVolSignalMode,
 } from "@/lib/marketVolatility";
 
-export type MarketVolUiSource = "LOADING" | "DB" | "ERR";
+export type MarketVolUiSource = "LOADING" | "DB" | "UNAVAILABLE" | "ERR";
 
 export interface ReserveVixOptions {
   mode: MarketVolAlignmentMode;
@@ -25,9 +25,11 @@ const emptyHitRate: HitRateStats = {
   ciHighPct: null,
 };
 
+const TRADABILITY_PENDING = "Tradability Mode is unavailable until approved Gold release timing is exposed.";
+
 function emptyReserveVix(options: ReserveVixOptions, source: MarketVolUiSource, error?: string): ComputeReserveVixExperimentResult {
   return {
-    source: source === "DB" ? "DB" : "ERR",
+    source: source === "DB" ? "DB" : source === "UNAVAILABLE" ? "UNAVAILABLE" : "ERR",
     experimentId: "reserve-vix",
     mode: options.mode,
     signal: options.signal,
@@ -36,25 +38,51 @@ function emptyReserveVix(options: ReserveVixOptions, source: MarketVolUiSource, 
     inputs: {
       reservesSeriesId: "WRESBAL",
       vixSeriesId: "VIXCLS",
+      spxSeriesId: "SP500",
       reservesRows: 0,
       vixRows: 0,
+      spxRows: 0,
       latestReserveDate: null,
       latestVixDate: null,
+      latestSpxDate: null,
     },
     stats: {
       unconditional: emptyHitRate,
       conditional: emptyHitRate,
+      spxUnconditionalRise: emptyHitRate,
+      spxConditionalRise: emptyHitRate,
       liftPctPoints: null,
       meanVixPointChange: null,
       medianVixPointChange: null,
       meanVixPctChange: null,
       medianVixPctChange: null,
+      meanSpxPctChange: null,
+      medianSpxPctChange: null,
       reservePctChangeVixPointChangeCorr: null,
       claimThresholdPct: options.claimThresholdPct,
       claimDeltaPctPoints: null,
+      vixRegimes: [],
+    },
+    readout: {
+      verdict: "Unavailable",
+      bias: "unavailable",
+      confidence: "low",
+      ciOverlap: null,
+      evidence: {
+        baseRatePct: null,
+        signalRatePct: null,
+        liftPctPoints: null,
+        signalN: 0,
+        meanVixPointChange: null,
+        spxRiseRatePct: null,
+        meanSpxPctChange: null,
+        claimDeltaPctPoints: null,
+      },
+      notes: error ? [error] : [],
     },
     series: {
       vix: [],
+      spx: [],
     },
     rows: [],
     diagnostics: {
@@ -63,6 +91,8 @@ function emptyReserveVix(options: ReserveVixOptions, source: MarketVolUiSource, 
       missingVixEndpoint: 0,
       insufficientTrailingMean: 0,
       missingActionableDate: 0,
+      missingSpxStart: 0,
+      missingSpxEndpoint: 0,
       confidenceIntervalMethod: "wilson",
       warnings: error ? [error] : [],
     },
@@ -89,8 +119,16 @@ export function useReserveVixExperiment(options: ReserveVixOptions): { data: Com
   useEffect(() => {
     let alive = true;
 
+    if (options.mode === "tradability") {
+      setData(emptyReserveVix(options, "UNAVAILABLE", TRADABILITY_PENDING));
+      setSource("UNAVAILABLE");
+      return () => {
+        alive = false;
+      };
+    }
+
     const apply = (body: ComputeReserveVixExperimentResult) => {
-      const nextSource: MarketVolUiSource = body.source === "DB" ? "DB" : "ERR";
+      const nextSource: MarketVolUiSource = body.source === "DB" ? "DB" : body.source === "UNAVAILABLE" ? "UNAVAILABLE" : "ERR";
       setData(body);
       setSource(nextSource);
     };
