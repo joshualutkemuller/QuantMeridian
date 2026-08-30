@@ -2,7 +2,10 @@
 
 ## Status
 
-Draft scaffold — high-level concept only.
+Draft implementation spec. High-level product direction is set; version-one
+data, alignment, and calculation semantics are being hardened before code.
+
+Implementation handoff: `docs/specs/spec003/HANDOFF.md`.
 
 ## Owner
 
@@ -66,6 +69,31 @@ flowing through the FRED / Gold DB economic pipeline:
 
 Market Terminal should not add a new volatility vendor, scraped dataset, or
 separate external API for this module without explicit owner approval.
+
+### Gold DB Data Contract
+
+Version one should read only through the existing Market Terminal Gold DB access
+layer in `src/lib/server/goldStore.ts`.
+
+Required level-history inputs:
+
+- Table: Gold `fred_latest_observation`.
+- Series filter: `series_id IN ('WRESBAL', 'VIXCLS')`.
+- Required columns: `series_id`, `observation_date`, `value`, and
+  `realtime_start` when available.
+- Sort order for calculations: ascending by `observation_date`.
+- Minimum default date range: 2009-01-01 through latest complete endpoint.
+
+The implementation should use `goldStore().raw(...)` plus `goldTable(...)` and
+`goldParam(...)` for the initial multi-series query. It should return an explicit
+`ERR`/empty state if `MACRO_DB_URL` is not configured, the Gold DB read fails, or
+either required series is missing. It should not call live FRED or any market
+data vendor from the Market Terminal route.
+
+Tradability Mode may also read an approved Gold release-calendar table or field
+if it exists. If actionable release timing is not available in the approved Gold
+contract, Tradability Mode should render as unavailable with an explanatory
+state instead of guessing or adding a new source.
 
 ### Citation And Licensing Caveat
 
@@ -175,6 +203,162 @@ in any exported visual/report:
 - The UI should label the event-counting mode so users can distinguish all-week
   conditional statistics from cross-above event studies.
 
+### Calculation Contract
+
+The first implementation should place the math in a pure helper that can be unit
+tested without React or database dependencies.
+
+Proposed helper:
+
+```ts
+computeReserveVixExperiment({
+  reserves,
+  vix,
+  startDate,
+  endDate,
+  alignmentMode,
+  signalMode,
+  forwardDays,
+  claimThresholdPct,
+})
+```
+
+Required semantics:
+
+- `reserves` is weekly `WRESBAL` level history; `vix` is daily `VIXCLS` level
+  history.
+- Drop reserve rows until at least 12 prior weekly observations are available
+  for the trailing mean. The trailing mean should use the 12 completed reserve
+  observations before the anchor row, not include the current row.
+- `reserveAboveMean = reserveValue > trailing12WeekMean`.
+- `reservePctChange = (reserveValue / priorReserveValue - 1) * 100`, when a
+  prior reserve value exists and is nonzero.
+- `crossAbove = reserveAboveMean === true` and prior eligible row
+  `reserveAboveMean !== true`.
+- `vixStart` and `vixEnd` follow the selected alignment mode and endpoint rule.
+- `vixPointChange = vixEnd - vixStart`.
+- `vixPctChange = (vixEnd / vixStart - 1) * 100`, when `vixStart` is nonzero.
+- `vixFell = vixPointChange < 0`.
+- Rows without a valid start or endpoint VIX close should be excluded from hit
+  rate denominators and counted in a dropped-row diagnostic.
+- Correlation should be Pearson correlation between `reservePctChange` and
+  forward `vixPointChange` over rows where both values are finite.
+- Hit-rate confidence intervals should use a binomial interval and expose the
+  method name in the response. Wilson score interval is preferred for version
+  one because it behaves better than a normal approximation with smaller event
+  counts.
+
+The helper should return both row-level observations for charting and aggregate
+statistics for the metric panel.
+
+### API Contract
+
+Proposed route:
+
+```text
+GET /api/market-volatility/reserve-vix
+```
+
+Supported query parameters:
+
+- `mode=research|tradability`, default `research`.
+- `signal=above_mean|cross_above`, default `above_mean`.
+- `forwardDays=7|14`, default `7`.
+- `start=YYYY-MM-DD`, default `2009-01-01`.
+- `end=YYYY-MM-DD`, default latest complete endpoint.
+- `claimThresholdPct=number`, default `71`.
+
+Response shape should include:
+
+```ts
+{
+  source: "DB" | "ERR";
+  experimentId: "reserve-vix";
+  mode: "research" | "tradability";
+  signal: "above_mean" | "cross_above";
+  forwardDays: 7 | 14;
+  dateRange: { start: string; end: string };
+  inputs: {
+    reservesSeriesId: "WRESBAL";
+    vixSeriesId: "VIXCLS";
+    reservesRows: number;
+    vixRows: number;
+    latestReserveDate: string | null;
+    latestVixDate: string | null;
+  };
+  stats: {
+    unconditional: HitRateStats;
+    conditional: HitRateStats;
+    liftPctPoints: number | null;
+    meanVixPointChange: number | null;
+    medianVixPointChange: number | null;
+    meanVixPctChange: number | null;
+    medianVixPctChange: number | null;
+    reservePctChangeVixPointChangeCorr: number | null;
+    claimThresholdPct: number;
+    claimDeltaPctPoints: number | null;
+  };
+  rows: ReserveVixExperimentRow[];
+  diagnostics: {
+    droppedRows: number;
+    missingVixStart: number;
+    missingVixEndpoint: number;
+    insufficientTrailingMean: number;
+    confidenceIntervalMethod: "wilson";
+    warnings: string[];
+  };
+  citations: Citation[];
+  error?: string;
+}
+```
+
+`rows` should be compact enough for the UI. If the full row set becomes too
+large for the route, add deterministic server-side sampling for chart playback
+and keep aggregate stats computed from the full eligible set.
+
+### Acceptance Criteria
+
+Version one is complete when:
+
+- The route reads `WRESBAL` and `VIXCLS` only from the approved Gold DB path.
+- Research Mode and Tradability Mode are both represented in the route contract;
+  Tradability Mode returns an explicit unavailable state if release timing is
+  not available in Gold.
+- `forwardDays=7` and `forwardDays=14` use deterministic calendar-day endpoint
+  rules.
+- Above-mean mode counts all eligible weekly above-mean observations.
+- Cross-above mode uses event-only, non-overlapping handling.
+- The API exposes base rate, conditional rate, lift, sample size, Wilson
+  confidence interval, mean/median VIX point change, mean/median VIX percent
+  change, and reserve/VIX correlation.
+- Every UI/export-facing payload includes the FRED/CBOE citations and labels the
+  calculation as current revised Gold DB history.
+- Missing data, stale endpoint coverage, or unavailable Tradability Mode never
+  silently fall back to simulated data.
+
+### Test Plan
+
+Add synthetic unit tests for the pure helper before wiring the route:
+
+- trailing 12-week mean excludes the current reserve row.
+- above-mean mode includes all eligible above-mean weeks.
+- cross-above mode finds only false-to-true transitions.
+- cross-above non-overlap suppresses events whose forward windows overlap.
+- weekend/holiday endpoint logic chooses the first available VIX close on or
+  after `anchor + forwardDays`.
+- rows with missing VIX start or endpoint are dropped from denominators and
+  counted in diagnostics.
+- Wilson confidence interval and hit-rate denominators are stable on small
+  samples.
+- correlation ignores non-finite reserve percent changes or VIX changes.
+
+Add route tests after the helper tests:
+
+- Gold DB unavailable returns `source: "ERR"` and no simulated fallback.
+- missing `WRESBAL` or `VIXCLS` rows returns an explicit error.
+- successful Gold rows return citations, diagnostics, and deterministic stats.
+- Tradability Mode without approved release timing returns an unavailable state.
+
 ## Visual Direction
 
 The first build should feel like an animated research tape rather than a static
@@ -270,13 +454,12 @@ These are likely follow-up candidates after the first implementation:
 
 ## First Implementation Slice
 
-1. Confirm the exact Gold/FRED series IDs for reserve balances and VIX.
-2. Write a pure calculation helper for weekly alignment, 12-week mean signal,
+1. Write a pure calculation helper for weekly alignment, 12-week mean signal,
    forward VIX windows, base rates, conditional rates, lift, and correlation.
-3. Add tests using small synthetic series to lock the event-window semantics.
-4. Create a route/API that reads only the approved FRED/Gold pipeline data.
-5. Build the first `MVOL` UI with static charts and metric cards.
-6. Add animated playback once the math and data provenance are stable.
+2. Add tests using small synthetic series to lock the event-window semantics.
+3. Create a route/API that reads only the approved FRED/Gold pipeline data.
+4. Build the first `MVOL` UI with static charts and metric cards.
+5. Add animated playback once the math and data provenance are stable.
 
 ## Validation
 

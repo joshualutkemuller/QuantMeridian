@@ -13,7 +13,8 @@ CPI component expansion. Detailed source docs live in:
 - `docs/gold-db/MODULE_DATA_AUDIT.md`
 - `docs/specs/spec001/`
 - `docs/specs/spec002_news_live_intelligence/`
-- `docs/specs/spec003/`
+- `docs/specs/spec003/SPEC.md`
+- `docs/specs/spec003/HANDOFF.md`
 - `docs/gold-db/FRED_PIPELINE_CPI_COMPONENT_HANDOFF.md`
 - `docs/features/completed/Feature Addition - NEWS Terminal Module (Market News & Signal Intelligence).md`
 - `docs/features/completed/Feature Completion - NEWS NLP (Attention, Clusters, Signals).md`
@@ -137,6 +138,13 @@ the Gold calendar or NEWS provider work and should be reviewed separately.
 Volatility module. The first experiment reconstructs a reserves-versus-VIX claim
 using only existing FRED/Gold DB data paths: FRED `WRESBAL` for reserve balances
 and FRED `VIXCLS` for VIX closes.
+
+The spec now includes the version-one Gold DB data contract, calculation helper
+semantics, proposed `/api/market-volatility/reserve-vix` route contract,
+acceptance criteria, and synthetic/route test plan. The implementation handoff
+lives in `docs/specs/spec003/HANDOFF.md`. The next `MVOL` build step is
+implementation of the pure calculation helper and its synthetic tests before any
+UI work.
 
 Locked version-one decisions:
 
