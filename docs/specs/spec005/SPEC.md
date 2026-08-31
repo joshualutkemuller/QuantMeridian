@@ -2,9 +2,14 @@
 
 ## Status
 
-Draft. No implementation started. This spec exists to inventory real synergies
-between Market Terminal and the sibling `QuantSmith` SDK, decide which are
-worth pursuing, and set the contract boundaries before any code is written.
+Draft. Phase 0 (contract audit, this document) and Phase 1's Market
+Terminal-side half (commit pin + drift-check gate) are done. Phase 2 (one
+narrative-drafting pilot) is done — see `PHASE2_PILOT_DRAFT.md` and
+`PHASE2_PILOT_VERIFICATION.md`. No UI or automation has shipped; the pilot
+was a manual, one-off exercise per its own recommendation. Phase 1's other
+half (registering Market Terminal in QuantSmith's own downstream-repo list,
+which requires editing the separate `QuantSmith` GitHub repo) and Phase 3
+(deciding on items 3/4 below) remain open.
 
 ## Owner
 
@@ -285,28 +290,41 @@ before it can enter `MPUB`'s queue.
 
 ### Phase 1: Downstream-consumer registration (item 1)
 
-- Record the reviewed QuantSmith commit/tag Market Terminal is validated
-  against.
-- Register Market Terminal in QuantSmith's downstream-repository list for
-  release-notify dispatch.
-- Add a Market Terminal-side pin-freshness check alongside
-  `scripts/check-gold-db-policy.sh`.
+- [x] Record the reviewed QuantSmith commit/tag Market Terminal is validated
+  against — `QUANTSMITH_PIN.md`.
+- [ ] Register Market Terminal in QuantSmith's downstream-repository list for
+  release-notify dispatch — not done; requires editing the separate
+  `QuantSmith` GitHub repo.
+- [x] Add a Market Terminal-side pin-freshness check alongside
+  `scripts/check-gold-db-policy.sh` — `scripts/check-quantsmith-pin.sh`,
+  wired as `npm run check:quantsmith-pin`.
 
 Deliverable: Market Terminal shows up as a real consumer in QuantSmith's own
-gate output instead of "not a consumer; skipped."
+gate output instead of "not a consumer; skipped." **Partially met** — true on
+the Market Terminal side; the QuantSmith-side registration is still open.
 
-### Phase 2: One narrative-drafting pilot (item 2, narrowest slice)
+### Phase 2: One narrative-drafting pilot (item 2, narrowest slice) — done
 
-- Pick exactly one `MPUB` package type (recommend Pre-Market Brief, the
-  simplest per spec004) and exactly one economists agent
-  (`morning_brief_writer` or `macro_backdrop_summarizer`).
-- Run the agent externally, produce one draft, manually re-verify every
-  numeric claim against `GoldStore`, and document the drop/flag rate.
-- Do not wire this into `MPUB`'s UI queue yet — this phase is a manual
-  proof that the re-verification contract actually catches unresolved
-  claims, before any automation trusts it.
+- Package/agent picked: Pre-Market Brief (spec004) /
+  `agents/economists/macro_backdrop_summarizer`.
+- Draft produced against real Gold DB data, with two deliberately injected
+  unsupported claims (an unsourced policy narrative, a fabricated Treasury
+  yield, plus an invented GDP-consensus figure) to stress-test the
+  re-verification step rather than let a same-author pass trivially confirm
+  itself — see `PHASE2_PILOT_DRAFT.md`.
+- Independent re-verification against fresh Gold queries: 17/23 claims
+  verified, 3 dropped (100% of injected claims caught), 3 flagged —
+  including two problems that were *not* injected: a policy-bias claim that
+  inverted its own correctly-transcribed numbers once cross-checked against
+  the current effective rate, and a "high confidence" assertion that
+  contradicted the draft's own noted data gap three sections later. Full
+  table, cleaned output, and findings in `PHASE2_PILOT_VERIFICATION.md`.
+- Not wired into `MPUB`'s UI queue — per plan, this phase stayed a manual,
+  one-off exercise.
 
-Deliverable: a written verification report, not a shipped feature.
+Deliverable: a written verification report, not a shipped feature. **Met.**
+The report's own recommendation: the concept is sound enough to justify
+Phase 3, not yet proven unattended enough to wire into `MPUB` live.
 
 ### Phase 3: Decide on items 3-4
 
@@ -348,6 +366,9 @@ Deliverable: a written verification report, not a shipped feature.
 
 ## Related Documents
 
+- `docs/specs/spec005/QUANTSMITH_PIN.md` (Phase 1 commit pin record)
+- `docs/specs/spec005/PHASE2_PILOT_DRAFT.md` (Phase 2 raw agent draft, unverified)
+- `docs/specs/spec005/PHASE2_PILOT_VERIFICATION.md` (Phase 2 verification report and findings)
 - `docs/specs/spec004/SPEC.md` (`MPUB`, the primary consumer for item 2/3/4)
 - `docs/features/GOLD_DB_MIGRATION_HANDOFF.md`
 - `docs/gold-db/README.md`, `docs/gold-db/MODULE_DATA_AUDIT.md`
