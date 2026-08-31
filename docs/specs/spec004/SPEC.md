@@ -2,8 +2,9 @@
 
 ## Status
 
-Draft scaffold. Discovery and source-boundary decisions are documented; no
-implementation is authorized by this spec alone.
+Draft scaffold with Phase 0 and an initial read-only Phase 1 API slice in
+progress. See `PHASE0_DATA_CONTRACT.md` for the current template-to-data matrix
+and source-gap list.
 
 ## Owner
 
@@ -766,5 +767,6 @@ rendering, motion, earnings, or distribution automation.
 - `docs/data/PLATFORM_DATA_CONNECTIVITY.md`
 - `docs/specs/spec002_news_live_intelligence/SPEC.md`
 - `docs/specs/spec003/SPEC.md`
+- `docs/specs/spec004/PHASE0_DATA_CONTRACT.md`
 - `docs/features/completed/Feature Addition - Market Lens Studio.md`
 - `docs/features/Feature Addition - EDGAR Filing Intelligence (Regime, NLP & Exposure Analytics).md`

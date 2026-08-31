@@ -100,8 +100,8 @@ const SERIES_SPECS: SeriesSpec[] = [
   { id: "IRSTCB01CAM156N", label: "Canada Policy Rate", short: "Canada Rate", section: "global", transform: "lin", frequency: "M", unit: "%", decimals: 2, changeMode: "bps" },
 ];
 
-function unavailable(error: string): Response {
-  return json({ ...EMPTY_COMMAND_CENTER, generatedAt: new Date().toISOString(), error });
+function unavailablePayload(error: string): CommandCenterPayload {
+  return { ...EMPTY_COMMAND_CENTER, generatedAt: new Date().toISOString(), error };
 }
 
 function annualLag(frequency: Frequency): number {
@@ -384,9 +384,9 @@ function makePayload(metrics: CommandCenterMetric[], missingSeries: string[], ca
  * Gold DB only. This route intentionally reads only the FRED/Eco pipeline's
  * local Gold tables and never falls back to market APIs, snapshots, or fixtures.
  */
-export async function GET() {
+export async function readCommandCenterPayload(): Promise<CommandCenterPayload> {
   if (!goldEnabled()) {
-    return unavailable("MACRO_DB_URL not configured.");
+    return unavailablePayload("MACRO_DB_URL not configured.");
   }
 
   try {
@@ -458,9 +458,13 @@ export async function GET() {
       ...(missingSeries.length ? [`Missing or untransformable Gold rows for ${missingSeries.length} configured series.`] : []),
     ];
 
-    return json(makePayload(metrics, missingSeries, catalysts, warnings));
+    return makePayload(metrics, missingSeries, catalysts, warnings);
   } catch (err) {
     console.warn("[command-center] Gold DB read failed:", (err as Error).message);
-    return unavailable((err as Error).message);
+    return unavailablePayload((err as Error).message);
   }
+}
+
+export async function GET() {
+  return json(await readCommandCenterPayload());
 }
