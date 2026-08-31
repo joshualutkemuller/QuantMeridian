@@ -45,17 +45,17 @@ The terminal had a 3-tier data fallback: **FRED (live)** > **SNAPSHOT (committed
 
 | # | Severity | Module(s) | Issue |
 |---|----------|-----------|-------|
-| 1 | **HIGH** | HOME, MKT | Heatmap ticker mismatch — snapshot EQUITY cards are ETFs (SPY, QQQ) but `EQUITIES` in universe.ts are single stocks (AAPL, MSFT). Zero overlap; all cells get `sector: "Other"` and equal weight |
+| 1 | **HIGH** | MKT | Heatmap ticker mismatch — snapshot EQUITY cards are ETFs (SPY, QQQ) but `EQUITIES` in universe.ts are single stocks (AAPL, MSFT). Zero overlap; all cells get `sector: "Other"` and equal weight |
 | 2 | **HIGH** | CASH, REINV | KPI strips computed from SIM data even when FRED rates are live — badge says "FRED" but headline numbers (blended rate, savings, net spread) are SIM-derived |
 | 3 | **HIGH** | EML | `recessionProbFromSpread` treats T10Y2Y as bps but FRED reports percentage points (0.37 not 37). Recession probability always ~23% regardless of actual spread |
 | 4 | **HIGH** | INFL | 26 CPI/PCE component series not in FRED_CATALOG or snapshot — item-level inflation data is permanently SIM without live FRED API |
 | 5 | **HIGH** | GPOL | 14 policy rate series (IRSTCB01*, ECBDFR) not in catalog or snapshot — entire page is SIM-only without live FRED |
-| 6 | **MEDIUM** | MKT | Heatmap and movers never use pipeline data (always SIM) despite HOME using `heatmapFromCards`/`moversFromCards` |
-| 7 | **MEDIUM** | MKT | No FRED live overlay for index strip — only gets snapshot proxy prices, unlike HOME which layers FRED on top |
+| 6 | **MEDIUM** | MKT | Heatmap and movers never use pipeline data (always SIM) |
+| 7 | **MEDIUM** | MKT | No FRED live overlay for index strip — only gets snapshot proxy prices |
 | 8 | **MEDIUM** | CRDT | `liveRung` checks `source === "FRED"` not `isRealEconSource()` — SNAPSHOT data doesn't upgrade rating curve despite OAS series being in snapshot |
 | 9 | **MEDIUM** | ECON | Series Explorer always uses `getSeriesHistory()` (SIM) even when snapshot/FRED data exists |
 | 10 | **MEDIUM** | EML | Z-score inversion in labor momentum model — `-(v-mean)/sd` flips the signal direction |
-| 11 | **LOW** | HOME | `BTC: "IBIT"` in SNAP_MAP is dead — IBIT not in committed market snapshot |
+| 11 | **LOW** | MKT | `BTC: "IBIT"` in SNAP_MAP is dead — IBIT not in committed market snapshot |
 | 12 | **LOW** | MKT | VIX mapped to VIXY (VIX futures ETF) — price differs significantly from VIX index |
 | 13 | **LOW** | IRET | Badge shows "LIVE" even when selected index falls back to SIM matrix |
 | 14 | **LOW** | GCPI | Australia CPI is quarterly — MoM calculation shows QoQ labeled as MoM |
@@ -110,18 +110,19 @@ These affect SIM-generated positions, P&L, margin calculations in PB, COLL, and 
 
 #### HOME — Command Center
 - **File**: `src/app/page.tsx`
-- **Data flow**: `useLiveSeriesSet(INDEX_FRED_IDS)` for 9 FRED indices + `useMarketView("market")` for pipeline/snapshot cards + SIM fallbacks
-- **Live**: VIX, DXY, UST10Y, SOFR, GC, CL via FRED; SPX, NDX, INDU via FRED (SP500, NASDAQCOM, DJIA); heatmap/movers from snapshot cards
-- **Always SIM**: MOVE index (no FRED series), BTC (IBIT not in snapshot), SL/Prime/Collateral/Cash/Alert KPIs, desk revenue chart, optimization runs
-- **Bugs**: (1) BTC→IBIT snapshot mapping is dead. (2) Heatmap cells all get `sector: "Other"` due to ETF/stock ticker mismatch (see Critical #1)
-- **Badge**: Present, accurate for index data. Heatmap badge can be misleading (says SNAPSHOT but sectors are degraded)
+- **Data flow**: `/api/command-center` via `useCommandCenter()`
+- **Gold sources**: `gold.fred_latest_observation` for high-level indices, rates, volatility/credit risk, domestic health, and global health; `gold.release_calendar` for upcoming catalysts
+- **Fallback policy**: No market API, committed snapshot, news, book/revenue, or deterministic SIM fallback. Missing rows render as explicit `missingSeries`/coverage warnings.
+- **As-of policy**: Every metric row and headline card shows its own observation date; the page-level as-of is the max available metric date and should not be treated as a universal timestamp.
+- **Index return policy**: High-level index/price rows show raw level, actual level delta, one-day percent return, geometrically linked `5D`/`MTD`/`1M`/`3M`/`QTD`/`YTD` returns, and annualized `1Y`/`3Y`/`5Y` returns using 252 observed trading days.
+- **Remaining watch item**: Ensure any future HOME additions enter the FRED/Eco pipeline first or get explicit user approval before introducing a non-FRED data source.
 
 #### MKT — Live Markets
 - **File**: `src/app/markets/page.tsx`
 - **Data flow**: `useMarketView("market", basis, asof)` for quote board + SIM fallbacks for heatmap/movers/candles/order book
 - **Live**: Quote board merges pipeline cards via `cardsToQuotes()`. Index strip merges snapshot proxies (SPX→SPY, VIX→VIXY, DXY→UUP, GC→GLD)
 - **Always SIM**: Heatmap (`getHeatmap()` — never calls `heatmapFromCards`), movers (`getMovers()` — never calls `moversFromCards`), candles, order book, correlation matrix
-- **Bugs**: (1) Heatmap/movers never use pipeline data unlike HOME. (2) No FRED overlay for indices. (3) VIX→VIXY price mismatch (VIXY is a futures ETF, not the VIX level)
+- **Bugs**: (1) Heatmap/movers never use pipeline data. (2) No FRED overlay for indices. (3) VIX→VIXY price mismatch (VIXY is a futures ETF, not the VIX level)
 - **Badge**: Present but misleading — badge reflects pipeline source for quote board, but heatmap/movers are always SIM
 
 #### SNAP — Market Snapshot
@@ -478,7 +479,7 @@ These affect SIM-generated positions, P&L, margin calculations in PB, COLL, and 
 
 ### P2 — Consistency
 
-9. **Wire MKT heatmap/movers to pipeline data** (Critical #6): Use `heatmapFromCards`/`moversFromCards` like HOME does.
+9. **Wire MKT heatmap/movers to pipeline data** (Critical #6): Use pipeline cards to replace the current SIM heatmap/mover path.
 
 10. **Add FRED overlay to MKT index strip** (Critical #7): Add `useLiveSeriesSet(INDEX_FRED_IDS)` + `mergeLiveIndices` to MKT page.
 
@@ -508,7 +509,7 @@ These affect SIM-generated positions, P&L, margin calculations in PB, COLL, and 
 
 | Test | Module | What to verify |
 |------|--------|---------------|
-| T1.1 | HOME | Ticker shows FRED badge + as-of date; indices show green dots; heatmap uses snapshot cards |
+| T1.1 | HOME | Command Center calls `/api/command-center`, shows DB provenance, and every metric/catalyst has an explicit as-of/date |
 | T1.2 | MKT | Quote board shows pipeline source; verify heatmap still SIM (known issue) |
 | T1.3 | ECON | Indicators show FRED source; KPIs reflect live values |
 | T1.4 | CURV | Curve tenors show FRED; inversion timeline live |
@@ -523,7 +524,7 @@ These affect SIM-generated positions, P&L, margin calculations in PB, COLL, and 
 
 | Test | Module | What to verify |
 |------|--------|---------------|
-| T2.1 | HOME | Indices show SNAPSHOT source; heatmap renders from snapshot cards |
+| T2.1 | HOME | Without `MACRO_DB_URL`, Command Center shows explicit `ERR`/empty Gold state rather than snapshot or SIM data |
 | T2.2 | ECON | Indicators show SNAPSHOT for 96 series, SIM for ISM/alt-inflation |
 | T2.3 | GPOL | All countries show SIM (known — not in snapshot) |
 | T2.4 | STAT | All 31 series show SNAPSHOT |
@@ -543,7 +544,7 @@ These affect SIM-generated positions, P&L, margin calculations in PB, COLL, and 
 
 | Code | Module | Live Sources | SIM-Only? | Badge | Key Issue |
 |------|--------|-------------|-----------|-------|-----------|
-| HOME | Command Center | FRED + Pipeline | Partial | Yes | Heatmap sector degraded |
+| HOME | Command Center | Gold/FRED DB | No | Yes | Gold-only; missing series are explicit |
 | MKT | Live Markets | Pipeline | Partial | Misleading | Heatmap/movers always SIM |
 | SNAP | Market Snapshot | Pipeline | No | Yes | Clean |
 | QUILT | Asset Quilt | Pipeline | Fallback | Yes | Clean |

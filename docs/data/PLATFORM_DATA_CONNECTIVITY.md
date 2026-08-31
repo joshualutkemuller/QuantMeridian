@@ -81,7 +81,7 @@ Each external source, what it powers, and where it stands.
 | # | Source | Powers (modules) | Access / cost | Status |
 |---|---|---|---|---|
 | 1 | **FRED** | ECON, INFL, CRDT, CURV, MGC, MOTN, REGIME, SFE, STAT, EML, FUND (12/16), SENT (VIX) | Free + key | ✅ wired — set `FRED_API_KEY` |
-| 2 | **Market data pipeline** (Yahoo / Tiingo / Polygon / Alpha Vantage) | MKT, SNAP, IRET, QUILT, LENS, MKC, HOME, DESK | Free/paid tiers | 🟡 wired (SNAPSHOT) — set `MARKET_DB_URL`/`MARKET_PIPELINE_URL` + provider keys |
+| 2 | **Market data pipeline** (Yahoo / Tiingo / Polygon / Alpha Vantage) | MKT, SNAP, IRET, QUILT, LENS, MKC, DESK | Free/paid tiers | 🟡 wired (SNAPSHOT) — set `MARKET_DB_URL`/`MARKET_PIPELINE_URL` + provider keys |
 | 3 | **Anthropic API** | AI Copilot | Paid | ✅ wired — set `ANTHROPIC_API_KEY` |
 | 4 | **AAII Investor Sentiment Survey** | SENT (index, survey, positioning, contrarian, divergence) | Free weekly CSV (`aaii.com`) | 🔴 ingest needed |
 | 5 | **NAAIM Exposure Index** | SENT (positioning, index) | Free weekly (`naaim.org`) | 🔴 ingest needed |
@@ -105,7 +105,7 @@ Each external source, what it powers, and where it stands.
 ### MARKETS — backed by `market_data_pipeline` (✅ live-capable)
 | Module | Data dependency | Status |
 |---|---|---|
-| HOME · Command Center | market pipeline + book aggregates | 🟡 (book side internal) |
+| HOME · Command Center | Gold DB (`gold.fred_latest_observation`, `gold.release_calendar`) | ✅ Gold/FRED-only macro snapshot |
 | MKT · Live Markets | quotes / OHLC | ✅ pipeline |
 | SNAP · Market Snapshot | cross-asset returns | ✅ pipeline |
 | IRET · Index Returns | index history | ✅ pipeline |
@@ -170,7 +170,7 @@ Each external source, what it powers, and where it stands.
 Ordered by **coverage per unit of effort**:
 
 1. **`FRED_API_KEY`** *(minutes)* → lights up all 14 ECONOMICS-FRED modules **and** SENT's VIX component. Highest ROI.
-2. **Market pipeline** *(`MARKET_DB_URL` / `MARKET_PIPELINE_URL` + provider keys)* → all 7 MARKETS modules + LENS + MKC + the market side of HOME/DESK go from SNAPSHOT to live.
+2. **Market pipeline** *(`MARKET_DB_URL` / `MARKET_PIPELINE_URL` + provider keys)* → market modules + LENS + MKC + DESK market surfaces go from SNAPSHOT to live. HOME is now outside this path and reads the FRED/Eco Gold DB only.
 3. **`ANTHROPIC_API_KEY`** *(minutes)* → AI Copilot.
 4. **AAII + NAAIM weekly CSV ingest** *(low effort, free)* → SENT survey/positioning fully live; most of the SENT index.
 5. **News + social + NLP** — the chains are already built; finish them:

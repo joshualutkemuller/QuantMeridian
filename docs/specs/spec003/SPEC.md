@@ -2,8 +2,9 @@
 
 ## Status
 
-Draft implementation spec. High-level product direction is set; version-one
-data, alignment, and calculation semantics are being hardened before code.
+Implementation started. Version-one data, alignment, calculation semantics,
+Gold DB route, tests, and the first static module UI are implemented. Animated
+playback and release-timing work remain future slices.
 
 Implementation handoff: `docs/specs/spec003/HANDOFF.md`.
 
@@ -66,6 +67,9 @@ flowing through the FRED / Gold DB economic pipeline:
 - VIX: FRED `VIXCLS`, "CBOE Volatility Index: VIX", or the Gold DB equivalent
   series. Cite as Chicago Board Options Exchange, `VIXCLS`, retrieved from FRED,
   Federal Reserve Bank of St. Louis: https://fred.stlouisfed.org/series/VIXCLS.
+- Equity outcome context: FRED `SP500`, "S&P 500", or the Gold DB equivalent
+  series. Cite as S&P Dow Jones Indices LLC, `SP500`, retrieved from FRED,
+  Federal Reserve Bank of St. Louis: https://fred.stlouisfed.org/series/SP500.
 
 Market Terminal should not add a new volatility vendor, scraped dataset, or
 separate external API for this module without explicit owner approval.
@@ -78,7 +82,7 @@ layer in `src/lib/server/goldStore.ts`.
 Required level-history inputs:
 
 - Table: Gold `fred_latest_observation`.
-- Series filter: `series_id IN ('WRESBAL', 'VIXCLS')`.
+- Series filter: `series_id IN ('WRESBAL', 'VIXCLS', 'SP500')`.
 - Required columns: `series_id`, `observation_date`, `value`, and
   `realtime_start` when available.
 - Sort order for calculations: ascending by `observation_date`.
@@ -109,6 +113,10 @@ requested 2009 through mid-August 2026 reconstruction:
 
 - `WRESBAL`: 1984-01-04 through 2026-08-19.
 - `VIXCLS`: 1990-01-02 through 2026-08-20.
+- `SP500`: S&P 500 level history through FRED/Gold for risk-on/risk-off
+  context. If unavailable in a local Gold DB instance, MVOL should keep the VIX
+  experiment running and mark SPX outcome fields unavailable rather than adding
+  a separate data source.
 
 ## Experiment Scaffold
 
@@ -118,6 +126,8 @@ requested 2009 through mid-August 2026 reconstruction:
   dollars, not seasonally adjusted.
 - Daily VIX closes: `VIXCLS`, daily close, index value, not seasonally adjusted,
   converted to weekly observations aligned to the reserve balance calendar.
+- Daily S&P 500 levels: `SP500`, daily index level, aligned to the same anchor
+  and forward endpoint rules as VIX for equity-return context.
 
 ### Signal Construction
 
@@ -192,6 +202,11 @@ in any exported visual/report:
 - True cross-above event hit rate and sample size.
 - Correlation between weekly reserve percent change and forward VIX change.
 - Confidence intervals or binomial bands for claimed hit rates.
+- SPX rise rate and mean/median SPX percent return over the same +7D/+14D
+  outcome windows.
+- VIX-regime breakdown by starting VIX level: below 15, 15-20, 20-30, and above
+  30. Each bucket should show base VIX fall rate, signal VIX fall rate, lift,
+  mean VIX point change, SPX rise rate, and mean SPX return where available.
 
 ### Event Counting
 
@@ -214,6 +229,7 @@ Proposed helper:
 computeReserveVixExperiment({
   reserves,
   vix,
+  spx,
   startDate,
   endDate,
   alignmentMode,
@@ -226,7 +242,8 @@ computeReserveVixExperiment({
 Required semantics:
 
 - `reserves` is weekly `WRESBAL` level history; `vix` is daily `VIXCLS` level
-  history.
+  history; optional `spx` is daily `SP500` level history from the same Gold/FRED
+  path.
 - Drop reserve rows until at least 12 prior weekly observations are available
   for the trailing mean. The trailing mean should use the 12 completed reserve
   observations before the anchor row, not include the current row.
@@ -239,6 +256,13 @@ Required semantics:
 - `vixPointChange = vixEnd - vixStart`.
 - `vixPctChange = (vixEnd / vixStart - 1) * 100`, when `vixStart` is nonzero.
 - `vixFell = vixPointChange < 0`.
+- `spxPctChange = (spxEnd / spxStart - 1) * 100`, when `SP500` is available and
+  `spxStart` is nonzero.
+- `spxRose = spxEnd > spxStart`, when matched SPX start/end values exist.
+- SPX matching should use the same anchor and forward endpoint dates as VIX. Do
+  not drop otherwise valid reserve/VIX rows if SPX is unavailable; count missing
+  SPX matches in diagnostics and expose SPX rates from the matched subset.
+- VIX-regime buckets use the starting `vixStart` level at the anchor.
 - Rows without a valid start or endpoint VIX close should be excluded from hit
   rate denominators and counted in a dropped-row diagnostic.
 - Correlation should be Pearson correlation between `reservePctChange` and
@@ -272,7 +296,7 @@ Response shape should include:
 
 ```ts
 {
-  source: "DB" | "ERR";
+  source: "DB" | "ERR" | "UNAVAILABLE";
   experimentId: "reserve-vix";
   mode: "research" | "tradability";
   signal: "above_mean" | "cross_above";
@@ -281,22 +305,57 @@ Response shape should include:
   inputs: {
     reservesSeriesId: "WRESBAL";
     vixSeriesId: "VIXCLS";
+    spxSeriesId: "SP500";
     reservesRows: number;
     vixRows: number;
+    spxRows: number;
     latestReserveDate: string | null;
     latestVixDate: string | null;
+    latestSpxDate: string | null;
   };
   stats: {
     unconditional: HitRateStats;
     conditional: HitRateStats;
+    spxUnconditionalRise: HitRateStats;
+    spxConditionalRise: HitRateStats;
     liftPctPoints: number | null;
     meanVixPointChange: number | null;
     medianVixPointChange: number | null;
     meanVixPctChange: number | null;
     medianVixPctChange: number | null;
+    meanSpxPctChange: number | null;
+    medianSpxPctChange: number | null;
     reservePctChangeVixPointChangeCorr: number | null;
     claimThresholdPct: number;
     claimDeltaPctPoints: number | null;
+    vixRegimes: VixRegimeStats[];
+  };
+  readout: {
+    verdict:
+      | "Unavailable"
+      | "Insufficient Sample"
+      | "No Meaningful Edge"
+      | "Weak Lower-Vol Association"
+      | "Potential Context Signal"
+      | "Risk-Off / No Short-Vol Support";
+    bias: "risk_on" | "neutral" | "risk_off" | "unavailable";
+    confidence: "low" | "medium" | "high";
+    ciOverlap: boolean | null;
+    evidence: {
+      baseRatePct: number | null;
+      signalRatePct: number | null;
+      liftPctPoints: number | null;
+      signalN: number;
+      meanVixPointChange: number | null;
+      spxRiseRatePct: number | null;
+      meanSpxPctChange: number | null;
+      claimDeltaPctPoints: number | null;
+    };
+    notes: string[];
+  };
+  series: {
+    vix: MarketVolSeriesPoint[];
+    spx: MarketVolSeriesPoint[];
   };
   rows: ReserveVixExperimentRow[];
   diagnostics: {
@@ -304,6 +363,8 @@ Response shape should include:
     missingVixStart: number;
     missingVixEndpoint: number;
     insufficientTrailingMean: number;
+    missingSpxStart: number;
+    missingSpxEndpoint: number;
     confidenceIntervalMethod: "wilson";
     warnings: string[];
   };
@@ -320,7 +381,8 @@ and keep aggregate stats computed from the full eligible set.
 
 Version one is complete when:
 
-- The route reads `WRESBAL` and `VIXCLS` only from the approved Gold DB path.
+- The route reads `WRESBAL`, `VIXCLS`, and optional `SP500` only from the
+  approved Gold DB path.
 - Research Mode and Tradability Mode are both represented in the route contract;
   Tradability Mode returns an explicit unavailable state if release timing is
   not available in Gold.
@@ -331,14 +393,23 @@ Version one is complete when:
 - The API exposes base rate, conditional rate, lift, sample size, Wilson
   confidence interval, mean/median VIX point change, mean/median VIX percent
   change, and reserve/VIX correlation.
-- Every UI/export-facing payload includes the FRED/CBOE citations and labels the
-  calculation as current revised Gold DB history.
+- The API exposes VIX-regime breakdowns and SPX outcome context from Gold/FRED
+  `SP500`: unconditional/conditional SPX rise rate and mean/median SPX return.
+- Every UI/export-facing payload includes the FRED/CBOE citations, the
+  `VIXCLS` level series used to derive forward outcomes, the `SP500` context
+  series when available, and labels the calculation as current revised Gold DB
+  history.
+- The UI includes an `EDGE` readout panel that turns the stats into a cautious
+  context verdict, never a standalone buy/sell instruction.
 - Missing data, stale endpoint coverage, or unavailable Tradability Mode never
   silently fall back to simulated data.
+- Tradability Mode without approved Gold release timing returns
+  `source: "UNAVAILABLE"` with an explanatory pending state, not a generic
+  calculation failure.
 
 ### Test Plan
 
-Add synthetic unit tests for the pure helper before wiring the route:
+Add fixture-based unit tests for the pure helper before wiring the route:
 
 - trailing 12-week mean excludes the current reserve row.
 - above-mean mode includes all eligible above-mean weeks.
@@ -351,6 +422,9 @@ Add synthetic unit tests for the pure helper before wiring the route:
 - Wilson confidence interval and hit-rate denominators are stable on small
   samples.
 - correlation ignores non-finite reserve percent changes or VIX changes.
+- SPX forward outcomes use the same anchors/endpoints and do not affect VIX row
+  eligibility when SPX is missing.
+- VIX-regime buckets classify rows by starting VIX level.
 
 Add route tests after the helper tests:
 
@@ -372,10 +446,15 @@ Potential visual layout:
 - Bottom lane: event dots for cross-above signals, colored by whether VIX fell
   over the selected window.
 - Side panel: base rate, conditional rate, lift, sample size, mean VIX change,
-  and correlation.
+  SPX outcome context, and correlation.
+- Regime panel: VIX below 15, 15-20, 20-30, and above 30, showing whether the
+  reserve signal only works in specific volatility states.
 - Playback controls: play/pause, scrubber, window selector, and event stepper.
 - Claim-audit panel: compares the observed conditional result against a claimed
   threshold such as 71%.
+- Readout panel: verdict, risk-on/risk-off tilt, confidence label, evidence
+  fields including SPX rise/return context, and warnings when confidence
+  intervals overlap or the observed rate is well below the claim threshold.
 
 The visual should make base-rate context impossible to miss. A viewer should see
 whether the conditional result is materially better than normal VIX behavior
@@ -383,13 +462,17 @@ before seeing any trade framing.
 
 ## User Controls
 
-Initial controls can be simple:
+Initial implemented controls:
 
 - Signal mode: above 12-week mean, cross above 12-week mean.
-- Forward window: 1 week, 6-11 days, 2 weeks.
+- Alignment mode: Research Mode, Tradability Mode.
+- Forward window: +7 calendar days, +14 calendar days.
 - Date range: default 2009 through latest available.
-- Event handling: all weeks vs first cross only.
-- Show confidence band: on/off.
+- Claim threshold: default 71%.
+
+Deferred controls:
+
+- Confidence band visibility toggle.
 - Playback speed.
 
 ## Non-Goals
@@ -404,10 +487,6 @@ Initial controls can be simple:
 
 ## Open Questions
 
-- Should the module code be `MVOL`, `VOL`, or another mnemonic?
-- Should `MVOL` live under Markets, Intelligence, or Economics?
-- Should the first version be a standalone route or a Market Lens preset promoted
-  into its own module later?
 - Should the video-style visualization be rendered as a live animated UI only,
   or should the module also export a shareable `.mp4`/`.webm`?
 - Should FRED/Gold provide the weekly alignment directly, or should alignment be
@@ -419,6 +498,8 @@ These decisions are approved for the first implementation:
 
 - Primary default view: use Research Mode for the headline reconstruction, with
   Tradability Mode available as a toggle.
+- Module placement: `MVOL` lives as a standalone Markets module at
+  `/market-volatility`.
 - Forward endpoints: use deterministic `anchor + 7 calendar days` and
   `anchor + 14 calendar days` endpoint rules in both Research Mode and
   Tradability Mode.
@@ -452,14 +533,27 @@ These are likely follow-up candidates after the first implementation:
 - Add additional volatility claim audits after the reserve/VIX experiment is
   validated.
 
-## First Implementation Slice
+## Implementation Progress
 
-1. Write a pure calculation helper for weekly alignment, 12-week mean signal,
-   forward VIX windows, base rates, conditional rates, lift, and correlation.
-2. Add tests using small synthetic series to lock the event-window semantics.
-3. Create a route/API that reads only the approved FRED/Gold pipeline data.
-4. Build the first `MVOL` UI with static charts and metric cards.
-5. Add animated playback once the math and data provenance are stable.
+1. Complete: pure calculation helper for weekly alignment, 12-week mean signal,
+   forward VIX windows, base rates, conditional rates, lift, Wilson confidence
+   intervals, and correlation in `src/lib/marketVolatility.ts`.
+2. Complete: fixture-based tests for helper semantics in
+   `src/lib/marketVolatility.test.ts`.
+3. Complete: Gold DB-only route at `/api/market-volatility/reserve-vix` in
+   `src/app/api/market-volatility/reserve-vix/route.ts`.
+4. Complete: route tests for Gold-only behavior, missing data, citations, and
+   Tradability Mode unavailable state in
+   `src/app/api/market-volatility/reserve-vix/route.test.ts`.
+5. Complete: first `MVOL` UI with static charts, metric cards, diagnostics, and
+   source citations in `src/app/market-volatility/page.tsx`, including a
+   `VIXCLS` level chart plus derived forward-outcome bars, with
+   `src/lib/useMarketVolatility.ts` as the client fetch hook.
+6. Complete: `EDGE` readout panel and tested readout classifier for cautious
+   risk-on/risk-off context language.
+7. Complete: VIX-regime buckets and Gold/FRED `SP500` forward outcome context.
+8. Later: add animated playback once the static UI and data provenance are
+   stable.
 
 ## Validation
 

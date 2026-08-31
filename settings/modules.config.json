@@ -9,6 +9,7 @@
     "IRET":   { "enabled": true, "label": "Index Returns" },
     "LENS":   { "enabled": true, "label": "Market Lens Studio" },
     "MKC":    { "enabled": true, "label": "Market Chart Studio" },
+    "MVOL":   { "enabled": true, "label": "Market Volatility" },
     "SLAB":   { "enabled": true, "label": "Securities Lending" },
     "SQZ":    { "enabled": true, "label": "Squeeze Radar" },
     "PB":     { "enabled": true, "label": "Prime Finance" },

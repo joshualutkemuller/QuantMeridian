@@ -14,9 +14,9 @@ Gold objects, names the series each needs (flagging what is not yet in the
 manifests), and prescribes the engineering pattern (config-driven, one Python
 engine shared by both backends) already established in this repo.
 
-> Scope note. The terminal has 45 modules. This plan covers only the
+> Scope note. The terminal has 46 modules. This plan covers only the
 > **economic / macro** modules and the macro-adjacent analytics. Securities-
-> finance, internal-book, news/NLP, and options/vol-*trading* modules are out of
+> finance, internal-book, news/NLP, and non-macro volatility modules are out of
 > scope. FOMC rate-probability and ML modules are noted but deferred (they
 > depend on external CME/model pipelines, not FRED Gold).
 

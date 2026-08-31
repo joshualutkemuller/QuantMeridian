@@ -4,9 +4,9 @@ A **Bloomberg-style operating system** for the securities finance business — u
 **Securities Lending, Prime Finance, Collateral Optimization, Cash Optimization,
 Cash Collateral Reinvestment, Liquidity & Funding Stress, Sources & Uses Matching,
 Treasury & Funding Analytics, Borrow-Demand / Squeeze Radar, Macro Regime Playbooks,
-Market News, Investor Sentiment, Prediction Markets, DataOps/Lineage, and AI-driven
+Market News, Investor Sentiment, Prediction Markets, Market Volatility, DataOps/Lineage, and AI-driven
 decision support** into a single dense, keyboard-driven, multi-monitor terminal —
-**45 modules** in all.
+**46 modules** in all.
 
 Built to look and feel like the software that runs a multi-trillion-dollar book at
 State Street, Goldman Sachs, Morgan Stanley, J.P. Morgan, BNY Mellon, Citi, UBS, or
@@ -37,13 +37,14 @@ BlackRock.
 
 | Code | Module | What it does |
 |------|--------|--------------|
-| `HOME` | **Command Center** | Cross-desk KPIs, revenue, heat map, live alert stream, module launchpad |
+| `HOME` | **Command Center** | Gold/FRED macro cockpit for high-level indices, rates, volatility/credit risk, domestic/global economic health, and upcoming releases with explicit per-series as-of dates. Index rows show level, level Δ, 1D/5D/MTD/1M/3M/QTD/YTD linked returns, and annualized 1Y/3Y/5Y returns on a 252-trading-day basis |
 | `MKT`  | **Live Markets** | Multi-asset monitor — equities, ETFs, fixed income, futures, FX, commodities, crypto, vol. Quotes grid, candlesticks + VWAP, order flow, treemap heat map, movers |
 | `SNAP` | **Market Snapshot** | Cross-asset "state of the market" served by the **`market_data_pipeline`** (FRED · Yahoo · pluggable vendors): returns/drawdown table (1D…5Y CAGR, 52w distance), Treasury curve + 2s10s/3m10y, regime scores (risk-on/off · growth · inflation · liquidity), cross-asset dashboard, best/worst YTD |
 | `QUILT` | **Asset Quilt** | Annual cross-asset return "quilt" — every asset class ranked by yearly total return, Bilello-style, with leaders/laggards and dispersion |
 | `IRET` | **Index Return Analytics** | Monthly index return matrix, calendar-year totals, and intra-year drawdowns (Yahoo-ready via the `market_data_pipeline`) |
 | `LENS` | **Market Lens Studio** | Build/compare market & cross-asset series from the lens engine (committed snapshots + FRED) |
 | `MKC`  | **Market Chart Studio** | Charting studio over market series (`/api/chart/series?source=market`) |
+| `MVOL` | **Market Volatility** | Reserve-balances-versus-VIX claim audit using Gold DB `WRESBAL`/`VIXCLS` plus Gold/FRED `SP500` outcome context, actual VIX level path, VIX-regime buckets, derived forward outcomes, base-rate lift, confidence bands, claim-threshold diagnostics, and cautious EDGE readout |
 | `SLAB` | **Securities Lending** | Inventory (internal / beneficial owner / prime), loan book, borrow demand, HTB & specials, revenue analytics (waterfall, Sankey, by borrower/security/asset class) |
 | `SQZ`  | **Squeeze Radar** | Borrow-demand / squeeze radar on the lending spine — composite heat score, fee×utilization quadrant (re-rate vs special), squeeze candidates, specials watch, sector heat, ALRT-ready heat-up alerts |
 | `PB`   | **Prime Finance** | Gross/net/long/short exposure, top hedge-fund clients, financing revenue & RoA, VaR / stress testing, financing optimization opportunities |
@@ -374,7 +375,7 @@ without it (returns the warm summary on success).
 
 ### Data provenance — what's live vs. simulated (post-Gold DB migration)
 
-**Post-2026-07-17 architecture:** All **economic/macro modules** (`ECON`, `CURV`, `INFL`, `GCPI`, `GPOL`, `CRDT`, `FOMC`, `CAL`, `STAT`, `REGIME`, `EML`, `SFE`, `FUND`, `BMRK`, `BRA`, `UTIL`, `YCURV`, `RVOL`, `FCOST`, `MGC`, `EDA`, `MOTN`) read **exclusively from the Gold DB** (`MACRO_DB_URL`). When Gold DB is configured, these modules show a green **LIVE · DB** badge; when not configured, they fall back to the committed snapshot (amber **SNAPSHOT** badge) or error state. There is **no fallback chain** anymore — the old FRED → SNAPSHOT → SIM fallback is retired.
+**Post-2026-07-17 architecture:** All **economic/macro modules** (`ECON`, `CURV`, `INFL`, `GCPI`, `GPOL`, `CRDT`, `FOMC`, `CAL`, `STAT`, `REGIME`, `EML`, `SFE`, `FUND`, `BMRK`, `BRA`, `UTIL`, `YCURV`, `RVOL`, `FCOST`, `MGC`, `EDA`, `MOTN`) read **exclusively from the Gold DB** (`MACRO_DB_URL`). The Market Volatility module (`MVOL`) also reads its FRED-published reserve/VIX/SPX inputs exclusively from Gold DB and returns explicit `ERR`/`UNAVAILABLE` states when those approved inputs are missing. MVOL does not use committed snapshots, SIM data, or any separate market-data provider. There is **no fallback chain** anymore — the old FRED → SNAPSHOT → SIM fallback is retired.
 
 The table below shows the **real-world data source** each module ultimately draws from (FRED, World Bank, BIS, CME, Yahoo, etc.), not the technical path to get it. The technical path is now **always** Gold DB for economic modules:
 
@@ -393,6 +394,7 @@ The table below shows the **real-world data source** each module ultimately draw
 | Benchmark Rates (BMRK) | 🟢 FRED | 33-rate status board across 7 categories; read from Gold DB |
 | Yield Curve Analytics (YCURV) | 🟢 FRED | Daily curve shape, slope history, regime shifts; read from Gold DB |
 | Rate Volatility (RVOL) | 🟢 FRED | Realized-vol surface and vol regimes; read from Gold DB |
+| Market Volatility (MVOL) | 🟢 FRED + CBOE/S&P via FRED | `WRESBAL`/`VIXCLS` reserve-VIX claim audit plus `SP500` outcome context; read from Gold DB |
 | Funding Cost Monitor (FCOST) | 🟡 FRED-derived rates | Blended borrowing costs by tier; read from Gold DB |
 | Utilization Analytics (UTIL) | 🟡 Internal-book + FRED rates | Lending utilization, rate overlays; read from Gold DB |
 | Rate Analysis Hub (BRA) | 🟡 Composite (BMRK + YCURV + RVOL + FCOST + UTIL) | Unified rate workflow; read from Gold DB |
@@ -437,11 +439,11 @@ Use this section as the running handoff log whenever a feature moves from planni
 - Added the **EDA / Lead-Lag Lab (`EDA`)** at `/economics/eda` — CCF/Granger/lagged-OLS/
   change-point analytics rendered from the `market_data_pipeline` gold `eda` view.
 - Added **module toggles**: `settings/modules.config.json` + `src/lib/moduleConfig.ts` let you
-  enable/disable any of the 45 modules — disabled modules disappear from navigation and routing.
+  enable/disable any of the 46 modules — disabled modules disappear from navigation and routing.
 - Hardened **data provenance**: `worstSource` badge aggregation, provenance badges on the
   DataOps and Market Lens pages, staleness markers, and provenance/source-resolution unit tests.
 - Added the **test suite & CI**: Vitest unit tests, a **Playwright E2E smoke suite**
-  (`test/smoke.spec.ts` — 44 pages checked for JS errors, headers, and `undefined`/`NaN`
+  (`test/smoke.spec.ts` — 45 pages checked for JS errors, headers, and `undefined`/`NaN`
   leaks), and `.github/workflows/ci.yml` running typecheck → lint → unit tests → build → E2E
   on every push/PR. Plan and status live in `TESTING_HANDOFF.md`.
 - Added a **`screenshots/` gallery** — 30 full-resolution module captures for docs/marketing.
@@ -475,7 +477,7 @@ fixtures today, can use free **FRED** and **Yahoo Finance/yfinance** style input
 can later scale to licensed feeds, internal books, optimizer outputs, and the
 `market_data_pipeline` quality/lineage tables without changing the terminal UX.
 
-**Since then** the terminal has grown to **45 modules**, adding the charting studios
+**Since then** the terminal has grown to **46 modules**, adding the charting studios
 (`MGC`/`MOTN`/`LENS`/`MKC`), **Funding & Liquidity (`FUND`)** and **Squeeze Radar
 (`SQZ`)**, the **News (`NEWS`)** + **Investor Sentiment (`SENT`)** intelligence
 layer, the benchmark-rate analysis suite (`BMRK`/`BRA`/`YCURV`/`RVOL`/`FCOST`/`UTIL`),
@@ -664,7 +666,7 @@ NEWS_NLP_URL=http://localhost:8088 npm run dev   # → /api/news re-scores with 
 The `news_nlp` package installs/imports on a lexicon fallback without the model
 stack and surfaces in **DATAOPS** under the `NEWS_NLP` provider. See
 `news_nlp/README.md` and `docs/PLATFORM_DATA_CONNECTIVITY.md` for the full
-data-connectivity map across all 45 modules.
+data-connectivity map across all 46 modules.
 
 ---
 
@@ -682,7 +684,7 @@ data-connectivity map across all 45 modules.
 ## Tech stack
 
 **This build** is a **Vite + React single-page app** over **deterministic, seeded data
-generators**, so all 45 modules run with **zero configuration** — no database, no required
+generators**, so all 46 modules render with **zero configuration** — no database, no required
 keys. The `/api/*` endpoints are standard Web `Request → Response` handlers in `src/app/api/**`,
 served from **one shared route registry** (`src/server/registry.ts`) in every environment (see
 "How `/api/*` is served"). Optional live integrations include FRED for economics (166-series
@@ -754,7 +756,7 @@ no second source of truth:
   hook fallback chains (`src/lib/useEcon.test.ts`, `src/lib/useMarket.test.ts`), market data
   invariants (`src/data/markets.test.ts`), charting math (`src/lib/charting/*.test.ts`), and
   badge-coverage / snapshot-staleness audits (`src/tests/`).
-- **E2E smoke suite (Playwright)** — `test/smoke.spec.ts` visits all 44 routed pages and
+- **E2E smoke suite (Playwright)** — `test/smoke.spec.ts` visits all 45 routed pages and
   asserts each loads without JS errors, renders its header, and leaks no `undefined`/`NaN`
   into primary content. `playwright.config.ts` boots the Vite dev server automatically.
 - **CI (`.github/workflows/ci.yml`)** — every push/PR runs type-check → lint → unit tests →
@@ -775,7 +777,7 @@ no second source of truth:
 ## Run locally
 
 The terminal is a **Vite + React** SPA — **zero config, no database, no keys**.
-All 45 modules work offline against committed snapshots and SIM fixtures. For live economics/macro data,
+All 46 modules render offline; Gold-only modules show explicit empty/error states when the database is absent. For live economics/macro data,
 set `MACRO_DB_URL` to read from Gold DB (the **production data path as of 2026-07-17**).
 
 ```bash
@@ -930,12 +932,12 @@ src/
 │                            #   server/newsProviders.ts, server/socialProviders.ts, server/sentimentNlp.ts
 └── tests/                   # badge-coverage + snapshot-staleness provenance audits
 
-test/smoke.spec.ts           # Playwright E2E smoke suite (44 pages) — playwright.config.ts
+test/smoke.spec.ts           # Playwright E2E smoke suite (45 pages) — playwright.config.ts
 .github/workflows/ci.yml     # CI: typecheck → lint → unit tests → build → E2E smoke
 screenshots/                 # 30 full-resolution module captures
 news_nlp/                    # Python FinBERT NLP stage (sentiment · NER · event clustering)
 TESTING_HANDOFF.md           # test-suite plan + data-provenance audit checklist
-docs/LIVE_DATA_READINESS_ASSESSMENT.md   # full live-vs-snapshot-vs-sim audit of all 45 modules
+docs/LIVE_DATA_READINESS_ASSESSMENT.md   # live-vs-snapshot-vs-sim audit, pre-MVOL baseline plus updates
 ```
 
 ---

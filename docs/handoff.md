@@ -1,13 +1,13 @@
 # Market Terminal Handoff
 
 **Updated:** 2026-08-30
-**Branch:** `news-expansion`
-**Latest pushed branch commit:** `ba8cad7` — `Add structured NEWS_NLP health contract`
+**Branch:** `MVOL-Implementation`
+**Latest pushed branch commit:** `8f121e3` — `Clarify MVOL Gold-only data boundary`
 
 ## Current Focus
 
-The active workstreams are the NEWS persistence handoff, Gold DB conversion, and
-CPI component expansion. Detailed source docs live in:
+The active workstreams are MVOL implementation, Gold DB conversion, NEWS
+persistence, and CPI component expansion. Detailed source docs live in:
 
 - `docs/features/GOLD_DB_MIGRATION_HANDOFF.md`
 - `docs/gold-db/MODULE_DATA_AUDIT.md`
@@ -25,6 +25,20 @@ Tier A production routes for econ, chart, and market data have been hardened to
 read the Gold DB or return explicit `ERR`/empty states. The old silent fallback
 ladder to live FRED, committed snapshots, and deterministic SIM has been removed
 from those production paths.
+
+HOME / Command Center is being converted from the old revenue/book cockpit into
+a Gold/FRED macro cockpit. It should read only `gold_fred_latest_observation`
+and `gold_release_calendar` through `/api/command-center`, with no market API,
+snapshot, news, desk-book, or generated sample-data fallback path. Every
+displayed metric must show its own as-of observation date because daily, weekly,
+monthly, and quarterly FRED series update on different schedules.
+
+For HOME high-level index/price rows, `change` is the actual point/price level
+delta, while `marketReturns["1D"]` is the one-day percent return. The route also
+derives geometrically linked `5D`, `MTD`, `1M`, `3M`, `QTD`, `YTD`, `1Y`, `3Y`,
+and `5Y` returns from the Gold observation levels. `1Y`, `3Y`, and `5Y` are
+annualized with the convention `((end / start) ** (252 / observedTradingDays) -
+1) * 100`.
 
 The policy is enforced by:
 
@@ -136,21 +150,29 @@ the Gold calendar or NEWS provider work and should be reviewed separately.
 
 `docs/specs/spec003/SPEC.md` is the draft scaffold for a proposed `MVOL` Market
 Volatility module. The first experiment reconstructs a reserves-versus-VIX claim
-using only existing FRED/Gold DB data paths: FRED `WRESBAL` for reserve balances
-and FRED `VIXCLS` for VIX closes.
+using only existing FRED/Gold DB data paths: FRED `WRESBAL` for reserve
+balances, FRED `VIXCLS` for VIX closes, and FRED/Gold `SP500` for equity-return
+context.
 
 The spec now includes the version-one Gold DB data contract, calculation helper
-semantics, proposed `/api/market-volatility/reserve-vix` route contract,
-acceptance criteria, and synthetic/route test plan. The implementation handoff
-lives in `docs/specs/spec003/HANDOFF.md`. The next `MVOL` build step is
-implementation of the pure calculation helper and its synthetic tests before any
-UI work.
+semantics, `/api/market-volatility/reserve-vix` route contract, acceptance
+criteria, and fixture-based route/helper test plan. The implementation handoff lives in
+`docs/specs/spec003/HANDOFF.md`. The pure helper, fixture-based tests, Gold DB-only
+route, route tests, client hook, and first static module UI are implemented on
+`MVOL-Implementation`. `MVOL` is enabled in module config, registered in the
+Markets navigation, and routed at `/market-volatility`. The static UI now plots
+the actual `VIXCLS` level series separately from the derived forward VIX outcome
+bars, includes VIX-regime buckets for starting VIX below 15, 15-20, 20-30, and
+above 30, adds Gold/FRED `SP500` forward outcome context, and includes an `EDGE`
+readout panel backed by tested threshold logic for cautious risk-on/risk-off
+context language.
 
 Locked version-one decisions:
 
 - Support both Research Mode, anchored to the `WRESBAL` Wednesday observation
   date, and Tradability Mode, anchored to the first actionable close after the
-  reserve data is publicly available.
+  reserve data is publicly available. Until approved Gold release timing exists,
+  Tradability Mode returns `UNAVAILABLE`, not a generic `ERR`.
 - Use deterministic `anchor + 7 calendar days` and `anchor + 14 calendar days`
   VIX endpoints in both modes.
 - Include all weekly above-mean observations for the broad conditional study,
@@ -180,5 +202,10 @@ validated.
 5. Continue CPI expansion from `docs/specs/spec001/`, keeping Market Terminal
    DB-only: no new external data source should be added here without explicit
    owner approval.
-6. For `MVOL`, implement the pure calculation helper and synthetic tests from
-   `docs/specs/spec003/SPEC.md` before building UI or export surfaces.
+6. For `MVOL`, review the first static Market Volatility module surface, then
+   add animated playback/export surfaces only after chart labels, citations, and
+   current revised Gold history labeling are accepted. Keep the actual `VIXCLS`
+   level chart visually distinct from derived forward-outcome statistics, and
+   refine readout thresholds after reviewing real Gold DB outputs across modes.
+   SPX context must continue to come only from Gold/FRED `SP500`; do not add a
+   separate market-data provider without explicit owner approval.

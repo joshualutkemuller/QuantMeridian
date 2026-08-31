@@ -11,6 +11,7 @@ import AssetQuilt from "./app/asset-quilt/page";
 import IndexReturns from "./app/index-returns/page";
 import MarketLens from "./app/market-lens/page";
 import MarketChart from "./app/market-chart/page";
+import MarketVolatility from "./app/market-volatility/page";
 import SecuritiesLending from "./app/securities-lending/page";
 import Squeeze from "./app/securities-lending/squeeze/page";
 import PrimeFinance from "./app/prime-finance/page";
@@ -96,6 +97,7 @@ export function App() {
         {on("IRET") && <Route path="index-returns" element={<IndexReturns />} />}
         {on("LENS") && <Route path="market-lens" element={<MarketLens />} />}
         {on("MKC") && <Route path="market-chart" element={<MarketChart />} />}
+        {on("MVOL") && <Route path="market-volatility" element={<MarketVolatility />} />}
         {on("SLAB") && <Route path="securities-lending" element={<SecuritiesLending />} />}
         {on("SQZ") && <Route path="securities-lending/squeeze" element={<Squeeze />} />}
         {on("PB") && <Route path="prime-finance" element={<PrimeFinance />} />}

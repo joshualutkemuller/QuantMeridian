@@ -67,7 +67,8 @@ const server = http.createServer((req, res) => {
 
       // 1. API routes — same registry the dev server uses.
       if (url.pathname.startsWith("/api/") || url.pathname === "/api") {
-        const body = await readBody(req);
+        const method = (req.method ?? "GET").toUpperCase();
+        const body = method === "GET" || method === "HEAD" ? undefined : await readBody(req);
         const request = toWebRequest(req, url, body);
         const response = await handleApiRequest(request);
         if (response) return void (await sendWebResponse(res, response));
