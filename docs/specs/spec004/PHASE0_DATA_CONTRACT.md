@@ -78,6 +78,78 @@ cards for gated areas such as earnings/valuation.
   prior, revised prior, and consensus/expectation fields where available.
 - Earnings/valuation remains intentionally blocked.
 
+## Spec006 Signal Table Audit — Pending Approval
+
+`docs/specs/spec006/SPEC.md` (the material-change detector for `MPUB`'s
+candidate feed) profiled 12 additional Gold tables while drafting its Phase
+0. **None of these are approved yet** — this section is the audit spec006's
+delivery plan asked for, not an approval decision. All 12 are within the
+already-approved `fred-bronze-to-gold-pipeline` Gold layer (same pipeline,
+same trust boundary as the two tables already approved above), so this is a
+lighter review than a new Source Gate — but it is still Joshua's explicit
+call to make per this document's own Non-Negotiable Rules, not a rubber
+stamp.
+
+Profiled 2026-09-02 against the local `fred_local.db`. Grouped by observed
+cadence, since that turned out to be the single most important finding —
+tables that both look "daily" do not necessarily share the same actual
+refresh lag:
+
+### Group A — freshest daily (latest 2026-08-24, ~9 days stale)
+
+| Table | Rows | Key column checked | Nulls (latest date) | Notes |
+| --- | --- | --- | --- | --- |
+| `gold_macro_indicator_dashboard` | 290 | `zscore` | 0/290 | Snapshot table — only the current `as_of_date` is retained, not a running history |
+| `gold_macro_category_summary` | 11 | `avg_zscore` | 0/11 | One row per `econ_category`, same snapshot pattern |
+| `gold_zscore_heatmap` | 20,330,437 | `zscore_expanding` | 0/1 | Freshest of all 12 tables; huge row count reflects per-series/per-window history back to 1694 (data artifact, not a quality issue) — query by `series_id`+date, never scan unfiltered |
+
+### Group B — daily but lagging further (latest 2026-08-20, ~13 days stale)
+
+| Table | Rows | Key column checked | Nulls (latest date) | Notes |
+| --- | --- | --- | --- | --- |
+| `gold_credit_spread_daily` | 7,307 | `zscore` | 0/9 | 9 rows/day (one per credit tier) |
+| `gold_credit_spread_rolling` | 46,847 | `zscore` | 9/63 (~14%) | Some rolling-window/instrument combinations lack enough trailing history for a window's zscore — expected for short-history instruments in longer windows, not a defect, but must be handled as an explicit gap, not coerced to 0 |
+| `gold_curve_spread_daily` | 115,866 | `zscore` | 0/9 | 9 spreads/day, history back to 1962 |
+| `gold_funding_stress_daily` | 1,263 | `composite_z` | 0/1 | |
+| `gold_treasury_curve_metrics` | 16,144 | `level` | 0/1 | |
+
+**This 4-day gap between Group A and Group B, both nominally "daily," is
+the key finding.** A freshness/staleness score cannot assume every "daily"
+Gold table shares one current "today" — each candidate must compare against
+its own source table's actual latest date, per spec006's Goals.
+
+### Group C — monthly (expected multi-week lag by nature of the underlying data)
+
+| Table | Rows | Key column checked | Latest date | Notes |
+| --- | --- | --- | --- | --- |
+| `gold_macro_anomaly_scores` | 405 | `mahalanobis_d2` | 2026-06-01 | 0 nulls; `is_anomaly`=0 in the most recent 6 monthly rows |
+| `gold_recession_probability_daily` | 2,060 | `recession_prob` | 2026-07-01 | 0 nulls; despite the table name, this is monthly, not daily — misleading name, real cadence must be read from the data, not assumed from the table name |
+
+### Group D — event/episodic (no fixed cadence, expected)
+
+| Table | Rows | Notes |
+| --- | --- | --- |
+| `gold_spread_inversion_episode` | 624 | New rows only when an inversion episode starts; most recent episode start 2026-03-16, no episode currently `is_ongoing` — consistent with `gold_treasury_curve_metrics.is_inverted_10y2y`/`10y3m`=0 above |
+
+### Group E — irregular re-run cadence (needs care before use as a trigger)
+
+| Table | Rows | Notes |
+| --- | --- | --- |
+| `gold_series_structural_breaks` | 16 | Only 5 distinct `as_of_date` re-runs exist (2026-08-20, 2026-08-14, 2026-07-01, 2026-06-01, and one outlier at 1992-05-01 that looks like a seed/backfill row, not a real re-run — worth a question to the pipeline side, not a blocker). Latest run (2026-08-20): 4 rows, 2 of 4 have a **null `f_stat`** (50%) — not all `test_type` values populate `f_stat`; a detector must key off `is_significant` directly, never assume `f_stat` is populated. `break_date` is often years old even when `as_of_date` is today (a re-confirmation of a historical break, not a new event) — spec006's Risks section already treats this table as context/caveat only, never a same-day trigger by itself; this profiling confirms that call was correct. |
+
+### Recommendation
+
+All 12 tables are internally consistent (no unexpected nulls beyond the two
+noted caveats) and safe to approve for read-only use. The two caveats above
+(`gold_credit_spread_rolling`'s ~14% null rate on thin-history
+window/instrument combinations, and `gold_series_structural_breaks`' 50%
+null `f_stat` rate on its latest run) are not blockers — they are exactly
+the kind of gap spec004's Data Policy requires rendering as an explicit
+"unavailable" state rather than coercing to zero or silently omitting.
+
+**Awaiting Joshua's explicit approval before Phase 1 implementation reads
+any of these 12 tables.**
+
 ## Tests
 
 Initial executable guardrail:

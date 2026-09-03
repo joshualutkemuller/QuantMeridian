@@ -2,10 +2,13 @@
 
 ## Status
 
-Draft. No implementation started. This spec designs the detector spec004
-named as a gap ("material-change detection and ranking") and spec005
-recommended building next, now that its Phase 2 pilot validated the
-grounding discipline the detector must follow.
+Draft. No detector code written yet. Phase 0's mechanical parts are done:
+the 12-table signal audit (staleness/frequency/null-rate profiling) is
+written up in `docs/specs/spec004/PHASE0_DATA_CONTRACT.md`'s new "Spec006
+Signal Table Audit" section, and `src/app/api/market-publishing` is now
+covered by `scripts/check-gold-db-policy.sh`'s Tier A no-fallback gate.
+**Still blocked on Joshua's explicit approval of the 12 audited tables**
+before Phase 1 (the actual detector) can start — see that audit section.
 
 ## Owner
 
@@ -199,19 +202,23 @@ Per spec004's Non-Negotiable Rules, any table beyond the two currently
 "approved base tables" in `PHASE0_DATA_CONTRACT.md` needs Joshua's explicit
 review before a route reads it — even though every table above is in the
 *same already-approved* Gold/FRED pipeline, not a new provider. This spec
-proposes adding the ten tables in the Key Finding section to
-`PHASE0_DATA_CONTRACT.md`'s approved list, scoped to read-only `SELECT`
-through `goldStore`, before any implementation lands. This is a lighter
-review than spec004's full Source Gate (same pipeline, same trust
+proposes adding the 12 tables profiled in `PHASE0_DATA_CONTRACT.md`'s
+"Spec006 Signal Table Audit" section (the 10 rows in the Key Finding table
+above, with `gold_credit_spread_daily` and `gold_credit_spread_rolling`
+counted as two physical tables) to the approved list, scoped to read-only
+`SELECT` through `goldStore`, before any implementation lands. This is a
+lighter review than spec004's full Source Gate (same pipeline, same trust
 boundary), but it is still a real decision point, not a rubber stamp — one
 table (`gold_series_structural_breaks`) reports historical break dates that
 need care not to be redisplayed as "material today" just because the row
-was re-confirmed on today's `as_of_date` run (see Risks).
+was re-confirmed on today's `as_of_date` run (see Risks), and the audit
+found real null-rate caveats on two of the twelve (see Risks and the audit
+section itself).
 
 ## Architecture
 
 ```text
-Gold tables (10, pending approval above)
+Gold tables (12, pending approval above)
         |
         v
 new: src/lib/materialChangeDetector.ts
@@ -233,13 +240,21 @@ GET /api/market-publishing/candidates (existing route, unchanged shape)
 
 ### Phase 0: Table approval and signal audit
 
-- Get Joshua's explicit approval to add the ten named tables to
-  `PHASE0_DATA_CONTRACT.md`'s approved base-table list.
-- Profile null/staleness/frequency behavior across all ten (some are
-  monthly/quarterly; several are daily) so thresholds account for frequency
-  mismatch from the start rather than as a later fix.
-- Add `src/app/api/market-publishing` to `scripts/check-gold-db-policy.sh`'s
-  `TIER_A_DIRS`.
+- [x] Profile null/staleness/frequency behavior across all 12 tables (some
+  are monthly; several are daily but on two different actual refresh lags;
+  one is event/episodic; one re-runs irregularly) — see
+  `PHASE0_DATA_CONTRACT.md`'s "Spec006 Signal Table Audit" section.
+  Found: Group A/B daily tables are 4 days apart in actual freshness despite
+  both being "daily"; `gold_credit_spread_rolling` has a ~14% null rate on
+  thin-history window/instrument combinations; `gold_series_structural_breaks`
+  has a 50% null `f_stat` rate on its latest run (use `is_significant`
+  instead) plus one likely-seed outlier row.
+- [x] Add `src/app/api/market-publishing` to
+  `scripts/check-gold-db-policy.sh`'s `TIER_A_DIRS` — verified clean first
+  (no forbidden patterns already present), gate still passes.
+- [ ] **Get Joshua's explicit approval** to add the 12 audited tables to
+  `PHASE0_DATA_CONTRACT.md`'s approved base-table list. Blocking — Phase 1
+  does not start until this is granted.
 
 ### Phase 1: Read-only detector over a narrow signal set
 
@@ -321,6 +336,7 @@ GET /api/market-publishing/candidates (existing route, unchanged shape)
 ## Related Documents
 
 - `docs/specs/spec004/SPEC.md`, `docs/specs/spec004/PHASE0_DATA_CONTRACT.md`
+  (§ Spec006 Signal Table Audit — Pending Approval)
 - `docs/specs/spec005/SPEC.md`, `docs/specs/spec005/PHASE2_PILOT_VERIFICATION.md`
 - `src/lib/marketPublishing.ts`
 - `src/app/api/market-publishing/candidates/route.ts`,
