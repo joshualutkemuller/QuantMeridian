@@ -2,12 +2,12 @@
 
 ## Status
 
-Draft. Phase 0 is complete (12-table signal audit, approved by Joshua
-2026-09-02, Tier A gate coverage added). Phase 1 is also complete:
-`src/lib/materialChangeDetector.ts` reads the four Phase 1 tables and
-produces real, threshold-based candidates, with 11 passing tests. Not yet
-wired into the live `/api/market-publishing/candidates` route — see Phase
-1's own notes. Phase 2 (transition tracking) has not started.
+Draft. Phase 0 and Phase 1 are complete, and Phase 1's detector is now
+wired into the live `GET /api/market-publishing/candidates` route —
+`materialChangeDetector.ts`'s output merges additively with the existing
+fixed-template candidates in `buildMarketPublishingCandidates`. Phase 2
+(transition tracking, so a chronic signal doesn't re-flag as "new" every
+run) has not started.
 
 ## Owner
 
@@ -217,22 +217,22 @@ section itself).
 ## Architecture
 
 ```text
-Gold tables (12, pending approval above)
+Gold tables (12, approved 2026-09-02; 4 read as of Phase 1)
         |
         v
-new: src/lib/materialChangeDetector.ts
+src/lib/materialChangeDetector.ts                        [Phase 1 - done]
   - reads GoldStore (read-only)
   - applies documented thresholds per signal
-  - diffs against local transition-state file -> new/continuing/resolved
+  - diffs against local transition-state file -> new/continuing/resolved  [Phase 2 - not started]
   - emits MarketPublishingCandidate[] with scoreBreakdown
         |
         v
-buildMarketPublishingCandidates() (existing, src/lib/marketPublishing.ts)
+buildMarketPublishingCandidates() (src/lib/marketPublishing.ts)          [Phase 1 - done]
   - merges detector output additively with the existing 7 fixed-template
-    candidates
+    candidates, regardless of Command Center's own source state
         |
         v
-GET /api/market-publishing/candidates (existing route, unchanged shape)
+GET /api/market-publishing/candidates (existing route, unchanged response shape) [Phase 1 - done]
 ```
 
 ## Delivery Plan
@@ -281,13 +281,19 @@ GET /api/market-publishing/candidates (existing route, unchanged shape)
   outcome; a null `breadth_pct` (real in the audit — `FX`/`MONEY`/`RATES`)
   is skipped without crashing; and every ready candidate's `scoreBreakdown`
   cites one of the four approved tables with a non-empty column/threshold.
-  All pass; `npm run typecheck` and the existing
-  `candidates/route.test.ts` suite are unaffected.
-- **Not wired into `buildMarketPublishingCandidates`/the live
-  `/api/market-publishing/candidates` route yet.** That route's own test
-  asserts an exact, fixed set of Gold reads (spec004 Phase 0's no-fallback
-  guardrail) — wiring this in changes what that guardrail means and is a
-  deliberate follow-up decision, not an implicit side effect of Phase 1.
+  All pass; `npm run typecheck` is unaffected.
+- **Wired into `buildMarketPublishingCandidates`/the live
+  `GET /api/market-publishing/candidates` route.** Landed as a deliberate
+  follow-up commit, not an implicit side effect: `buildMarketPublishingCandidates`
+  now takes an optional `detectorCandidates` parameter and merges it in
+  regardless of Command Center's own source state (the detector reads
+  different tables and fails closed independently — a Command Center outage
+  shouldn't hide a genuinely available detector candidate, or vice versa).
+  `candidates/route.test.ts`'s "queries only approved Gold tables" guardrail
+  was updated on purpose — `toHaveBeenCalledTimes(2)` became `(6)`, with an
+  explicit comment that widening this count must stay a deliberate approval
+  decision each time, and a new test asserts the four detector candidates
+  actually appear in the merged, sorted output with real `scoreBreakdown`s.
 
 ### Phase 2: Transition tracking
 

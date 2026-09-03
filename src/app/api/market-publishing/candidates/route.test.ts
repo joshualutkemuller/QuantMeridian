@@ -98,6 +98,26 @@ function releaseRows() {
   ];
 }
 
+function categorySummaryRows() {
+  return [
+    { econ_category: "GROWTH", as_of_date: "2026-08-24", n_series: 10, n_improving: 8, n_deteriorating: 0, breadth_pct: 1.0, avg_zscore: 2.1, surprise_index: 2.1 },
+  ];
+}
+
+function creditSpreadRows() {
+  return [
+    { instrument: "CCC_OAS", series_id: "CCC_OAS_SERIES", category: "credit", observation_date: "2026-08-20", oas_bps: 1035, change_bps: 5, zscore: 1.75, percentile: 0.98, is_stress_episode: 1 },
+  ];
+}
+
+function fundingStressRows() {
+  return [{ observation_date: "2026-08-20", composite_z: 0.55, stress_score: 60.9, stress_bucket: "elevated", n_components: 3 }];
+}
+
+function curveMetricsRows() {
+  return [{ as_of_date: "2026-08-20", level: 4.37, slope_10y2y: 0.5, slope_10y3m: 0.82, curve_move: "bear-steepener", is_inverted_10y2y: 1, is_inverted_10y3m: 0, is_recession: 0 }];
+}
+
 async function readJson(response: Response) {
   return response.json();
 }
@@ -107,7 +127,12 @@ describe("/api/market-publishing", () => {
     vi.restoreAllMocks();
     mocks.goldEnabled.mockReturnValue(true);
     mocks.raw.mockImplementation((sql: string) => {
-      if (String(sql).includes("gold_release_calendar")) return Promise.resolve(releaseRows());
+      const s = String(sql);
+      if (s.includes("gold_release_calendar")) return Promise.resolve(releaseRows());
+      if (s.includes("gold_macro_category_summary")) return Promise.resolve(categorySummaryRows());
+      if (s.includes("gold_credit_spread_daily")) return Promise.resolve(creditSpreadRows());
+      if (s.includes("gold_funding_stress_daily")) return Promise.resolve(fundingStressRows());
+      if (s.includes("gold_treasury_curve_metrics")) return Promise.resolve(curveMetricsRows());
       return Promise.resolve(observationRows());
     });
   });
@@ -155,6 +180,17 @@ describe("/api/market-publishing", () => {
     expect(earnings.unavailableReason).toContain("No approved upstream Gold contract");
   });
 
+  test("candidates merges spec006 material-change detector output alongside the fixed templates", async () => {
+    const body = await readJson(await getCandidates());
+
+    const detectorTemplateIds = ["category_breadth", "credit_stress", "funding_stress", "curve_regime"];
+    const detectorCandidates = body.candidates.filter((candidate: { templateId: string }) => detectorTemplateIds.includes(candidate.templateId));
+    expect(detectorCandidates.map((c: { templateId: string }) => c.templateId)).toEqual(expect.arrayContaining(detectorTemplateIds));
+    expect(detectorCandidates.every((c: { status: string; scoreBreakdown?: unknown[] }) => (
+      c.status === "ready" && Array.isArray(c.scoreBreakdown) && c.scoreBreakdown.length > 0
+    ))).toBe(true);
+  });
+
   test("fails closed when Gold is not configured", async () => {
     mocks.goldEnabled.mockReturnValue(false);
 
@@ -173,10 +209,19 @@ describe("/api/market-publishing", () => {
   test("queries only approved Gold tables", async () => {
     await getCandidates();
 
-    expect(mocks.raw).toHaveBeenCalledTimes(2);
+    // 2 Command Center reads (spec004 Phase 0) + 4 spec006 material-change
+    // detector reads (spec004 Phase 0's "Spec006 Signal Table Audit",
+    // approved 2026-09-02). Widening this count is a deliberate approval
+    // decision each time, not something that should pass by accident —
+    // if this fails, a new table was added without updating this guardrail.
+    expect(mocks.raw).toHaveBeenCalledTimes(6);
     const sql = mocks.raw.mock.calls.map((call) => String(call[0])).join("\n");
     expect(sql).toContain("gold_fred_latest_observation");
     expect(sql).toContain("gold_release_calendar");
+    expect(sql).toContain("gold_macro_category_summary");
+    expect(sql).toContain("gold_credit_spread_daily");
+    expect(sql).toContain("gold_funding_stress_daily");
+    expect(sql).toContain("gold_treasury_curve_metrics");
     expect(sql).not.toContain("bilello");
     expect(sql).not.toContain("snapshot");
     expect(sql).not.toContain("src/data/market");
