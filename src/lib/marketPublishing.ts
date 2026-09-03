@@ -22,7 +22,11 @@ export type MarketPublishingTemplateId =
   | "vol_credit_watch"
   | "macro_week_ahead"
   | "reserve_vix_claim_audit"
-  | "earnings_valuation_gate";
+  | "earnings_valuation_gate"
+  | "category_breadth"
+  | "credit_stress"
+  | "funding_stress"
+  | "curve_regime";
 
 export interface MarketPublishingCitation {
   source: "FRED/Economic Gold SQLite";
@@ -31,6 +35,15 @@ export interface MarketPublishingCitation {
   observationAsOf: string | null;
   transform: string;
   basis: string;
+}
+
+/** One component of a candidate's score, per spec004's Editorial Ranking contract — every score must be reproducible from its cited table/column/threshold. */
+export interface MarketPublishingScoreBreakdown {
+  component: string;
+  value: number;
+  goldTable: string;
+  goldColumn: string;
+  threshold: string;
 }
 
 export interface MarketPublishingCandidate {
@@ -48,6 +61,8 @@ export interface MarketPublishingCandidate {
   citation: MarketPublishingCitation | null;
   unavailableReason?: string;
   warnings: string[];
+  /** Present for detector-produced candidates (spec006); absent for the fixed template checklist above. */
+  scoreBreakdown?: MarketPublishingScoreBreakdown[];
 }
 
 export interface MarketPublishingPackageDefinition {
@@ -150,7 +165,7 @@ function byId(metrics: CommandCenterMetric[]): Map<string, CommandCenterMetric> 
   return new Map(metrics.map((metric) => [metric.id, metric]));
 }
 
-function citation(seriesIds: string[], asOf: string | null, transform: string, basis: string, goldTables = GOLD_OBSERVATION_TABLES): MarketPublishingCitation {
+export function citation(seriesIds: string[], asOf: string | null, transform: string, basis: string, goldTables = GOLD_OBSERVATION_TABLES): MarketPublishingCitation {
   return {
     source: "FRED/Economic Gold SQLite",
     seriesIds,
@@ -165,7 +180,7 @@ function maxDate(values: Array<string | null | undefined>): string | null {
   return values.reduce<string | null>((best, value) => (value && (!best || value > best) ? value : best), null);
 }
 
-function readyCandidate(args: Omit<MarketPublishingCandidate, "status" | "source" | "warnings"> & { warnings?: string[] }): MarketPublishingCandidate {
+export function readyCandidate(args: Omit<MarketPublishingCandidate, "status" | "source" | "warnings"> & { warnings?: string[] }): MarketPublishingCandidate {
   return {
     ...args,
     status: "ready",
@@ -174,7 +189,7 @@ function readyCandidate(args: Omit<MarketPublishingCandidate, "status" | "source
   };
 }
 
-function unavailableCandidate(args: Omit<MarketPublishingCandidate, "status" | "source" | "score" | "citation" | "warnings"> & { unavailableReason: string; warnings?: string[] }): MarketPublishingCandidate {
+export function unavailableCandidate(args: Omit<MarketPublishingCandidate, "status" | "source" | "score" | "citation" | "warnings"> & { unavailableReason: string; warnings?: string[] }): MarketPublishingCandidate {
   return {
     ...args,
     status: "unavailable",

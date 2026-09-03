@@ -2,13 +2,12 @@
 
 ## Status
 
-Draft. No detector code written yet. Phase 0 is complete: the 12-table
-signal audit (staleness/frequency/null-rate profiling) is written up in
-`docs/specs/spec004/PHASE0_DATA_CONTRACT.md`'s "Spec006 Signal Table Audit"
-section, `src/app/api/market-publishing` is now covered by
-`scripts/check-gold-db-policy.sh`'s Tier A no-fallback gate, and **Joshua
-approved all 12 audited tables for read-only use on 2026-09-02**. Phase 1
-(the actual detector) is unblocked and has not started yet.
+Draft. Phase 0 is complete (12-table signal audit, approved by Joshua
+2026-09-02, Tier A gate coverage added). Phase 1 is also complete:
+`src/lib/materialChangeDetector.ts` reads the four Phase 1 tables and
+produces real, threshold-based candidates, with 11 passing tests. Not yet
+wired into the live `/api/market-publishing/candidates` route — see Phase
+1's own notes. Phase 2 (transition tracking) has not started.
 
 ## Owner
 
@@ -256,20 +255,39 @@ GET /api/market-publishing/candidates (existing route, unchanged shape)
   `PHASE0_DATA_CONTRACT.md`'s approved base-table list. **Approved
   2026-09-02.** Phase 1 is unblocked.
 
-### Phase 1: Read-only detector over a narrow signal set
+### Phase 1: Read-only detector over a narrow signal set — done
 
-- Implement `materialChangeDetector.ts` against 3-4 of the highest-confidence
-  daily signals first: `gold_macro_category_summary`,
-  `gold_credit_spread_daily`, `gold_funding_stress_daily`,
-  `gold_treasury_curve_metrics`.
-- Fixed, documented, owner-reviewable thresholds (e.g. `|avg_zscore| >= 1.5`
-  and `breadth_pct >= 0.8` for a category-breadth candidate; `is_stress_episode
-  = 1 OR percentile >= 95` for credit; `stress_bucket IN ('elevated',
-  'severe')` for funding).
-- No transition tracking yet — every run reports current state.
-- Tests proving: no fallback path exists, missing/null Gold rows produce
-  `unavailable`, and every emitted candidate's `scoreBreakdown` cites a real
-  table/column/threshold (extends `candidates/route.test.ts`'s pattern).
+- Implemented `src/lib/materialChangeDetector.ts` against the four Phase 1
+  tables: `gold_macro_category_summary`, `gold_credit_spread_daily`,
+  `gold_funding_stress_daily`, `gold_treasury_curve_metrics`.
+- Thresholds validated against real data before coding, and corrected from
+  this section's original draft where the draft's guess didn't match
+  reality: `|avg_zscore| >= 1.5 AND breadth_pct >= 0.8` for category breadth
+  (fires on exactly `GROWTH` today); `is_stress_episode = 1 OR percentile >=
+  0.95` for credit (percentile is stored 0-1, not 0-100 — fires on exactly
+  `CCC_OAS` today); `stress_bucket IN ('elevated', 'stressed')` for funding
+  (real bucket values are `calm`/`normal`/`elevated`/`stressed` — "severe"
+  in the earlier draft doesn't exist in the data); curve fires only on
+  `is_inverted_10y2y = 1 OR is_inverted_10y3m = 1 OR is_recession = 1` —
+  `curve_move`'s directional label (`bear-steepener` etc.) is present on
+  most days and would flood the queue if used as the trigger itself, so it
+  appears only as descriptive text on a candidate, never as the condition.
+- No transition tracking yet, per plan — every run reports current state.
+- 11 tests in `src/lib/materialChangeDetector.test.ts` prove: no fallback
+  path exists (`goldEnabled()=false` → 4 unavailable candidates, zero
+  queries attempted); a failed read produces an explicit unavailable
+  candidate rather than a thrown error or silent empty state; an empty
+  result set is distinct from a real "condition not met" zero-candidate
+  outcome; a null `breadth_pct` (real in the audit — `FX`/`MONEY`/`RATES`)
+  is skipped without crashing; and every ready candidate's `scoreBreakdown`
+  cites one of the four approved tables with a non-empty column/threshold.
+  All pass; `npm run typecheck` and the existing
+  `candidates/route.test.ts` suite are unaffected.
+- **Not wired into `buildMarketPublishingCandidates`/the live
+  `/api/market-publishing/candidates` route yet.** That route's own test
+  asserts an exact, fixed set of Gold reads (spec004 Phase 0's no-fallback
+  guardrail) — wiring this in changes what that guardrail means and is a
+  deliberate follow-up decision, not an implicit side effect of Phase 1.
 
 ### Phase 2: Transition tracking
 
