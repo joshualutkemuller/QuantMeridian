@@ -16,6 +16,7 @@ import {
   detectCreditStressCandidates,
   detectFundingStressCandidates,
   detectCurveRegimeCandidates,
+  detectIndicatorSurpriseCandidates,
   detectMaterialChangeCandidates,
 } from "./materialChangeDetector";
 
@@ -53,11 +54,21 @@ function curveMetricsRow(overrides: Partial<{ is_inverted_10y2y: number; is_inve
   }];
 }
 
+function indicatorDashboardRows() {
+  return [
+    { series_id: "DEXBZUS", econ_category: "FX", as_of_date: "2026-08-24", latest_date: "2026-08-14", latest_value: 5.4, zscore: 1.62, percentile: 0.89, surprise: 0.3, surprise_z: 3.36, staleness_days: 10 },
+    { series_id: "GDI", econ_category: "GROWTH", as_of_date: "2026-08-24", latest_date: "2026-01-01", latest_value: 24000, zscore: 2.89, percentile: 1.0, surprise: 0.1, surprise_z: 0.4, staleness_days: 235 }, // extreme zscore but stale — must not fire
+    { series_id: "UNRATE", econ_category: "LABOR", as_of_date: "2026-08-24", latest_date: "2026-07-01", latest_value: 4.1, zscore: -0.2, percentile: 0.4, surprise: null, surprise_z: null, staleness_days: 20 }, // null surprise_z — must skip without crashing
+    { series_id: "PCEPI", econ_category: "INFLATION", as_of_date: "2026-08-24", latest_date: "2026-06-01", latest_value: 131.4, zscore: 0.5, percentile: 0.6, surprise: 0.05, surprise_z: 1.1, staleness_days: 15 }, // below surprise_z threshold
+  ];
+}
+
 function mockRawByTable(table: {
   category?: unknown[];
   credit?: unknown[];
   funding?: unknown[];
   curve?: unknown[];
+  indicator?: unknown[];
 }) {
   mocks.raw.mockImplementation((sql: string) => {
     const s = String(sql);
@@ -65,6 +76,7 @@ function mockRawByTable(table: {
     if (s.includes("gold_credit_spread_daily")) return Promise.resolve(table.credit ?? []);
     if (s.includes("gold_funding_stress_daily")) return Promise.resolve(table.funding ?? []);
     if (s.includes("gold_treasury_curve_metrics")) return Promise.resolve(table.curve ?? []);
+    if (s.includes("gold_macro_indicator_dashboard")) return Promise.resolve(table.indicator ?? []);
     return Promise.resolve([]);
   });
 }
@@ -144,12 +156,41 @@ describe("materialChangeDetector", () => {
     expect(candidates[0].score).toBe(85);
   });
 
-  test("fails closed when Gold is not configured: no query attempted, all four detectors return unavailable", async () => {
+  test("indicator surprise: fires only on |surprise_z| >= threshold AND fresh enough, skipping stale extremes and null surprise_z", async () => {
+    mockRawByTable({ indicator: indicatorDashboardRows() });
+
+    const candidates = await detectIndicatorSurpriseCandidates();
+
+    // DEXBZUS: surprise_z 3.36, staleness 10 -> fires.
+    // GDI: zscore 2.89 (would fire under a naive zscore-only rule) but staleness 235 -> must NOT fire.
+    // UNRATE: surprise_z null -> must be skipped without crashing.
+    // PCEPI: surprise_z 1.1, below the 2.5 threshold -> must NOT fire.
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].id).toBe("indicator-surprise-DEXBZUS");
+    expect(candidates[0].score).toBe(67); // round(3.36 * 20), capped at 99
+    expect(candidates[0].dataAsOf).toBe("2026-08-14");
+    expect(candidates[0].scoreBreakdown).toEqual(expect.arrayContaining([
+      expect.objectContaining({ goldTable: "macro_indicator_dashboard", goldColumn: "surprise_z" }),
+      expect.objectContaining({ goldTable: "macro_indicator_dashboard", goldColumn: "zscore" }),
+    ]));
+  });
+
+  test("indicator surprise: an empty result set is unavailable, distinct from zero candidates crossing the threshold", async () => {
+    mockRawByTable({ indicator: [] });
+
+    const candidates = await detectIndicatorSurpriseCandidates();
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].status).toBe("unavailable");
+    expect(candidates[0].unavailableReason).toContain("No macro_indicator_dashboard rows found");
+  });
+
+  test("fails closed when Gold is not configured: no query attempted, all five detectors return unavailable", async () => {
     mocks.goldEnabled.mockReturnValue(false);
 
     const candidates = await detectMaterialChangeCandidates();
 
-    expect(candidates).toHaveLength(4);
+    expect(candidates).toHaveLength(5);
     expect(candidates.every((c) => c.status === "unavailable" && c.source === "ERR")).toBe(true);
     expect(mocks.raw).not.toHaveBeenCalled();
   });
@@ -177,19 +218,20 @@ describe("materialChangeDetector", () => {
     expect(candidates[0].unavailableReason).toContain("No funding_stress_daily rows found");
   });
 
-  test("every ready candidate's scoreBreakdown cites one of the four approved Phase 1 tables, never a free-form value", async () => {
+  test("every ready candidate's scoreBreakdown cites one of the five approved tables read so far, never a free-form value", async () => {
     mockRawByTable({
       category: categorySummaryRows(),
       credit: creditSpreadRows(),
       funding: fundingStressRow("stressed"),
       curve: curveMetricsRow({ is_inverted_10y3m: 1 }),
+      indicator: indicatorDashboardRows(),
     });
 
     const candidates = await detectMaterialChangeCandidates();
     const ready = candidates.filter((c) => c.status === "ready");
-    const approvedTables = ["macro_category_summary", "credit_spread_daily", "funding_stress_daily", "treasury_curve_metrics"];
+    const approvedTables = ["macro_category_summary", "credit_spread_daily", "funding_stress_daily", "treasury_curve_metrics", "macro_indicator_dashboard"];
 
-    expect(ready.length).toBeGreaterThanOrEqual(3);
+    expect(ready.length).toBeGreaterThanOrEqual(4);
     for (const candidate of ready) {
       expect(candidate.scoreBreakdown && candidate.scoreBreakdown.length).toBeGreaterThan(0);
       for (const entry of candidate.scoreBreakdown ?? []) {
@@ -200,12 +242,13 @@ describe("materialChangeDetector", () => {
     }
   });
 
-  test("queries only the four approved Phase 1 tables, no forbidden fallback references", async () => {
+  test("queries only the five approved tables read so far, no forbidden fallback references", async () => {
     mockRawByTable({
       category: categorySummaryRows(),
       credit: creditSpreadRows(),
       funding: fundingStressRow("elevated"),
       curve: curveMetricsRow({ is_recession: 1 }),
+      indicator: indicatorDashboardRows(),
     });
 
     await detectMaterialChangeCandidates();
@@ -215,6 +258,7 @@ describe("materialChangeDetector", () => {
     expect(sql).toContain("gold_credit_spread_daily");
     expect(sql).toContain("gold_funding_stress_daily");
     expect(sql).toContain("gold_treasury_curve_metrics");
+    expect(sql).toContain("gold_macro_indicator_dashboard");
     expect(sql).not.toContain("bilello");
     expect(sql).not.toContain("snapshot");
     expect(sql).not.toContain("src/data/market");

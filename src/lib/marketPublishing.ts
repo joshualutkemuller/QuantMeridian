@@ -26,7 +26,8 @@ export type MarketPublishingTemplateId =
   | "category_breadth"
   | "credit_stress"
   | "funding_stress"
-  | "curve_regime";
+  | "curve_regime"
+  | "indicator_surprise";
 
 export interface MarketPublishingCitation {
   source: "FRED/Economic Gold SQLite";

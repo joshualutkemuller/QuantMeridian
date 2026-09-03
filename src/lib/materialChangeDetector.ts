@@ -17,8 +17,14 @@ import {
  * for the Gold read itself failing, per spec004's existing convention.
  *
  * Approved tables (docs/specs/spec004/PHASE0_DATA_CONTRACT.md, "Spec006
- * Signal Table Audit", approved 2026-09-02): only the four Phase 1 tables
- * below are read here. The other eight approved tables are Phase 3 scope.
+ * Signal Table Audit", approved 2026-09-02): Phase 1 read four of the
+ * twelve. Phase 3 adds `gold_macro_indicator_dashboard` (per-series
+ * surprise detection). The remaining seven — `gold_zscore_heatmap` (a much
+ * larger, more generic table needing its own id-namespacing design),
+ * `gold_credit_spread_rolling`, `gold_curve_spread_daily`,
+ * `gold_spread_inversion_episode`, `gold_series_structural_breaks`,
+ * `gold_macro_anomaly_scores`, `gold_recession_probability_daily` — remain
+ * unread, left for a later Phase 3 slice rather than folded in here.
  */
 
 export const runtime = "nodejs";
@@ -27,6 +33,7 @@ const CATEGORY_SUMMARY_TABLE = "macro_category_summary";
 const CREDIT_SPREAD_TABLE = "credit_spread_daily";
 const FUNDING_STRESS_TABLE = "funding_stress_daily";
 const CURVE_METRICS_TABLE = "treasury_curve_metrics";
+const INDICATOR_DASHBOARD_TABLE = "macro_indicator_dashboard";
 
 // Fixed, owner-tunable thresholds. Each is cited in the candidate it
 // produces via scoreBreakdown — nothing here is a hidden magic number.
@@ -34,6 +41,14 @@ const CATEGORY_BREADTH_MIN = 0.8;
 const CATEGORY_ZSCORE_MIN = 1.5;
 const CREDIT_PERCENTILE_MIN = 0.95;
 const FUNDING_STRESS_BUCKETS = ["elevated", "stressed"];
+// Calibrated against real data while writing this detector: raw |zscore|
+// alone at any reasonable cutoff mostly caught STALE rows (some over 200
+// days old — a quarterly GDP print looking "extreme" isn't material today,
+// it's just old; staleness_days ranged as high as 13,499 in this table).
+// surprise_z plus a tight staleness gate is what actually stays selective
+// and current: 2.5/45 produced exactly 8 fresh, diverse candidates.
+const INDICATOR_SURPRISE_Z_MIN = 2.5;
+const INDICATOR_MAX_STALENESS_DAYS = 45;
 
 interface CategorySummaryRow {
   econ_category: string;
@@ -75,6 +90,19 @@ interface CurveMetricsRow {
   is_inverted_10y2y: number | null;
   is_inverted_10y3m: number | null;
   is_recession: number | null;
+}
+
+interface IndicatorDashboardRow {
+  series_id: string;
+  econ_category: string;
+  as_of_date: string;
+  latest_date: string;
+  latest_value: number | null;
+  zscore: number | null;
+  percentile: number | null;
+  surprise: number | null;
+  surprise_z: number | null;
+  staleness_days: number | null;
 }
 
 async function latestRows<T>(table: string): Promise<T[]> {
@@ -339,7 +367,80 @@ export async function detectCurveRegimeCandidates(): Promise<MarketPublishingCan
   })];
 }
 
-export type DetectorTemplateId = "category_breadth" | "credit_stress" | "funding_stress" | "curve_regime";
+/**
+ * Indicator surprise: any single series (of the ~290 covered) whose latest
+ * print surprised meaningfully against trend AND is still fresh. Raw
+ * `zscore` alone is deliberately NOT the trigger here — calibrated against
+ * real data, its most extreme rows were mostly stale (some 200+ days old;
+ * a quarterly GDP print that hasn't updated in months isn't "material
+ * today" just because it once looked unusual). `surprise_z` combined with
+ * a tight staleness gate stays selective and current; `zscore`/`percentile`
+ * are carried as supporting context, not additional triggers.
+ */
+export async function detectIndicatorSurpriseCandidates(): Promise<MarketPublishingCandidate[]> {
+  if (!goldEnabled()) return [configMissing("indicator_surprise", "Indicator surprise", "Today")];
+
+  let rows: IndicatorDashboardRow[];
+  try {
+    rows = await latestRowsByAsOf<IndicatorDashboardRow>(INDICATOR_DASHBOARD_TABLE);
+  } catch (err) {
+    return [readFailed("indicator_surprise", "Indicator surprise", "Today", (err as Error).message)];
+  }
+  if (!rows.length) {
+    return [readFailed("indicator_surprise", "Indicator surprise", "Today", `No ${INDICATOR_DASHBOARD_TABLE} rows found.`)];
+  }
+
+  const candidates: MarketPublishingCandidate[] = [];
+  for (const row of rows) {
+    if (row.surprise_z == null || row.staleness_days == null) continue;
+    if (row.staleness_days > INDICATOR_MAX_STALENESS_DAYS) continue;
+    if (Math.abs(row.surprise_z) < INDICATOR_SURPRISE_Z_MIN) continue;
+
+    const direction = row.surprise_z > 0 ? "above" : "below";
+    const breakdown: MarketPublishingScoreBreakdown[] = [
+      {
+        component: "surprise vs. trend",
+        value: row.surprise_z,
+        goldTable: INDICATOR_DASHBOARD_TABLE,
+        goldColumn: "surprise_z",
+        threshold: `|surprise_z| >= ${INDICATOR_SURPRISE_Z_MIN} AND staleness_days <= ${INDICATOR_MAX_STALENESS_DAYS}`,
+      },
+    ];
+    if (row.zscore != null) {
+      breakdown.push({
+        component: "magnitude vs. recent history",
+        value: row.zscore,
+        goldTable: INDICATOR_DASHBOARD_TABLE,
+        goldColumn: "zscore",
+        threshold: "supporting context only — not a trigger (see detector docstring: raw zscore extremity here often reflects stale data)",
+      });
+    }
+
+    candidates.push(readyCandidate({
+      id: `indicator-surprise-${row.series_id}`,
+      templateId: "indicator_surprise",
+      title: `${row.series_id} surprised ${direction} trend`,
+      summary: `${row.series_id} (${row.econ_category}) printed ${row.latest_value ?? "n/a"} on ${row.latest_date}, surprise z ${row.surprise_z.toFixed(2)}${row.zscore != null ? `, zscore ${row.zscore.toFixed(2)}` : ""} — ${row.staleness_days}d since release.`,
+      score: Math.min(99, Math.round(Math.abs(row.surprise_z) * 20)),
+      workspace: "Today",
+      packageTypes: ["pre_market", "post_release", "market_close", "weekend_week_in_markets", "monthly_state_of_markets"],
+      dataAsOf: row.latest_date,
+      seriesIds: [row.series_id],
+      citation: {
+        source: "FRED/Economic Gold SQLite",
+        seriesIds: [row.series_id],
+        goldTables: [INDICATOR_DASHBOARD_TABLE],
+        observationAsOf: row.latest_date,
+        transform: "surprise z-score (actual vs. trend-implied) computed by the upstream pipeline",
+        basis: row.econ_category,
+      },
+      scoreBreakdown: breakdown,
+    }));
+  }
+  return candidates;
+}
+
+export type DetectorTemplateId = "category_breadth" | "credit_stress" | "funding_stress" | "curve_regime" | "indicator_surprise";
 
 export interface DetectorGroupResult {
   templateId: DetectorTemplateId;
@@ -348,19 +449,21 @@ export interface DetectorGroupResult {
   candidates: MarketPublishingCandidate[];
 }
 
-/** Runs all Phase 1 detectors, grouped per signal so Phase 2's transition tracking can scope resolution per detector rather than guessing across all four at once. */
+/** Runs all detectors, grouped per signal so Phase 2's transition tracking can scope resolution per detector rather than guessing across all of them at once. */
 export async function detectMaterialChangeCandidateGroups(): Promise<DetectorGroupResult[]> {
-  const [category, credit, funding, curve] = await Promise.all([
+  const [category, credit, funding, curve, indicator] = await Promise.all([
     detectCategoryBreadthCandidates(),
     detectCreditStressCandidates(),
     detectFundingStressCandidates(),
     detectCurveRegimeCandidates(),
+    detectIndicatorSurpriseCandidates(),
   ]);
   const groups: [DetectorTemplateId, MarketPublishingCandidate[]][] = [
     ["category_breadth", category],
     ["credit_stress", credit],
     ["funding_stress", funding],
     ["curve_regime", curve],
+    ["indicator_surprise", indicator],
   ];
   return groups.map(([templateId, candidates]) => ({
     templateId,

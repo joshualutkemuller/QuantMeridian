@@ -123,6 +123,12 @@ function curveMetricsRows() {
   return [{ as_of_date: "2026-08-20", level: 4.37, slope_10y2y: 0.5, slope_10y3m: 0.82, curve_move: "bear-steepener", is_inverted_10y2y: 1, is_inverted_10y3m: 0, is_recession: 0 }];
 }
 
+function indicatorDashboardRows() {
+  return [
+    { series_id: "DEXBZUS", econ_category: "FX", as_of_date: "2026-08-24", latest_date: "2026-08-14", latest_value: 5.4, zscore: 1.62, percentile: 0.89, surprise: 0.3, surprise_z: 3.36, staleness_days: 10 },
+  ];
+}
+
 async function readJson(response: Response) {
   return response.json();
 }
@@ -138,6 +144,7 @@ describe("/api/market-publishing", () => {
       if (s.includes("gold_credit_spread_daily")) return Promise.resolve(creditSpreadRows());
       if (s.includes("gold_funding_stress_daily")) return Promise.resolve(fundingStressRows());
       if (s.includes("gold_treasury_curve_metrics")) return Promise.resolve(curveMetricsRows());
+      if (s.includes("gold_macro_indicator_dashboard")) return Promise.resolve(indicatorDashboardRows());
       return Promise.resolve(observationRows());
     });
     mocks.readDetectorState.mockResolvedValue(new Map());
@@ -189,7 +196,7 @@ describe("/api/market-publishing", () => {
   test("candidates merges spec006 material-change detector output alongside the fixed templates", async () => {
     const body = await readJson(await getCandidates());
 
-    const detectorTemplateIds = ["category_breadth", "credit_stress", "funding_stress", "curve_regime"];
+    const detectorTemplateIds = ["category_breadth", "credit_stress", "funding_stress", "curve_regime", "indicator_surprise"];
     const detectorCandidates = body.candidates.filter((candidate: { templateId: string }) => detectorTemplateIds.includes(candidate.templateId));
     expect(detectorCandidates.map((c: { templateId: string }) => c.templateId)).toEqual(expect.arrayContaining(detectorTemplateIds));
     expect(detectorCandidates.every((c: { status: string; scoreBreakdown?: unknown[] }) => (
@@ -242,18 +249,20 @@ describe("/api/market-publishing", () => {
   test("queries only approved Gold tables", async () => {
     await getCandidates();
 
-    // 2 Command Center reads (spec004 Phase 0) + 4 spec006 material-change
+    // 2 Command Center reads (spec004 Phase 0) + 5 spec006 material-change
     // detector reads (spec004 Phase 0's "Spec006 Signal Table Audit",
-    // approved 2026-09-02). Widening this count is a deliberate approval
-    // decision each time, not something that should pass by accident —
-    // if this fails, a new table was added without updating this guardrail.
-    expect(mocks.raw).toHaveBeenCalledTimes(6);
+    // approved 2026-09-02 — Phase 3 added gold_macro_indicator_dashboard).
+    // Widening this count is a deliberate approval decision each time, not
+    // something that should pass by accident — if this fails, a new table
+    // was added without updating this guardrail.
+    expect(mocks.raw).toHaveBeenCalledTimes(7);
     const sql = mocks.raw.mock.calls.map((call) => String(call[0])).join("\n");
     expect(sql).toContain("gold_fred_latest_observation");
     expect(sql).toContain("gold_release_calendar");
     expect(sql).toContain("gold_macro_category_summary");
     expect(sql).toContain("gold_credit_spread_daily");
     expect(sql).toContain("gold_funding_stress_daily");
+    expect(sql).toContain("gold_macro_indicator_dashboard");
     expect(sql).toContain("gold_treasury_curve_metrics");
     expect(sql).not.toContain("bilello");
     expect(sql).not.toContain("snapshot");

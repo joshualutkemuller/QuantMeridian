@@ -8,8 +8,11 @@ deploy — a separate, non-`gold`-prefixed table, written only by the daily
 `/api/cron/refresh` cron and only ever read by the live `candidates` route,
 so concurrent requests can't race on it. Not yet verified against a real
 deployed Postgres (local dev only tested against sqlite) — see "Open
-Verification Item" in Phase 2's notes below. Phase 3 (the other 8 approved
-tables, and the fixed templates' score-formula cleanup) has not started.
+Verification Item" in Phase 2's notes below. Phase 3 is partially done: a
+5th detector (`indicator_surprise`, `gold_macro_indicator_dashboard`) is
+shipped and wired through Phase 2's transition tracking automatically. The
+score-formula cleanup for the original 7 fixed templates and the remaining
+7 approved-but-unread tables are still open — see Phase 3's notes below.
 
 ## Owner
 
@@ -371,16 +374,62 @@ deployed database. Before relying on it: either confirm the `MACRO_DB_URL`
 credentials have `CREATE`/`INSERT`/`UPDATE` on a new table, or set
 `MPUB_STATE_DB_URL` to a connection string that does.
 
-### Phase 3: Remaining signal sources and score-formula cleanup
+### Phase 3: Remaining signal sources and score-formula cleanup — partially done
 
-- Add `gold_macro_indicator_dashboard`/`gold_zscore_heatmap`-driven candidates
-  (broader per-series coverage beyond the fixed template set).
-- Replace the existing fixed templates' ad hoc score constants (`vix.value -
-  12`, etc.) with real percentile/zscore-derived equivalents where a Gold
-  column now covers the same signal.
-- Add the lower-frequency sources (`gold_macro_anomaly_scores`,
-  `gold_recession_probability_daily`, `gold_series_structural_breaks`) with
-  explicit frequency/staleness caveats in `warnings`.
+**Done: `gold_macro_indicator_dashboard`-driven candidates
+(`detectIndicatorSurpriseCandidates`, 5th group in
+`detectMaterialChangeCandidateGroups`, id prefix `indicator-surprise-`).**
+Per-series coverage across the ~290 indicators the dashboard tracks,
+beyond the four narrow signals Phase 1 shipped. Calibrated against real
+data while building it, not guessed at:
+
+- Raw `zscore` alone was tried first and rejected — at any threshold loose
+  enough to be useful, its most extreme rows were mostly **stale**, not
+  fresh (`staleness_days` in this table ranges as high as 13,499; the
+  top-8 most extreme `zscore` rows were all 84-235 days stale). A
+  quarterly GDP print that hasn't updated in months looking "extreme"
+  isn't material today — it's old. This is spec004's "false freshness"
+  pitfall showing up concretely, not hypothetically.
+- `surprise_z >= 2.5` combined with `staleness_days <= 45` is the actual
+  trigger — selective (8 candidates on the audited date, across FX/rates/
+  credit/activity, all 3-23 days old) and current. `zscore`/`percentile`
+  are carried in `scoreBreakdown` as supporting context only, explicitly
+  labeled as non-triggering.
+- Tests: 2 dedicated (threshold+staleness-gate firing correctly including
+  the specific "extreme zscore but stale, must not fire" and "null
+  surprise_z, must skip without crashing" cases; empty-result-set
+  unavailable state), plus the aggregate table/citation/no-fallback tests
+  extended to cover 5 tables and 5 detectors. Full suite (216/218, same 2
+  pre-existing unrelated failures), typecheck (34 pre-existing lines,
+  unchanged), and the Tier A gate all verified clean. Automatically gets
+  Phase 2's new/continuing/resolved transition tracking for free — no
+  detector-specific code needed there, since that layer is generic per
+  `template_id`.
+
+**Not started:**
+
+- Replace the existing 7 fixed templates' ad hoc score constants
+  (`vix.value - 12`, etc., in `marketPublishing.ts`'s original
+  `buildMarketPublishingCandidates` body) with real percentile/zscore-
+  derived equivalents where a Gold column now covers the same signal. Real
+  design question, not yet resolved: those builders read from
+  `CommandCenterMetric` objects (synchronous), not from the async
+  Gold-table reads the detector layer uses — wiring in a Gold-derived
+  score means either extending `CommandCenter`'s contract or having
+  `marketPublishing.ts` accept pre-fetched score data the way it already
+  accepts `detectorCandidates`. Changing already-shipped candidates' scores
+  is also a behavior change worth flagging explicitly before doing it, not
+  folding in silently.
+- `gold_zscore_heatmap` — deliberately deferred again. Much larger and
+  more generic than `macro_indicator_dashboard` (covers any `series_id`
+  across 5 lookback windows, 20M+ rows total), and would need its own
+  id-namespacing design to avoid colliding with the other detectors'
+  candidate ids.
+- The three lower-frequency sources (`gold_macro_anomaly_scores`,
+  `gold_recession_probability_daily`, `gold_series_structural_breaks`)
+  with explicit frequency/staleness caveats in `warnings`.
+- `gold_credit_spread_rolling`, `gold_curve_spread_daily`,
+  `gold_spread_inversion_episode` — approved, unread.
 
 ### Phase 4: UI wiring
 
