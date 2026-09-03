@@ -16,6 +16,7 @@ TIER_A_DIRS=(
   "src/app/api/econ"
   "src/app/api/market"
   "src/app/api/chart"
+  "src/app/api/market-publishing"
 )
 
 EXEMPT_FILES=(

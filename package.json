@@ -19,6 +19,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
     "check:gold-policy": "bash scripts/check-gold-db-policy.sh",
+    "check:quantsmith-pin": "bash scripts/check-quantsmith-pin.sh",
     "test": "vitest run",
     "test:watch": "vitest",
     "publish:fred-gold": "python3 scripts/publish_fred_gold_to_postgres.py"
