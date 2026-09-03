@@ -339,19 +339,38 @@ export async function detectCurveRegimeCandidates(): Promise<MarketPublishingCan
   })];
 }
 
-/**
- * Runs all Phase 1 detectors and concatenates their output. Not wired into
- * `buildMarketPublishingCandidates`/the existing `/api/market-publishing/
- * candidates` route yet — that route's own test asserts an exact, fixed set
- * of Gold reads (spec004 Phase 0's no-fallback guardrail), and wiring this
- * in is a deliberate follow-up, not an implicit side effect of Phase 1.
- */
-export async function detectMaterialChangeCandidates(): Promise<MarketPublishingCandidate[]> {
+export type DetectorTemplateId = "category_breadth" | "credit_stress" | "funding_stress" | "curve_regime";
+
+export interface DetectorGroupResult {
+  templateId: DetectorTemplateId;
+  /** false when this run's Gold read for this signal failed (an `unavailable` candidate) — spec006 Phase 2 uses this to avoid marking that signal's prior candidates "resolved" on missing information rather than a genuine change. */
+  ok: boolean;
+  candidates: MarketPublishingCandidate[];
+}
+
+/** Runs all Phase 1 detectors, grouped per signal so Phase 2's transition tracking can scope resolution per detector rather than guessing across all four at once. */
+export async function detectMaterialChangeCandidateGroups(): Promise<DetectorGroupResult[]> {
   const [category, credit, funding, curve] = await Promise.all([
     detectCategoryBreadthCandidates(),
     detectCreditStressCandidates(),
     detectFundingStressCandidates(),
     detectCurveRegimeCandidates(),
   ]);
-  return [...category, ...credit, ...funding, ...curve];
+  const groups: [DetectorTemplateId, MarketPublishingCandidate[]][] = [
+    ["category_breadth", category],
+    ["credit_stress", credit],
+    ["funding_stress", funding],
+    ["curve_regime", curve],
+  ];
+  return groups.map(([templateId, candidates]) => ({
+    templateId,
+    ok: !candidates.some((c) => c.status === "unavailable"),
+    candidates,
+  }));
+}
+
+/** Flat, ungrouped view used by the live `candidates` route (Phase 1's original wiring — unchanged shape/behavior). */
+export async function detectMaterialChangeCandidates(): Promise<MarketPublishingCandidate[]> {
+  const groups = await detectMaterialChangeCandidateGroups();
+  return groups.flatMap((group) => group.candidates);
 }

@@ -5,6 +5,7 @@ import { GET as getDaily } from "../daily/route";
 const mocks = vi.hoisted(() => ({
   goldEnabled: vi.fn(),
   raw: vi.fn(),
+  readDetectorState: vi.fn(),
 }));
 
 vi.mock("@/lib/server/goldStore", () => ({
@@ -12,6 +13,10 @@ vi.mock("@/lib/server/goldStore", () => ({
   goldParam: (index: number) => `?${index}`,
   goldStore: () => ({ raw: mocks.raw }),
   goldTable: (table: string) => `gold_${table}`,
+}));
+
+vi.mock("@/lib/server/detectorStateStore", () => ({
+  readDetectorState: mocks.readDetectorState,
 }));
 
 function dateFrom(base: string, days: number): string {
@@ -135,6 +140,7 @@ describe("/api/market-publishing", () => {
       if (s.includes("gold_treasury_curve_metrics")) return Promise.resolve(curveMetricsRows());
       return Promise.resolve(observationRows());
     });
+    mocks.readDetectorState.mockResolvedValue(new Map());
   });
 
   afterEach(() => {
@@ -189,6 +195,33 @@ describe("/api/market-publishing", () => {
     expect(detectorCandidates.every((c: { status: string; scoreBreakdown?: unknown[] }) => (
       c.status === "ready" && Array.isArray(c.scoreBreakdown) && c.scoreBreakdown.length > 0
     ))).toBe(true);
+  });
+
+  test("candidates annotates detector output with changeType/firstFlaggedAt from the last cron run's state (spec006 Phase 2, read-only)", async () => {
+    mocks.readDetectorState.mockResolvedValue(new Map([
+      ["credit-stress-CCC_OAS", { candidateId: "credit-stress-CCC_OAS", templateId: "credit_stress", changeType: "continuing", firstFlaggedAt: "2026-08-20T00:00:00.000Z", lastSeenAt: "2026-09-02T00:00:00.000Z", lastRunAt: "2026-09-02T00:00:00.000Z" }],
+    ]));
+
+    const body = await readJson(await getCandidates());
+
+    const ccc = body.candidates.find((c: { id: string }) => c.id === "credit-stress-CCC_OAS");
+    expect(ccc.changeType).toBe("continuing");
+    expect(ccc.firstFlaggedAt).toBe("2026-08-20T00:00:00.000Z");
+    // A candidate with no matching state row (never seen by a cron run yet) stays unannotated, not errored.
+    const funding = body.candidates.find((c: { templateId: string }) => c.templateId === "funding_stress");
+    expect(funding.changeType).toBeUndefined();
+  });
+
+  test("candidates degrades to a warning, not an unavailable status, when the transition-state read fails", async () => {
+    mocks.readDetectorState.mockRejectedValue(new Error("connection refused"));
+
+    const body = await readJson(await getCandidates());
+
+    const ccc = body.candidates.find((c: { id: string }) => c.id === "credit-stress-CCC_OAS");
+    expect(ccc.status).toBe("ready");
+    expect(ccc.source).toBe("DB");
+    expect(ccc.changeType).toBeUndefined();
+    expect(ccc.warnings).toEqual(expect.arrayContaining([expect.stringContaining("Transition state unavailable: connection refused")]));
   });
 
   test("fails closed when Gold is not configured", async () => {

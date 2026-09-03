@@ -2,12 +2,14 @@
 
 ## Status
 
-Draft. Phase 0 and Phase 1 are complete, and Phase 1's detector is now
-wired into the live `GET /api/market-publishing/candidates` route —
-`materialChangeDetector.ts`'s output merges additively with the existing
-fixed-template candidates in `buildMarketPublishingCandidates`. Phase 2
-(transition tracking, so a chronic signal doesn't re-flag as "new" every
-run) has not started.
+Draft. Phase 0, Phase 1, and Phase 2 are complete. Transition state
+(`mpub_detector_state`) lives in the same Postgres instance as Gold in
+deploy — a separate, non-`gold`-prefixed table, written only by the daily
+`/api/cron/refresh` cron and only ever read by the live `candidates` route,
+so concurrent requests can't race on it. Not yet verified against a real
+deployed Postgres (local dev only tested against sqlite) — see "Open
+Verification Item" in Phase 2's notes below. Phase 3 (the other 8 approved
+tables, and the fixed templates' score-formula cleanup) has not started.
 
 ## Owner
 
@@ -223,16 +225,23 @@ Gold tables (12, approved 2026-09-02; 4 read as of Phase 1)
 src/lib/materialChangeDetector.ts                        [Phase 1 - done]
   - reads GoldStore (read-only)
   - applies documented thresholds per signal
-  - diffs against local transition-state file -> new/continuing/resolved  [Phase 2 - not started]
-  - emits MarketPublishingCandidate[] with scoreBreakdown
-        |
-        v
-buildMarketPublishingCandidates() (src/lib/marketPublishing.ts)          [Phase 1 - done]
-  - merges detector output additively with the existing 7 fixed-template
-    candidates, regardless of Command Center's own source state
-        |
-        v
-GET /api/market-publishing/candidates (existing route, unchanged response shape) [Phase 1 - done]
+  - detectMaterialChangeCandidateGroups() -> grouped, with per-group `ok`  [Phase 2 - done]
+        |                                                        |
+        v                                                        v
+buildMarketPublishingCandidates()          mpub_detector_state (own Postgres table,
+  [Phase 1 - done, merges additively]       same instance as Gold, cron-written only)
+        |                                                        ^
+        v                                                        |
+GET /api/market-publishing/candidates  <---- readDetectorState() (read-only, every request)
+  [Phase 1 - done; Phase 2 - done: annotates                      ^
+   detector candidates with changeType/                           |
+   firstFlaggedAt from the state above]              writeDetectorTransitions()
+                                                       (cron-only write, computeTransitions
+                                                        diff: new/continuing/resolved)
+                                                                    ^
+                                                                    |
+                                                    /api/cron/refresh (daily, CRON_SECRET-gated)
+                                                       [Phase 2 - done]
 ```
 
 ## Delivery Plan
@@ -295,11 +304,72 @@ GET /api/market-publishing/candidates (existing route, unchanged response shape)
   decision each time, and a new test asserts the four detector candidates
   actually appear in the merged, sorted output with real `scoreBreakdown`s.
 
-### Phase 2: Transition tracking
+### Phase 2: Transition tracking — done
 
-- Add the local new/continuing/resolved state file and the corresponding
-  `changeType`/`firstFlaggedAt` fields.
-- Tests proving a chronic signal is not re-ranked as "new" on every run.
+Two decisions were made explicitly before implementation (not assumed):
+
+- **Storage**: same Postgres instance as Gold in deploy, in a new,
+  clearly-separate, non-`gold`-prefixed table (`mpub_detector_state`) —
+  chosen over provisioning a new Vercel Marketplace store (extra
+  infrastructure/cost for a feature with no UI consumer yet) and over a
+  dev-only local file (wouldn't persist across Vercel's serverless
+  invocations in production, confirmed by inspecting the existing
+  `/api/cron/refresh` cron, which already avoids any local write for
+  exactly that reason).
+- **Write trigger**: only the daily `/api/cron/refresh` cron writes state
+  (`writeDetectorTransitions`, gated by `CRON_SECRET` the same way the
+  existing cache-warming half already is). `GET /api/market-publishing/
+  candidates` only ever reads it (`readDetectorState`), so concurrent page
+  loads can never race on a read-modify-write cycle.
+
+What shipped:
+
+- `src/lib/server/detectorStateStore.ts` — `mpub_detector_state`
+  (`candidate_id` PK, `template_id`, `change_type`, `first_flagged_at`,
+  `last_seen_at`, `last_run_at`), reusing `MACRO_DB_URL`'s backend
+  (sqlite/postgres) but with its own write-capable connection — GoldStore's
+  own sqlite connection is opened `readonly: true` by design, so it
+  physically cannot write here even to a non-gold table in the same file.
+  An optional `MPUB_STATE_DB_URL` overrides the connection target, in case
+  the shared `MACRO_DB_URL` credentials turn out to be read-only-only in
+  deploy (a real, not hypothetical, risk — see Open Verification Item).
+- `computeTransitions` — the new/continuing/resolved diff, deliberately
+  extracted as a pure function (no I/O) so it's directly unit-tested
+  without mocking the sqlite/pg driver internals, which this codebase has
+  no existing precedent for. Resolution is scoped per `template_id`: a
+  signal whose Gold read failed this run (`ok: false`) has every id it owns
+  left completely untouched, never guessed at as resolved just because it
+  didn't appear in an empty ready set.
+- `materialChangeDetector.ts`'s new `detectMaterialChangeCandidateGroups`
+  (grouped, with per-group `ok`) feeds the cron; the original
+  `detectMaterialChangeCandidates` (flat) is now a thin wrapper over it,
+  unchanged for the live route.
+- `candidates/route.ts` annotates detector candidates read-only from
+  `mpub_detector_state`; a state-read failure degrades to a `warnings`
+  entry, never an `unavailable` status — the underlying Gold data is still
+  good even when transition history can't be read.
+- Tests: 11 for `computeTransitions` (new/continuing/resolved/re-flagged/
+  per-template scoping/multi-id runs) + 3 for `detectorStateStoreEnabled`,
+  4 for the extended cron route (skip-when-unconfigured, successful write
+  and reporting, write-failure doesn't crash the cache-warming half,
+  `CRON_SECRET` still checked first), 2 for the route's read-only
+  annotation and its graceful-degradation path. Full suite (214/216, same
+  2 pre-existing unrelated failures verified against the actual clean
+  committed tree — not a `git stash` that silently left new untracked
+  files behind), typecheck (34 pre-existing error lines, identical with
+  and without this change, none in a touched file), and the Tier A gate
+  all verified clean.
+
+**Open Verification Item — not yet confirmed, real risk:** `MACRO_DB_URL`'s
+Postgres credentials in deploy may be intentionally read-only (GoldStore
+was built around Gold never being written to). If so, the cron's first
+real write attempt will fail with a permissions error — surfaced
+explicitly (`detectorTransitions: { ok: false, error: ... }` in the cron's
+JSON response, not a silent no-op) rather than corrupting anything, but it
+means Phase 2 is implemented and tested, not yet proven against the actual
+deployed database. Before relying on it: either confirm the `MACRO_DB_URL`
+credentials have `CREATE`/`INSERT`/`UPDATE` on a new table, or set
+`MPUB_STATE_DB_URL` to a connection string that does.
 
 ### Phase 3: Remaining signal sources and score-formula cleanup
 
@@ -325,7 +395,8 @@ GET /api/market-publishing/candidates (existing route, unchanged response shape)
 | --- | --- |
 | New statistics vs. reuse | Reuse only; every signal must trace to an existing Gold column |
 | Table approval scope | Lighter review than a new Source Gate (same pipeline), but still explicit and documented per table |
-| Transition state storage | Local file, not Gold, not committed to the repo |
+| Transition state storage | **Decided 2026-09-03**: same Postgres instance as Gold in deploy, separate non-`gold`-prefixed table (`mpub_detector_state`), not local — a local file wouldn't persist across Vercel's serverless invocations |
+| Transition state write trigger | **Decided 2026-09-03**: only the daily `/api/cron/refresh` cron writes; the live `candidates` route only ever reads, so concurrent requests can't race |
 | Score formula | Fully reproducible from cited table/column/threshold; no free-form heuristic constants going forward |
 | Existing 7 fixed-template candidates | Kept; new detector output is additive, not a replacement |
 | Structural-break table usage | Context/caveat source for narrative framing, not a same-day "material today" trigger by itself (see Risks) |

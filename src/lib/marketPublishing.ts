@@ -46,6 +46,9 @@ export interface MarketPublishingScoreBreakdown {
   threshold: string;
 }
 
+/** spec006 Phase 2: classification against the last daily detector run, read from `mpub_detector_state` — never computed live on every GET. */
+export type MarketPublishingChangeType = "new" | "continuing" | "resolved";
+
 export interface MarketPublishingCandidate {
   id: string;
   templateId: MarketPublishingTemplateId;
@@ -63,6 +66,9 @@ export interface MarketPublishingCandidate {
   warnings: string[];
   /** Present for detector-produced candidates (spec006); absent for the fixed template checklist above. */
   scoreBreakdown?: MarketPublishingScoreBreakdown[];
+  /** spec006 Phase 2: from the last daily cron run, not live. Absent when the state store couldn't be read (see `warnings`). */
+  changeType?: MarketPublishingChangeType;
+  firstFlaggedAt?: string | null;
 }
 
 export interface MarketPublishingPackageDefinition {
