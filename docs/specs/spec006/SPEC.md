@@ -2,13 +2,13 @@
 
 ## Status
 
-Draft. No detector code written yet. Phase 0's mechanical parts are done:
-the 12-table signal audit (staleness/frequency/null-rate profiling) is
-written up in `docs/specs/spec004/PHASE0_DATA_CONTRACT.md`'s new "Spec006
-Signal Table Audit" section, and `src/app/api/market-publishing` is now
-covered by `scripts/check-gold-db-policy.sh`'s Tier A no-fallback gate.
-**Still blocked on Joshua's explicit approval of the 12 audited tables**
-before Phase 1 (the actual detector) can start — see that audit section.
+Draft. No detector code written yet. Phase 0 is complete: the 12-table
+signal audit (staleness/frequency/null-rate profiling) is written up in
+`docs/specs/spec004/PHASE0_DATA_CONTRACT.md`'s "Spec006 Signal Table Audit"
+section, `src/app/api/market-publishing` is now covered by
+`scripts/check-gold-db-policy.sh`'s Tier A no-fallback gate, and **Joshua
+approved all 12 audited tables for read-only use on 2026-09-02**. Phase 1
+(the actual detector) is unblocked and has not started yet.
 
 ## Owner
 
@@ -252,9 +252,9 @@ GET /api/market-publishing/candidates (existing route, unchanged shape)
 - [x] Add `src/app/api/market-publishing` to
   `scripts/check-gold-db-policy.sh`'s `TIER_A_DIRS` — verified clean first
   (no forbidden patterns already present), gate still passes.
-- [ ] **Get Joshua's explicit approval** to add the 12 audited tables to
-  `PHASE0_DATA_CONTRACT.md`'s approved base-table list. Blocking — Phase 1
-  does not start until this is granted.
+- [x] **Get Joshua's explicit approval** to add the 12 audited tables to
+  `PHASE0_DATA_CONTRACT.md`'s approved base-table list. **Approved
+  2026-09-02.** Phase 1 is unblocked.
 
 ### Phase 1: Read-only detector over a narrow signal set
 

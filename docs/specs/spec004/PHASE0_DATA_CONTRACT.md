@@ -14,6 +14,21 @@ SQLite pipeline through `MACRO_DB_URL`.
 - Approved base tables for the first slice:
   - `gold_fred_latest_observation`
   - `gold_release_calendar`
+- Approved for spec006 (material-change detector), approved by Joshua
+  2026-09-02 — see "Spec006 Signal Table Audit" below for the profiling
+  each was approved against:
+  - `gold_macro_indicator_dashboard`
+  - `gold_macro_category_summary`
+  - `gold_zscore_heatmap`
+  - `gold_credit_spread_daily`
+  - `gold_credit_spread_rolling`
+  - `gold_curve_spread_daily`
+  - `gold_funding_stress_daily`
+  - `gold_treasury_curve_metrics`
+  - `gold_spread_inversion_episode`
+  - `gold_series_structural_breaks`
+  - `gold_macro_anomaly_scores`
+  - `gold_recession_probability_daily`
 - Prohibited for `MPUB` phase one:
   - `src/data/market/*.json`
   - legacy market-pipeline snapshots
@@ -78,15 +93,15 @@ cards for gated areas such as earnings/valuation.
   prior, revised prior, and consensus/expectation fields where available.
 - Earnings/valuation remains intentionally blocked.
 
-## Spec006 Signal Table Audit — Pending Approval
+## Spec006 Signal Table Audit — Approved 2026-09-02
 
 `docs/specs/spec006/SPEC.md` (the material-change detector for `MPUB`'s
 candidate feed) profiled 12 additional Gold tables while drafting its Phase
-0. **None of these are approved yet** — this section is the audit spec006's
-delivery plan asked for, not an approval decision. All 12 are within the
-already-approved `fred-bronze-to-gold-pipeline` Gold layer (same pipeline,
-same trust boundary as the two tables already approved above), so this is a
-lighter review than a new Source Gate — but it is still Joshua's explicit
+0. **Joshua approved all 12 for read-only use on 2026-09-02**, now listed in
+Source Boundary above. All 12 are within the already-approved
+`fred-bronze-to-gold-pipeline` Gold layer (same pipeline, same trust
+boundary as the two tables already approved above), so this was a lighter
+review than a new Source Gate — but it was still Joshua's explicit
 call to make per this document's own Non-Negotiable Rules, not a rubber
 stamp.
 
@@ -147,8 +162,10 @@ null `f_stat` rate on its latest run) are not blockers — they are exactly
 the kind of gap spec004's Data Policy requires rendering as an explicit
 "unavailable" state rather than coercing to zero or silently omitting.
 
-**Awaiting Joshua's explicit approval before Phase 1 implementation reads
-any of these 12 tables.**
+**Approved by Joshua, 2026-09-02.** Phase 1 implementation may now read
+these 12 tables, subject to the caveats and handling rules noted per table
+above (e.g. key off `is_significant` rather than `f_stat`; render a thin-
+history rolling zscore as unavailable rather than null-coerced).
 
 ## Tests
 
