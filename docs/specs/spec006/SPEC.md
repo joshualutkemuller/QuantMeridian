@@ -8,11 +8,19 @@ deploy — a separate, non-`gold`-prefixed table, written only by the daily
 `/api/cron/refresh` cron and only ever read by the live `candidates` route,
 so concurrent requests can't race on it. Not yet verified against a real
 deployed Postgres (local dev only tested against sqlite) — see "Open
-Verification Item" in Phase 2's notes below. Phase 3 is partially done: a
-5th detector (`indicator_surprise`, `gold_macro_indicator_dashboard`) is
-shipped and wired through Phase 2's transition tracking automatically. The
-score-formula cleanup for the original 7 fixed templates and the remaining
-7 approved-but-unread tables are still open — see Phase 3's notes below.
+Verification Item" in Phase 2's notes below. Phase 3 is partially done: 7
+detectors now ship (the original 4 + `indicator_surprise`,
+`macro_anomaly`, `recession_risk`), all wired through Phase 2's transition
+tracking automatically — no detector-specific work needed there.
+
+**Next up: the 3 remaining approved daily tables** —
+`gold_credit_spread_rolling`, `gold_curve_spread_daily`,
+`gold_spread_inversion_episode` (Phase 3's "item 2"). Same detector
+pattern as the 7 already shipped; bounded, additive, no open design
+question blocking it. After that, still open: the score-formula cleanup
+for the original 7 fixed templates (a real design question, not just more
+of the same pattern — see Phase 3's notes) and `gold_zscore_heatmap`
+(deferred, needs its own id-namespacing design).
 
 ## Owner
 
@@ -399,15 +407,55 @@ data while building it, not guessed at:
   the specific "extreme zscore but stale, must not fire" and "null
   surprise_z, must skip without crashing" cases; empty-result-set
   unavailable state), plus the aggregate table/citation/no-fallback tests
-  extended to cover 5 tables and 5 detectors. Full suite (216/218, same 2
-  pre-existing unrelated failures), typecheck (34 pre-existing lines,
-  unchanged), and the Tier A gate all verified clean. Automatically gets
-  Phase 2's new/continuing/resolved transition tracking for free — no
-  detector-specific code needed there, since that layer is generic per
-  `template_id`.
+  extended to cover 5 tables and 5 detectors.
 
-**Not started:**
+**Also done: the two lower-frequency sources
+(`detectMacroAnomalyCandidates`, `detectRecessionRiskCandidates` — 6th/7th
+groups, id prefixes `macro-anomaly`/`recession-risk`).** Every ready
+candidate from either carries an explicit monthly-cadence warning per the
+original Phase 3 ask. Calibrated against real data, same discipline as
+`indicator_surprise`:
 
+- `gold_macro_anomaly_scores.is_anomaly` is already a significance-tested
+  boolean from the pipeline — trusted directly as the trigger rather than
+  re-deriving a `p_value` cutoff. Score derives from `p_value` (lower p =
+  higher score).
+- `gold_recession_probability_daily.prob_recession_12m` was found to be
+  an **unreliable column** while calibrating this detector: it flips
+  between exactly 0.0 and 1.0 with no correlation to the near-zero
+  near-term probabilities in the same row (77% of all history reads 1.0).
+  Deliberately excluded from the trigger entirely — `recession_prob`
+  alone at `>= 0.5` is what's actually selective (20.6% of all history,
+  correctly zero in the real current environment's last 24 months of
+  near-zero readings). A test asserts the detector still does NOT fire
+  when only `prob_recession_12m` reads 1.0, so this exclusion can't
+  silently regress.
+- `gold_series_structural_breaks` — explicitly NOT given a detector, per
+  this spec's own existing Risks decision (its `break_date` is often years
+  older than the `as_of_date` re-confirming it; a same-day trigger from it
+  would misrepresent a re-tested old break as fresh news). Stays
+  context/caveat data for a future narrative feature, not a candidate
+  source. Documented in the module's own docstring, not silently dropped.
+- Tests: 5 dedicated (anomaly fires/doesn't; recession fires on
+  `recession_prob` alone even with `prob_recession_12m=1.0`; recession does
+  **not** fire on `prob_recession_12m=1.0` alone; backfilled-observation
+  caveat), plus the aggregate tests extended to 7 tables/7 detectors.
+
+Combined Phase 3-so-far: full suite (221/223, same 2 pre-existing
+unrelated failures), typecheck (34 pre-existing lines, unchanged), and the
+Tier A gate all verified clean. All 3 new detectors automatically get
+Phase 2's new/continuing/resolved transition tracking for free — no
+detector-specific code needed there, since that layer is generic per
+`template_id`.
+
+**Not started — next up is the first bullet:**
+
+- **`gold_credit_spread_rolling`, `gold_curve_spread_daily`,
+  `gold_spread_inversion_episode`** — approved, unread. Same detector
+  pattern as the 7 already shipped (query latest row(s), apply a
+  calibrated-against-real-data threshold, cite in `scoreBreakdown`,
+  wire into `detectMaterialChangeCandidateGroups`); no open design
+  question blocking it, unlike the two items below.
 - Replace the existing 7 fixed templates' ad hoc score constants
   (`vix.value - 12`, etc., in `marketPublishing.ts`'s original
   `buildMarketPublishingCandidates` body) with real percentile/zscore-
@@ -425,11 +473,6 @@ data while building it, not guessed at:
   across 5 lookback windows, 20M+ rows total), and would need its own
   id-namespacing design to avoid colliding with the other detectors'
   candidate ids.
-- The three lower-frequency sources (`gold_macro_anomaly_scores`,
-  `gold_recession_probability_daily`, `gold_series_structural_breaks`)
-  with explicit frequency/staleness caveats in `warnings`.
-- `gold_credit_spread_rolling`, `gold_curve_spread_daily`,
-  `gold_spread_inversion_episode` — approved, unread.
 
 ### Phase 4: UI wiring
 

@@ -17,6 +17,8 @@ import {
   detectFundingStressCandidates,
   detectCurveRegimeCandidates,
   detectIndicatorSurpriseCandidates,
+  detectMacroAnomalyCandidates,
+  detectRecessionRiskCandidates,
   detectMaterialChangeCandidates,
 } from "./materialChangeDetector";
 
@@ -63,12 +65,35 @@ function indicatorDashboardRows() {
   ];
 }
 
+// Real fired example from the audited database (2021-10-01).
+function anomalyScoreRow(overrides: Partial<{ is_anomaly: number; p_value: number }> = {}) {
+  return [{ observation_date: "2021-10-01", mahalanobis_d2: 15.17, chi2_df: 5, p_value: 0.00966, is_anomaly: 1, n_factors_used: 5, ...overrides }];
+}
+
+function recessionProbabilityRow(overrides: Partial<{ recession_prob: number; prob_recession_12m: number; is_backfilled: number }> = {}) {
+  return [{
+    observation_date: "2026-07-01",
+    recession_prob: 0.02, // real current reading is ~1e-13; use a small non-zero default for clarity in tests
+    prob_recession_3m: 0.02,
+    prob_recession_6m: 0.02,
+    prob_recession_12m: 1.0, // real data: flips 0/1 with no correlation to the other columns — must never gate the trigger
+    logit_score: -5.1,
+    n_features: 5,
+    n_obs_training: 2057,
+    model_vintage: "2026-08-24",
+    is_backfilled: 0,
+    ...overrides,
+  }];
+}
+
 function mockRawByTable(table: {
   category?: unknown[];
   credit?: unknown[];
   funding?: unknown[];
   curve?: unknown[];
   indicator?: unknown[];
+  anomaly?: unknown[];
+  recession?: unknown[];
 }) {
   mocks.raw.mockImplementation((sql: string) => {
     const s = String(sql);
@@ -77,6 +102,8 @@ function mockRawByTable(table: {
     if (s.includes("gold_funding_stress_daily")) return Promise.resolve(table.funding ?? []);
     if (s.includes("gold_treasury_curve_metrics")) return Promise.resolve(table.curve ?? []);
     if (s.includes("gold_macro_indicator_dashboard")) return Promise.resolve(table.indicator ?? []);
+    if (s.includes("gold_macro_anomaly_scores")) return Promise.resolve(table.anomaly ?? []);
+    if (s.includes("gold_recession_probability_daily")) return Promise.resolve(table.recession ?? []);
     return Promise.resolve([]);
   });
 }
@@ -185,12 +212,64 @@ describe("materialChangeDetector", () => {
     expect(candidates[0].unavailableReason).toContain("No macro_indicator_dashboard rows found");
   });
 
-  test("fails closed when Gold is not configured: no query attempted, all five detectors return unavailable", async () => {
+  test("macro anomaly: trusts is_anomaly directly, carries a monthly-cadence warning, scores from p_value", async () => {
+    mockRawByTable({ anomaly: anomalyScoreRow() });
+
+    const candidates = await detectMacroAnomalyCandidates();
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].id).toBe("macro-anomaly");
+    expect(candidates[0].score).toBe(99); // round((1 - 0.00966) * 100), capped
+    expect(candidates[0].warnings).toContain("Monthly-frequency signal — may be several weeks old relative to the daily signals above.");
+    expect(candidates[0].scoreBreakdown).toEqual(expect.arrayContaining([
+      expect.objectContaining({ goldTable: "macro_anomaly_scores", goldColumn: "is_anomaly", threshold: "is_anomaly = 1" }),
+    ]));
+  });
+
+  test("macro anomaly: is_anomaly = 0 produces zero candidates, not an unavailable one", async () => {
+    mockRawByTable({ anomaly: anomalyScoreRow({ is_anomaly: 0 }) });
+
+    const candidates = await detectMacroAnomalyCandidates();
+
+    expect(candidates).toHaveLength(0);
+  });
+
+  test("recession risk: fires on recession_prob alone, ignores prob_recession_12m entirely even when it reads 1.0", async () => {
+    mockRawByTable({ recession: recessionProbabilityRow({ recession_prob: 0.6, prob_recession_12m: 1.0 }) });
+
+    const candidates = await detectRecessionRiskCandidates();
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].score).toBe(60);
+    expect(candidates[0].scoreBreakdown?.[0].goldColumn).toBe("recession_prob");
+    expect(candidates[0].scoreBreakdown?.some((b) => b.goldColumn === "prob_recession_12m")).toBe(false);
+  });
+
+  test("recession risk: prob_recession_12m = 1.0 alone (recession_prob low) does NOT fire — the unreliable column is never a trigger", async () => {
+    mockRawByTable({ recession: recessionProbabilityRow({ recession_prob: 0.02, prob_recession_12m: 1.0 }) });
+
+    const candidates = await detectRecessionRiskCandidates();
+
+    expect(candidates).toHaveLength(0);
+  });
+
+  test("recession risk: a backfilled observation gets an extra caveat warning alongside the monthly-cadence one", async () => {
+    mockRawByTable({ recession: recessionProbabilityRow({ recession_prob: 0.55, is_backfilled: 1 }) });
+
+    const candidates = await detectRecessionRiskCandidates();
+
+    expect(candidates[0].warnings).toEqual(expect.arrayContaining([
+      "Monthly-frequency signal — may be several weeks old relative to the daily signals above.",
+      "This observation is backfilled, not a same-day model run.",
+    ]));
+  });
+
+  test("fails closed when Gold is not configured: no query attempted, all seven detectors return unavailable", async () => {
     mocks.goldEnabled.mockReturnValue(false);
 
     const candidates = await detectMaterialChangeCandidates();
 
-    expect(candidates).toHaveLength(5);
+    expect(candidates).toHaveLength(7);
     expect(candidates.every((c) => c.status === "unavailable" && c.source === "ERR")).toBe(true);
     expect(mocks.raw).not.toHaveBeenCalled();
   });
@@ -218,20 +297,22 @@ describe("materialChangeDetector", () => {
     expect(candidates[0].unavailableReason).toContain("No funding_stress_daily rows found");
   });
 
-  test("every ready candidate's scoreBreakdown cites one of the five approved tables read so far, never a free-form value", async () => {
+  test("every ready candidate's scoreBreakdown cites one of the seven approved tables read so far, never a free-form value", async () => {
     mockRawByTable({
       category: categorySummaryRows(),
       credit: creditSpreadRows(),
       funding: fundingStressRow("stressed"),
       curve: curveMetricsRow({ is_inverted_10y3m: 1 }),
       indicator: indicatorDashboardRows(),
+      anomaly: anomalyScoreRow(),
+      recession: recessionProbabilityRow({ recession_prob: 0.6 }),
     });
 
     const candidates = await detectMaterialChangeCandidates();
     const ready = candidates.filter((c) => c.status === "ready");
-    const approvedTables = ["macro_category_summary", "credit_spread_daily", "funding_stress_daily", "treasury_curve_metrics", "macro_indicator_dashboard"];
+    const approvedTables = ["macro_category_summary", "credit_spread_daily", "funding_stress_daily", "treasury_curve_metrics", "macro_indicator_dashboard", "macro_anomaly_scores", "recession_probability_daily"];
 
-    expect(ready.length).toBeGreaterThanOrEqual(4);
+    expect(ready.length).toBeGreaterThanOrEqual(6);
     for (const candidate of ready) {
       expect(candidate.scoreBreakdown && candidate.scoreBreakdown.length).toBeGreaterThan(0);
       for (const entry of candidate.scoreBreakdown ?? []) {
@@ -242,13 +323,15 @@ describe("materialChangeDetector", () => {
     }
   });
 
-  test("queries only the five approved tables read so far, no forbidden fallback references", async () => {
+  test("queries only the seven approved tables read so far, no forbidden fallback references", async () => {
     mockRawByTable({
       category: categorySummaryRows(),
       credit: creditSpreadRows(),
       funding: fundingStressRow("elevated"),
       curve: curveMetricsRow({ is_recession: 1 }),
       indicator: indicatorDashboardRows(),
+      anomaly: anomalyScoreRow(),
+      recession: recessionProbabilityRow({ recession_prob: 0.6 }),
     });
 
     await detectMaterialChangeCandidates();
@@ -259,6 +342,8 @@ describe("materialChangeDetector", () => {
     expect(sql).toContain("gold_funding_stress_daily");
     expect(sql).toContain("gold_treasury_curve_metrics");
     expect(sql).toContain("gold_macro_indicator_dashboard");
+    expect(sql).toContain("gold_macro_anomaly_scores");
+    expect(sql).toContain("gold_recession_probability_daily");
     expect(sql).not.toContain("bilello");
     expect(sql).not.toContain("snapshot");
     expect(sql).not.toContain("src/data/market");

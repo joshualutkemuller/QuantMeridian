@@ -18,13 +18,19 @@ import {
  *
  * Approved tables (docs/specs/spec004/PHASE0_DATA_CONTRACT.md, "Spec006
  * Signal Table Audit", approved 2026-09-02): Phase 1 read four of the
- * twelve. Phase 3 adds `gold_macro_indicator_dashboard` (per-series
- * surprise detection). The remaining seven — `gold_zscore_heatmap` (a much
- * larger, more generic table needing its own id-namespacing design),
- * `gold_credit_spread_rolling`, `gold_curve_spread_daily`,
- * `gold_spread_inversion_episode`, `gold_series_structural_breaks`,
- * `gold_macro_anomaly_scores`, `gold_recession_probability_daily` — remain
- * unread, left for a later Phase 3 slice rather than folded in here.
+ * twelve, Phase 3 added `gold_macro_indicator_dashboard` (per-series
+ * surprise) plus the two monthly sources below. Deliberately still unread:
+ * `gold_zscore_heatmap` (much larger/more generic, needs its own
+ * id-namespacing design), `gold_credit_spread_rolling`,
+ * `gold_curve_spread_daily`, `gold_spread_inversion_episode` — approved,
+ * next in line.
+ *
+ * `gold_series_structural_breaks` is approved but INTENTIONALLY has no
+ * detector here, not an oversight: its own `break_date` is frequently years
+ * older than the `as_of_date` that re-confirms it (a historical break being
+ * re-tested, not new news), which this module's own Risks section already
+ * named as unsafe to treat as a same-day trigger. It stays context/caveat
+ * data for a future narrative-authoring feature, not a candidate source.
  */
 
 export const runtime = "nodejs";
@@ -34,6 +40,11 @@ const CREDIT_SPREAD_TABLE = "credit_spread_daily";
 const FUNDING_STRESS_TABLE = "funding_stress_daily";
 const CURVE_METRICS_TABLE = "treasury_curve_metrics";
 const INDICATOR_DASHBOARD_TABLE = "macro_indicator_dashboard";
+const ANOMALY_SCORES_TABLE = "macro_anomaly_scores";
+const RECESSION_PROBABILITY_TABLE = "recession_probability_daily";
+
+/** Both anomaly_scores and recession_probability_daily are monthly, not daily, despite the latter's table name. Attached to every ready candidate from either. */
+const MONTHLY_CADENCE_WARNING = "Monthly-frequency signal — may be several weeks old relative to the daily signals above.";
 
 // Fixed, owner-tunable thresholds. Each is cited in the candidate it
 // produces via scoreBreakdown — nothing here is a hidden magic number.
@@ -49,6 +60,14 @@ const FUNDING_STRESS_BUCKETS = ["elevated", "stressed"];
 // and current: 2.5/45 produced exactly 8 fresh, diverse candidates.
 const INDICATOR_SURPRISE_Z_MIN = 2.5;
 const INDICATOR_MAX_STALENESS_DAYS = 45;
+// Calibrated against real data: `prob_recession_12m` flips between exactly
+// 0.0 and 1.0 with no correlation to the near-zero near-term probabilities
+// in the same row (77% of all history reads 1.0) — an unreliable/bimodal
+// column, deliberately excluded from this detector rather than trusted.
+// `recession_prob` alone at >= 0.5 is genuinely selective: 20.6% of all
+// history crosses it, and the real current environment (last 24 months,
+// all ~1e-13 to 1e-19) correctly produces zero candidates.
+const RECESSION_PROB_MIN = 0.5;
 
 interface CategorySummaryRow {
   econ_category: string;
@@ -103,6 +122,28 @@ interface IndicatorDashboardRow {
   surprise: number | null;
   surprise_z: number | null;
   staleness_days: number | null;
+}
+
+interface AnomalyScoreRow {
+  observation_date: string;
+  mahalanobis_d2: number | null;
+  chi2_df: number | null;
+  p_value: number | null;
+  is_anomaly: number | null;
+  n_factors_used: number | null;
+}
+
+interface RecessionProbabilityRow {
+  observation_date: string;
+  recession_prob: number | null;
+  prob_recession_3m: number | null;
+  prob_recession_6m: number | null;
+  prob_recession_12m: number | null;
+  logit_score: number | null;
+  n_features: number | null;
+  n_obs_training: number | null;
+  model_vintage: string | null;
+  is_backfilled: number | null;
 }
 
 async function latestRows<T>(table: string): Promise<T[]> {
@@ -440,7 +481,122 @@ export async function detectIndicatorSurpriseCandidates(): Promise<MarketPublish
   return candidates;
 }
 
-export type DetectorTemplateId = "category_breadth" | "credit_stress" | "funding_stress" | "curve_regime" | "indicator_surprise";
+/**
+ * Macro anomaly: a joint, multi-factor statistical anomaly across the macro
+ * system as a whole (not one series in isolation) — `is_anomaly` is already
+ * a significance-tested boolean flag from the upstream pipeline, so this
+ * trusts it directly rather than re-deriving a threshold from `p_value`.
+ * Monthly cadence; every ready candidate carries an explicit staleness
+ * caveat rather than presenting as same-day news.
+ */
+export async function detectMacroAnomalyCandidates(): Promise<MarketPublishingCandidate[]> {
+  if (!goldEnabled()) return [configMissing("macro_anomaly", "Macro anomaly", "Today")];
+
+  let rows: AnomalyScoreRow[];
+  try {
+    rows = await latestRows<AnomalyScoreRow>(ANOMALY_SCORES_TABLE);
+  } catch (err) {
+    return [readFailed("macro_anomaly", "Macro anomaly", "Today", (err as Error).message)];
+  }
+  if (!rows.length) {
+    return [readFailed("macro_anomaly", "Macro anomaly", "Today", `No ${ANOMALY_SCORES_TABLE} rows found.`)];
+  }
+
+  const row = rows[0];
+  if (row.is_anomaly !== 1) return [];
+
+  const pValue = row.p_value ?? 1;
+  const breakdown: MarketPublishingScoreBreakdown[] = [
+    {
+      component: "historical percentile / record proximity",
+      value: pValue,
+      goldTable: ANOMALY_SCORES_TABLE,
+      goldColumn: "is_anomaly",
+      threshold: "is_anomaly = 1",
+    },
+  ];
+  return [readyCandidate({
+    id: "macro-anomaly",
+    templateId: "macro_anomaly",
+    title: "Macro system reads as a joint statistical anomaly",
+    summary: `Mahalanobis d2 ${row.mahalanobis_d2?.toFixed(2) ?? "n/a"} across ${row.n_factors_used ?? "?"} factors, p=${pValue.toExponential(2)}, observation ${row.observation_date}.`,
+    score: Math.min(99, Math.round((1 - pValue) * 100)),
+    workspace: "Today",
+    packageTypes: ["monthly_state_of_markets", "quarterly_market_guide"],
+    dataAsOf: row.observation_date,
+    seriesIds: [],
+    citation: {
+      source: "FRED/Economic Gold SQLite",
+      seriesIds: [],
+      goldTables: [ANOMALY_SCORES_TABLE],
+      observationAsOf: row.observation_date,
+      transform: "multi-factor Mahalanobis-distance joint anomaly test computed by the upstream pipeline",
+      basis: `n_factors_used=${row.n_factors_used ?? "?"}, chi2_df=${row.chi2_df ?? "?"}`,
+    },
+    scoreBreakdown: breakdown,
+    warnings: [MONTHLY_CADENCE_WARNING],
+  })];
+}
+
+/**
+ * Recession risk: `recession_prob` only — `prob_recession_12m` is
+ * deliberately excluded as a trigger input (see the constant's comment:
+ * calibrated against real data as an unreliable, near-binary column
+ * uncorrelated with the near-term probabilities in the same row). Monthly
+ * cadence; every ready candidate carries an explicit staleness caveat.
+ */
+export async function detectRecessionRiskCandidates(): Promise<MarketPublishingCandidate[]> {
+  if (!goldEnabled()) return [configMissing("recession_risk", "Recession risk", "Today")];
+
+  let rows: RecessionProbabilityRow[];
+  try {
+    rows = await latestRows<RecessionProbabilityRow>(RECESSION_PROBABILITY_TABLE);
+  } catch (err) {
+    return [readFailed("recession_risk", "Recession risk", "Today", (err as Error).message)];
+  }
+  if (!rows.length) {
+    return [readFailed("recession_risk", "Recession risk", "Today", `No ${RECESSION_PROBABILITY_TABLE} rows found.`)];
+  }
+
+  const row = rows[0];
+  if (row.recession_prob == null || row.recession_prob < RECESSION_PROB_MIN) return [];
+
+  const breakdown: MarketPublishingScoreBreakdown[] = [
+    {
+      component: "magnitude vs. recent history",
+      value: row.recession_prob,
+      goldTable: RECESSION_PROBABILITY_TABLE,
+      goldColumn: "recession_prob",
+      threshold: `recession_prob >= ${RECESSION_PROB_MIN}`,
+    },
+  ];
+  const warnings = [MONTHLY_CADENCE_WARNING];
+  if (row.is_backfilled === 1) warnings.push("This observation is backfilled, not a same-day model run.");
+
+  return [readyCandidate({
+    id: "recession-risk",
+    templateId: "recession_risk",
+    title: "Recession probability model reads elevated",
+    summary: `Recession probability ${(row.recession_prob * 100).toFixed(0)}% as of ${row.observation_date} (model vintage ${row.model_vintage ?? "n/a"}).`,
+    score: Math.min(99, Math.round(row.recession_prob * 100)),
+    workspace: "Today",
+    packageTypes: ["monthly_state_of_markets", "quarterly_market_guide"],
+    dataAsOf: row.observation_date,
+    seriesIds: [],
+    citation: {
+      source: "FRED/Economic Gold SQLite",
+      seriesIds: [],
+      goldTables: [RECESSION_PROBABILITY_TABLE],
+      observationAsOf: row.observation_date,
+      transform: "recession-probability model computed by the upstream pipeline (recession_prob only — prob_recession_12m deliberately excluded)",
+      basis: `n_features=${row.n_features ?? "?"}, n_obs_training=${row.n_obs_training ?? "?"}`,
+    },
+    scoreBreakdown: breakdown,
+    warnings,
+  })];
+}
+
+export type DetectorTemplateId = "category_breadth" | "credit_stress" | "funding_stress" | "curve_regime" | "indicator_surprise" | "macro_anomaly" | "recession_risk";
 
 export interface DetectorGroupResult {
   templateId: DetectorTemplateId;
@@ -451,12 +607,14 @@ export interface DetectorGroupResult {
 
 /** Runs all detectors, grouped per signal so Phase 2's transition tracking can scope resolution per detector rather than guessing across all of them at once. */
 export async function detectMaterialChangeCandidateGroups(): Promise<DetectorGroupResult[]> {
-  const [category, credit, funding, curve, indicator] = await Promise.all([
+  const [category, credit, funding, curve, indicator, anomaly, recession] = await Promise.all([
     detectCategoryBreadthCandidates(),
     detectCreditStressCandidates(),
     detectFundingStressCandidates(),
     detectCurveRegimeCandidates(),
     detectIndicatorSurpriseCandidates(),
+    detectMacroAnomalyCandidates(),
+    detectRecessionRiskCandidates(),
   ]);
   const groups: [DetectorTemplateId, MarketPublishingCandidate[]][] = [
     ["category_breadth", category],
@@ -464,6 +622,8 @@ export async function detectMaterialChangeCandidateGroups(): Promise<DetectorGro
     ["funding_stress", funding],
     ["curve_regime", curve],
     ["indicator_surprise", indicator],
+    ["macro_anomaly", anomaly],
+    ["recession_risk", recession],
   ];
   return groups.map(([templateId, candidates]) => ({
     templateId,
