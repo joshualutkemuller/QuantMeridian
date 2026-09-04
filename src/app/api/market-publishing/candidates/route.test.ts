@@ -5,6 +5,7 @@ import { GET as getDaily } from "../daily/route";
 const mocks = vi.hoisted(() => ({
   goldEnabled: vi.fn(),
   raw: vi.fn(),
+  readDetectorState: vi.fn(),
 }));
 
 vi.mock("@/lib/server/goldStore", () => ({
@@ -12,6 +13,10 @@ vi.mock("@/lib/server/goldStore", () => ({
   goldParam: (index: number) => `?${index}`,
   goldStore: () => ({ raw: mocks.raw }),
   goldTable: (table: string) => `gold_${table}`,
+}));
+
+vi.mock("@/lib/server/detectorStateStore", () => ({
+  readDetectorState: mocks.readDetectorState,
 }));
 
 function dateFrom(base: string, days: number): string {
@@ -98,6 +103,40 @@ function releaseRows() {
   ];
 }
 
+function categorySummaryRows() {
+  return [
+    { econ_category: "GROWTH", as_of_date: "2026-08-24", n_series: 10, n_improving: 8, n_deteriorating: 0, breadth_pct: 1.0, avg_zscore: 2.1, surprise_index: 2.1 },
+  ];
+}
+
+function creditSpreadRows() {
+  return [
+    { instrument: "CCC_OAS", series_id: "CCC_OAS_SERIES", category: "credit", observation_date: "2026-08-20", oas_bps: 1035, change_bps: 5, zscore: 1.75, percentile: 0.98, is_stress_episode: 1 },
+  ];
+}
+
+function fundingStressRows() {
+  return [{ observation_date: "2026-08-20", composite_z: 0.55, stress_score: 60.9, stress_bucket: "elevated", n_components: 3 }];
+}
+
+function curveMetricsRows() {
+  return [{ as_of_date: "2026-08-20", level: 4.37, slope_10y2y: 0.5, slope_10y3m: 0.82, curve_move: "bear-steepener", is_inverted_10y2y: 1, is_inverted_10y3m: 0, is_recession: 0 }];
+}
+
+function indicatorDashboardRows() {
+  return [
+    { series_id: "DEXBZUS", econ_category: "FX", as_of_date: "2026-08-24", latest_date: "2026-08-14", latest_value: 5.4, zscore: 1.62, percentile: 0.89, surprise: 0.3, surprise_z: 3.36, staleness_days: 10 },
+  ];
+}
+
+function anomalyScoreRows() {
+  return [{ observation_date: "2021-10-01", mahalanobis_d2: 15.17, chi2_df: 5, p_value: 0.00966, is_anomaly: 1, n_factors_used: 5 }];
+}
+
+function recessionProbabilityRows() {
+  return [{ observation_date: "2026-07-01", recession_prob: 0.6, prob_recession_3m: 0.6, prob_recession_6m: 0.5, prob_recession_12m: 1.0, logit_score: -5.1, n_features: 5, n_obs_training: 2057, model_vintage: "2026-08-24", is_backfilled: 0 }];
+}
+
 async function readJson(response: Response) {
   return response.json();
 }
@@ -107,9 +146,18 @@ describe("/api/market-publishing", () => {
     vi.restoreAllMocks();
     mocks.goldEnabled.mockReturnValue(true);
     mocks.raw.mockImplementation((sql: string) => {
-      if (String(sql).includes("gold_release_calendar")) return Promise.resolve(releaseRows());
+      const s = String(sql);
+      if (s.includes("gold_release_calendar")) return Promise.resolve(releaseRows());
+      if (s.includes("gold_macro_category_summary")) return Promise.resolve(categorySummaryRows());
+      if (s.includes("gold_credit_spread_daily")) return Promise.resolve(creditSpreadRows());
+      if (s.includes("gold_funding_stress_daily")) return Promise.resolve(fundingStressRows());
+      if (s.includes("gold_treasury_curve_metrics")) return Promise.resolve(curveMetricsRows());
+      if (s.includes("gold_macro_indicator_dashboard")) return Promise.resolve(indicatorDashboardRows());
+      if (s.includes("gold_macro_anomaly_scores")) return Promise.resolve(anomalyScoreRows());
+      if (s.includes("gold_recession_probability_daily")) return Promise.resolve(recessionProbabilityRows());
       return Promise.resolve(observationRows());
     });
+    mocks.readDetectorState.mockResolvedValue(new Map());
   });
 
   afterEach(() => {
@@ -155,6 +203,44 @@ describe("/api/market-publishing", () => {
     expect(earnings.unavailableReason).toContain("No approved upstream Gold contract");
   });
 
+  test("candidates merges spec006 material-change detector output alongside the fixed templates", async () => {
+    const body = await readJson(await getCandidates());
+
+    const detectorTemplateIds = ["category_breadth", "credit_stress", "funding_stress", "curve_regime", "indicator_surprise", "macro_anomaly", "recession_risk"];
+    const detectorCandidates = body.candidates.filter((candidate: { templateId: string }) => detectorTemplateIds.includes(candidate.templateId));
+    expect(detectorCandidates.map((c: { templateId: string }) => c.templateId)).toEqual(expect.arrayContaining(detectorTemplateIds));
+    expect(detectorCandidates.every((c: { status: string; scoreBreakdown?: unknown[] }) => (
+      c.status === "ready" && Array.isArray(c.scoreBreakdown) && c.scoreBreakdown.length > 0
+    ))).toBe(true);
+  });
+
+  test("candidates annotates detector output with changeType/firstFlaggedAt from the last cron run's state (spec006 Phase 2, read-only)", async () => {
+    mocks.readDetectorState.mockResolvedValue(new Map([
+      ["credit-stress-CCC_OAS", { candidateId: "credit-stress-CCC_OAS", templateId: "credit_stress", changeType: "continuing", firstFlaggedAt: "2026-08-20T00:00:00.000Z", lastSeenAt: "2026-09-02T00:00:00.000Z", lastRunAt: "2026-09-02T00:00:00.000Z" }],
+    ]));
+
+    const body = await readJson(await getCandidates());
+
+    const ccc = body.candidates.find((c: { id: string }) => c.id === "credit-stress-CCC_OAS");
+    expect(ccc.changeType).toBe("continuing");
+    expect(ccc.firstFlaggedAt).toBe("2026-08-20T00:00:00.000Z");
+    // A candidate with no matching state row (never seen by a cron run yet) stays unannotated, not errored.
+    const funding = body.candidates.find((c: { templateId: string }) => c.templateId === "funding_stress");
+    expect(funding.changeType).toBeUndefined();
+  });
+
+  test("candidates degrades to a warning, not an unavailable status, when the transition-state read fails", async () => {
+    mocks.readDetectorState.mockRejectedValue(new Error("connection refused"));
+
+    const body = await readJson(await getCandidates());
+
+    const ccc = body.candidates.find((c: { id: string }) => c.id === "credit-stress-CCC_OAS");
+    expect(ccc.status).toBe("ready");
+    expect(ccc.source).toBe("DB");
+    expect(ccc.changeType).toBeUndefined();
+    expect(ccc.warnings).toEqual(expect.arrayContaining([expect.stringContaining("Transition state unavailable: connection refused")]));
+  });
+
   test("fails closed when Gold is not configured", async () => {
     mocks.goldEnabled.mockReturnValue(false);
 
@@ -173,10 +259,24 @@ describe("/api/market-publishing", () => {
   test("queries only approved Gold tables", async () => {
     await getCandidates();
 
-    expect(mocks.raw).toHaveBeenCalledTimes(2);
+    // 2 Command Center reads (spec004 Phase 0) + 7 spec006 material-change
+    // detector reads (spec004 Phase 0's "Spec006 Signal Table Audit",
+    // approved 2026-09-02 — Phase 3 added gold_macro_indicator_dashboard,
+    // gold_macro_anomaly_scores, gold_recession_probability_daily).
+    // Widening this count is a deliberate approval decision each time, not
+    // something that should pass by accident — if this fails, a new table
+    // was added without updating this guardrail.
+    expect(mocks.raw).toHaveBeenCalledTimes(9);
     const sql = mocks.raw.mock.calls.map((call) => String(call[0])).join("\n");
     expect(sql).toContain("gold_fred_latest_observation");
     expect(sql).toContain("gold_release_calendar");
+    expect(sql).toContain("gold_macro_category_summary");
+    expect(sql).toContain("gold_credit_spread_daily");
+    expect(sql).toContain("gold_funding_stress_daily");
+    expect(sql).toContain("gold_macro_indicator_dashboard");
+    expect(sql).toContain("gold_treasury_curve_metrics");
+    expect(sql).toContain("gold_macro_anomaly_scores");
+    expect(sql).toContain("gold_recession_probability_daily");
     expect(sql).not.toContain("bilello");
     expect(sql).not.toContain("snapshot");
     expect(sql).not.toContain("src/data/market");

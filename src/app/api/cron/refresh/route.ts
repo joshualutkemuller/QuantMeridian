@@ -1,12 +1,20 @@
 import { json } from "@/lib/server/http";
+import { detectMaterialChangeCandidateGroups } from "@/lib/materialChangeDetector";
+import { detectorStateStoreEnabled, writeDetectorTransitions, type DetectorGroupInput } from "@/lib/server/detectorStateStore";
 
 /**
- * GET /api/cron/refresh  — daily cache warmer (Vercel Cron).
+ * GET /api/cron/refresh  — daily cache warmer + spec006 Phase 2 transition write (Vercel Cron).
  *
  * Hits the FRED-backed econ routes and gold-DB market routes so server
  * caches are refreshed once a day even with no user traffic. When
  * `CRON_SECRET` is set, Vercel sends it as a Bearer token and this
  * endpoint requires it, so it can't be triggered publicly.
+ *
+ * Also runs spec006's material-change detector once and persists its
+ * new/continuing/resolved transitions to `mpub_detector_state` — the ONLY
+ * place that write happens. `GET /api/market-publishing/candidates` only
+ * ever reads that state, never writes it, so concurrent page loads can't
+ * race on it.
  *
  * Schedule lives in vercel.json.
  */
@@ -68,5 +76,28 @@ export async function GET(req: Request) {
       : { path: targets[i], status: 0, error: res.reason instanceof Error ? res.reason.message : String(res.reason) }
   );
 
-  return json({ ok: true, startedAt, finishedAt: new Date().toISOString(), warmed });
+  let detectorTransitions: unknown = { skipped: "MPUB_STATE_DB_URL/MACRO_DB_URL not configured" };
+  if (detectorStateStoreEnabled()) {
+    try {
+      const groups = await detectMaterialChangeCandidateGroups();
+      const nowIso = new Date().toISOString();
+      const input: DetectorGroupInput[] = groups.map((g) => ({
+        templateId: g.templateId,
+        ok: g.ok,
+        readyIds: g.candidates.filter((c) => c.status === "ready").map((c) => c.id),
+      }));
+      const transitions = await writeDetectorTransitions(input, nowIso);
+      detectorTransitions = {
+        ok: true,
+        groupsOk: Object.fromEntries(groups.map((g) => [g.templateId, g.ok])),
+        new: transitions.filter((t) => t.changeType === "new").map((t) => t.candidateId),
+        continuing: transitions.filter((t) => t.changeType === "continuing").map((t) => t.candidateId),
+        resolved: transitions.filter((t) => t.changeType === "resolved").map((t) => t.candidateId),
+      };
+    } catch (err) {
+      detectorTransitions = { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  return json({ ok: true, startedAt, finishedAt: new Date().toISOString(), warmed, detectorTransitions });
 }

@@ -2,13 +2,25 @@
 
 ## Status
 
-Draft. No detector code written yet. Phase 0 is complete: the 12-table
-signal audit (staleness/frequency/null-rate profiling) is written up in
-`docs/specs/spec004/PHASE0_DATA_CONTRACT.md`'s "Spec006 Signal Table Audit"
-section, `src/app/api/market-publishing` is now covered by
-`scripts/check-gold-db-policy.sh`'s Tier A no-fallback gate, and **Joshua
-approved all 12 audited tables for read-only use on 2026-09-02**. Phase 1
-(the actual detector) is unblocked and has not started yet.
+Draft. Phase 0, Phase 1, and Phase 2 are complete. Transition state
+(`mpub_detector_state`) lives in the same Postgres instance as Gold in
+deploy — a separate, non-`gold`-prefixed table, written only by the daily
+`/api/cron/refresh` cron and only ever read by the live `candidates` route,
+so concurrent requests can't race on it. Not yet verified against a real
+deployed Postgres (local dev only tested against sqlite) — see "Open
+Verification Item" in Phase 2's notes below. Phase 3 is partially done: 7
+detectors now ship (the original 4 + `indicator_surprise`,
+`macro_anomaly`, `recession_risk`), all wired through Phase 2's transition
+tracking automatically — no detector-specific work needed there.
+
+**Next up: the 3 remaining approved daily tables** —
+`gold_credit_spread_rolling`, `gold_curve_spread_daily`,
+`gold_spread_inversion_episode` (Phase 3's "item 2"). Same detector
+pattern as the 7 already shipped; bounded, additive, no open design
+question blocking it. After that, still open: the score-formula cleanup
+for the original 7 fixed templates (a real design question, not just more
+of the same pattern — see Phase 3's notes) and `gold_zscore_heatmap`
+(deferred, needs its own id-namespacing design).
 
 ## Owner
 
@@ -218,22 +230,29 @@ section itself).
 ## Architecture
 
 ```text
-Gold tables (12, pending approval above)
+Gold tables (12, approved 2026-09-02; 4 read as of Phase 1)
         |
         v
-new: src/lib/materialChangeDetector.ts
+src/lib/materialChangeDetector.ts                        [Phase 1 - done]
   - reads GoldStore (read-only)
   - applies documented thresholds per signal
-  - diffs against local transition-state file -> new/continuing/resolved
-  - emits MarketPublishingCandidate[] with scoreBreakdown
-        |
-        v
-buildMarketPublishingCandidates() (existing, src/lib/marketPublishing.ts)
-  - merges detector output additively with the existing 7 fixed-template
-    candidates
-        |
-        v
-GET /api/market-publishing/candidates (existing route, unchanged shape)
+  - detectMaterialChangeCandidateGroups() -> grouped, with per-group `ok`  [Phase 2 - done]
+        |                                                        |
+        v                                                        v
+buildMarketPublishingCandidates()          mpub_detector_state (own Postgres table,
+  [Phase 1 - done, merges additively]       same instance as Gold, cron-written only)
+        |                                                        ^
+        v                                                        |
+GET /api/market-publishing/candidates  <---- readDetectorState() (read-only, every request)
+  [Phase 1 - done; Phase 2 - done: annotates                      ^
+   detector candidates with changeType/                           |
+   firstFlaggedAt from the state above]              writeDetectorTransitions()
+                                                       (cron-only write, computeTransitions
+                                                        diff: new/continuing/resolved)
+                                                                    ^
+                                                                    |
+                                                    /api/cron/refresh (daily, CRON_SECRET-gated)
+                                                       [Phase 2 - done]
 ```
 
 ## Delivery Plan
@@ -256,37 +275,204 @@ GET /api/market-publishing/candidates (existing route, unchanged shape)
   `PHASE0_DATA_CONTRACT.md`'s approved base-table list. **Approved
   2026-09-02.** Phase 1 is unblocked.
 
-### Phase 1: Read-only detector over a narrow signal set
+### Phase 1: Read-only detector over a narrow signal set — done
 
-- Implement `materialChangeDetector.ts` against 3-4 of the highest-confidence
-  daily signals first: `gold_macro_category_summary`,
-  `gold_credit_spread_daily`, `gold_funding_stress_daily`,
-  `gold_treasury_curve_metrics`.
-- Fixed, documented, owner-reviewable thresholds (e.g. `|avg_zscore| >= 1.5`
-  and `breadth_pct >= 0.8` for a category-breadth candidate; `is_stress_episode
-  = 1 OR percentile >= 95` for credit; `stress_bucket IN ('elevated',
-  'severe')` for funding).
-- No transition tracking yet — every run reports current state.
-- Tests proving: no fallback path exists, missing/null Gold rows produce
-  `unavailable`, and every emitted candidate's `scoreBreakdown` cites a real
-  table/column/threshold (extends `candidates/route.test.ts`'s pattern).
+- Implemented `src/lib/materialChangeDetector.ts` against the four Phase 1
+  tables: `gold_macro_category_summary`, `gold_credit_spread_daily`,
+  `gold_funding_stress_daily`, `gold_treasury_curve_metrics`.
+- Thresholds validated against real data before coding, and corrected from
+  this section's original draft where the draft's guess didn't match
+  reality: `|avg_zscore| >= 1.5 AND breadth_pct >= 0.8` for category breadth
+  (fires on exactly `GROWTH` today); `is_stress_episode = 1 OR percentile >=
+  0.95` for credit (percentile is stored 0-1, not 0-100 — fires on exactly
+  `CCC_OAS` today); `stress_bucket IN ('elevated', 'stressed')` for funding
+  (real bucket values are `calm`/`normal`/`elevated`/`stressed` — "severe"
+  in the earlier draft doesn't exist in the data); curve fires only on
+  `is_inverted_10y2y = 1 OR is_inverted_10y3m = 1 OR is_recession = 1` —
+  `curve_move`'s directional label (`bear-steepener` etc.) is present on
+  most days and would flood the queue if used as the trigger itself, so it
+  appears only as descriptive text on a candidate, never as the condition.
+- No transition tracking yet, per plan — every run reports current state.
+- 11 tests in `src/lib/materialChangeDetector.test.ts` prove: no fallback
+  path exists (`goldEnabled()=false` → 4 unavailable candidates, zero
+  queries attempted); a failed read produces an explicit unavailable
+  candidate rather than a thrown error or silent empty state; an empty
+  result set is distinct from a real "condition not met" zero-candidate
+  outcome; a null `breadth_pct` (real in the audit — `FX`/`MONEY`/`RATES`)
+  is skipped without crashing; and every ready candidate's `scoreBreakdown`
+  cites one of the four approved tables with a non-empty column/threshold.
+  All pass; `npm run typecheck` is unaffected.
+- **Wired into `buildMarketPublishingCandidates`/the live
+  `GET /api/market-publishing/candidates` route.** Landed as a deliberate
+  follow-up commit, not an implicit side effect: `buildMarketPublishingCandidates`
+  now takes an optional `detectorCandidates` parameter and merges it in
+  regardless of Command Center's own source state (the detector reads
+  different tables and fails closed independently — a Command Center outage
+  shouldn't hide a genuinely available detector candidate, or vice versa).
+  `candidates/route.test.ts`'s "queries only approved Gold tables" guardrail
+  was updated on purpose — `toHaveBeenCalledTimes(2)` became `(6)`, with an
+  explicit comment that widening this count must stay a deliberate approval
+  decision each time, and a new test asserts the four detector candidates
+  actually appear in the merged, sorted output with real `scoreBreakdown`s.
 
-### Phase 2: Transition tracking
+### Phase 2: Transition tracking — done
 
-- Add the local new/continuing/resolved state file and the corresponding
-  `changeType`/`firstFlaggedAt` fields.
-- Tests proving a chronic signal is not re-ranked as "new" on every run.
+Two decisions were made explicitly before implementation (not assumed):
 
-### Phase 3: Remaining signal sources and score-formula cleanup
+- **Storage**: same Postgres instance as Gold in deploy, in a new,
+  clearly-separate, non-`gold`-prefixed table (`mpub_detector_state`) —
+  chosen over provisioning a new Vercel Marketplace store (extra
+  infrastructure/cost for a feature with no UI consumer yet) and over a
+  dev-only local file (wouldn't persist across Vercel's serverless
+  invocations in production, confirmed by inspecting the existing
+  `/api/cron/refresh` cron, which already avoids any local write for
+  exactly that reason).
+- **Write trigger**: only the daily `/api/cron/refresh` cron writes state
+  (`writeDetectorTransitions`, gated by `CRON_SECRET` the same way the
+  existing cache-warming half already is). `GET /api/market-publishing/
+  candidates` only ever reads it (`readDetectorState`), so concurrent page
+  loads can never race on a read-modify-write cycle.
 
-- Add `gold_macro_indicator_dashboard`/`gold_zscore_heatmap`-driven candidates
-  (broader per-series coverage beyond the fixed template set).
-- Replace the existing fixed templates' ad hoc score constants (`vix.value -
-  12`, etc.) with real percentile/zscore-derived equivalents where a Gold
-  column now covers the same signal.
-- Add the lower-frequency sources (`gold_macro_anomaly_scores`,
-  `gold_recession_probability_daily`, `gold_series_structural_breaks`) with
-  explicit frequency/staleness caveats in `warnings`.
+What shipped:
+
+- `src/lib/server/detectorStateStore.ts` — `mpub_detector_state`
+  (`candidate_id` PK, `template_id`, `change_type`, `first_flagged_at`,
+  `last_seen_at`, `last_run_at`), reusing `MACRO_DB_URL`'s backend
+  (sqlite/postgres) but with its own write-capable connection — GoldStore's
+  own sqlite connection is opened `readonly: true` by design, so it
+  physically cannot write here even to a non-gold table in the same file.
+  An optional `MPUB_STATE_DB_URL` overrides the connection target, in case
+  the shared `MACRO_DB_URL` credentials turn out to be read-only-only in
+  deploy (a real, not hypothetical, risk — see Open Verification Item).
+- `computeTransitions` — the new/continuing/resolved diff, deliberately
+  extracted as a pure function (no I/O) so it's directly unit-tested
+  without mocking the sqlite/pg driver internals, which this codebase has
+  no existing precedent for. Resolution is scoped per `template_id`: a
+  signal whose Gold read failed this run (`ok: false`) has every id it owns
+  left completely untouched, never guessed at as resolved just because it
+  didn't appear in an empty ready set.
+- `materialChangeDetector.ts`'s new `detectMaterialChangeCandidateGroups`
+  (grouped, with per-group `ok`) feeds the cron; the original
+  `detectMaterialChangeCandidates` (flat) is now a thin wrapper over it,
+  unchanged for the live route.
+- `candidates/route.ts` annotates detector candidates read-only from
+  `mpub_detector_state`; a state-read failure degrades to a `warnings`
+  entry, never an `unavailable` status — the underlying Gold data is still
+  good even when transition history can't be read.
+- Tests: 11 for `computeTransitions` (new/continuing/resolved/re-flagged/
+  per-template scoping/multi-id runs) + 3 for `detectorStateStoreEnabled`,
+  4 for the extended cron route (skip-when-unconfigured, successful write
+  and reporting, write-failure doesn't crash the cache-warming half,
+  `CRON_SECRET` still checked first), 2 for the route's read-only
+  annotation and its graceful-degradation path. Full suite (214/216, same
+  2 pre-existing unrelated failures verified against the actual clean
+  committed tree — not a `git stash` that silently left new untracked
+  files behind), typecheck (34 pre-existing error lines, identical with
+  and without this change, none in a touched file), and the Tier A gate
+  all verified clean.
+
+**Open Verification Item — not yet confirmed, real risk:** `MACRO_DB_URL`'s
+Postgres credentials in deploy may be intentionally read-only (GoldStore
+was built around Gold never being written to). If so, the cron's first
+real write attempt will fail with a permissions error — surfaced
+explicitly (`detectorTransitions: { ok: false, error: ... }` in the cron's
+JSON response, not a silent no-op) rather than corrupting anything, but it
+means Phase 2 is implemented and tested, not yet proven against the actual
+deployed database. Before relying on it: either confirm the `MACRO_DB_URL`
+credentials have `CREATE`/`INSERT`/`UPDATE` on a new table, or set
+`MPUB_STATE_DB_URL` to a connection string that does.
+
+### Phase 3: Remaining signal sources and score-formula cleanup — partially done
+
+**Done: `gold_macro_indicator_dashboard`-driven candidates
+(`detectIndicatorSurpriseCandidates`, 5th group in
+`detectMaterialChangeCandidateGroups`, id prefix `indicator-surprise-`).**
+Per-series coverage across the ~290 indicators the dashboard tracks,
+beyond the four narrow signals Phase 1 shipped. Calibrated against real
+data while building it, not guessed at:
+
+- Raw `zscore` alone was tried first and rejected — at any threshold loose
+  enough to be useful, its most extreme rows were mostly **stale**, not
+  fresh (`staleness_days` in this table ranges as high as 13,499; the
+  top-8 most extreme `zscore` rows were all 84-235 days stale). A
+  quarterly GDP print that hasn't updated in months looking "extreme"
+  isn't material today — it's old. This is spec004's "false freshness"
+  pitfall showing up concretely, not hypothetically.
+- `surprise_z >= 2.5` combined with `staleness_days <= 45` is the actual
+  trigger — selective (8 candidates on the audited date, across FX/rates/
+  credit/activity, all 3-23 days old) and current. `zscore`/`percentile`
+  are carried in `scoreBreakdown` as supporting context only, explicitly
+  labeled as non-triggering.
+- Tests: 2 dedicated (threshold+staleness-gate firing correctly including
+  the specific "extreme zscore but stale, must not fire" and "null
+  surprise_z, must skip without crashing" cases; empty-result-set
+  unavailable state), plus the aggregate table/citation/no-fallback tests
+  extended to cover 5 tables and 5 detectors.
+
+**Also done: the two lower-frequency sources
+(`detectMacroAnomalyCandidates`, `detectRecessionRiskCandidates` — 6th/7th
+groups, id prefixes `macro-anomaly`/`recession-risk`).** Every ready
+candidate from either carries an explicit monthly-cadence warning per the
+original Phase 3 ask. Calibrated against real data, same discipline as
+`indicator_surprise`:
+
+- `gold_macro_anomaly_scores.is_anomaly` is already a significance-tested
+  boolean from the pipeline — trusted directly as the trigger rather than
+  re-deriving a `p_value` cutoff. Score derives from `p_value` (lower p =
+  higher score).
+- `gold_recession_probability_daily.prob_recession_12m` was found to be
+  an **unreliable column** while calibrating this detector: it flips
+  between exactly 0.0 and 1.0 with no correlation to the near-zero
+  near-term probabilities in the same row (77% of all history reads 1.0).
+  Deliberately excluded from the trigger entirely — `recession_prob`
+  alone at `>= 0.5` is what's actually selective (20.6% of all history,
+  correctly zero in the real current environment's last 24 months of
+  near-zero readings). A test asserts the detector still does NOT fire
+  when only `prob_recession_12m` reads 1.0, so this exclusion can't
+  silently regress.
+- `gold_series_structural_breaks` — explicitly NOT given a detector, per
+  this spec's own existing Risks decision (its `break_date` is often years
+  older than the `as_of_date` re-confirming it; a same-day trigger from it
+  would misrepresent a re-tested old break as fresh news). Stays
+  context/caveat data for a future narrative feature, not a candidate
+  source. Documented in the module's own docstring, not silently dropped.
+- Tests: 5 dedicated (anomaly fires/doesn't; recession fires on
+  `recession_prob` alone even with `prob_recession_12m=1.0`; recession does
+  **not** fire on `prob_recession_12m=1.0` alone; backfilled-observation
+  caveat), plus the aggregate tests extended to 7 tables/7 detectors.
+
+Combined Phase 3-so-far: full suite (221/223, same 2 pre-existing
+unrelated failures), typecheck (34 pre-existing lines, unchanged), and the
+Tier A gate all verified clean. All 3 new detectors automatically get
+Phase 2's new/continuing/resolved transition tracking for free — no
+detector-specific code needed there, since that layer is generic per
+`template_id`.
+
+**Not started — next up is the first bullet:**
+
+- **`gold_credit_spread_rolling`, `gold_curve_spread_daily`,
+  `gold_spread_inversion_episode`** — approved, unread. Same detector
+  pattern as the 7 already shipped (query latest row(s), apply a
+  calibrated-against-real-data threshold, cite in `scoreBreakdown`,
+  wire into `detectMaterialChangeCandidateGroups`); no open design
+  question blocking it, unlike the two items below.
+- Replace the existing 7 fixed templates' ad hoc score constants
+  (`vix.value - 12`, etc., in `marketPublishing.ts`'s original
+  `buildMarketPublishingCandidates` body) with real percentile/zscore-
+  derived equivalents where a Gold column now covers the same signal. Real
+  design question, not yet resolved: those builders read from
+  `CommandCenterMetric` objects (synchronous), not from the async
+  Gold-table reads the detector layer uses — wiring in a Gold-derived
+  score means either extending `CommandCenter`'s contract or having
+  `marketPublishing.ts` accept pre-fetched score data the way it already
+  accepts `detectorCandidates`. Changing already-shipped candidates' scores
+  is also a behavior change worth flagging explicitly before doing it, not
+  folding in silently.
+- `gold_zscore_heatmap` — deliberately deferred again. Much larger and
+  more generic than `macro_indicator_dashboard` (covers any `series_id`
+  across 5 lookback windows, 20M+ rows total), and would need its own
+  id-namespacing design to avoid colliding with the other detectors'
+  candidate ids.
 
 ### Phase 4: UI wiring
 
@@ -301,7 +487,8 @@ GET /api/market-publishing/candidates (existing route, unchanged shape)
 | --- | --- |
 | New statistics vs. reuse | Reuse only; every signal must trace to an existing Gold column |
 | Table approval scope | Lighter review than a new Source Gate (same pipeline), but still explicit and documented per table |
-| Transition state storage | Local file, not Gold, not committed to the repo |
+| Transition state storage | **Decided 2026-09-03**: same Postgres instance as Gold in deploy, separate non-`gold`-prefixed table (`mpub_detector_state`), not local — a local file wouldn't persist across Vercel's serverless invocations |
+| Transition state write trigger | **Decided 2026-09-03**: only the daily `/api/cron/refresh` cron writes; the live `candidates` route only ever reads, so concurrent requests can't race |
 | Score formula | Fully reproducible from cited table/column/threshold; no free-form heuristic constants going forward |
 | Existing 7 fixed-template candidates | Kept; new detector output is additive, not a replacement |
 | Structural-break table usage | Context/caveat source for narrative framing, not a same-day "material today" trigger by itself (see Risks) |

@@ -22,7 +22,14 @@ export type MarketPublishingTemplateId =
   | "vol_credit_watch"
   | "macro_week_ahead"
   | "reserve_vix_claim_audit"
-  | "earnings_valuation_gate";
+  | "earnings_valuation_gate"
+  | "category_breadth"
+  | "credit_stress"
+  | "funding_stress"
+  | "curve_regime"
+  | "indicator_surprise"
+  | "macro_anomaly"
+  | "recession_risk";
 
 export interface MarketPublishingCitation {
   source: "FRED/Economic Gold SQLite";
@@ -32,6 +39,18 @@ export interface MarketPublishingCitation {
   transform: string;
   basis: string;
 }
+
+/** One component of a candidate's score, per spec004's Editorial Ranking contract — every score must be reproducible from its cited table/column/threshold. */
+export interface MarketPublishingScoreBreakdown {
+  component: string;
+  value: number;
+  goldTable: string;
+  goldColumn: string;
+  threshold: string;
+}
+
+/** spec006 Phase 2: classification against the last daily detector run, read from `mpub_detector_state` — never computed live on every GET. */
+export type MarketPublishingChangeType = "new" | "continuing" | "resolved";
 
 export interface MarketPublishingCandidate {
   id: string;
@@ -48,6 +67,11 @@ export interface MarketPublishingCandidate {
   citation: MarketPublishingCitation | null;
   unavailableReason?: string;
   warnings: string[];
+  /** Present for detector-produced candidates (spec006); absent for the fixed template checklist above. */
+  scoreBreakdown?: MarketPublishingScoreBreakdown[];
+  /** spec006 Phase 2: from the last daily cron run, not live. Absent when the state store couldn't be read (see `warnings`). */
+  changeType?: MarketPublishingChangeType;
+  firstFlaggedAt?: string | null;
 }
 
 export interface MarketPublishingPackageDefinition {
@@ -150,7 +174,7 @@ function byId(metrics: CommandCenterMetric[]): Map<string, CommandCenterMetric> 
   return new Map(metrics.map((metric) => [metric.id, metric]));
 }
 
-function citation(seriesIds: string[], asOf: string | null, transform: string, basis: string, goldTables = GOLD_OBSERVATION_TABLES): MarketPublishingCitation {
+export function citation(seriesIds: string[], asOf: string | null, transform: string, basis: string, goldTables = GOLD_OBSERVATION_TABLES): MarketPublishingCitation {
   return {
     source: "FRED/Economic Gold SQLite",
     seriesIds,
@@ -165,7 +189,7 @@ function maxDate(values: Array<string | null | undefined>): string | null {
   return values.reduce<string | null>((best, value) => (value && (!best || value > best) ? value : best), null);
 }
 
-function readyCandidate(args: Omit<MarketPublishingCandidate, "status" | "source" | "warnings"> & { warnings?: string[] }): MarketPublishingCandidate {
+export function readyCandidate(args: Omit<MarketPublishingCandidate, "status" | "source" | "warnings"> & { warnings?: string[] }): MarketPublishingCandidate {
   return {
     ...args,
     status: "ready",
@@ -174,7 +198,7 @@ function readyCandidate(args: Omit<MarketPublishingCandidate, "status" | "source
   };
 }
 
-function unavailableCandidate(args: Omit<MarketPublishingCandidate, "status" | "source" | "score" | "citation" | "warnings"> & { unavailableReason: string; warnings?: string[] }): MarketPublishingCandidate {
+export function unavailableCandidate(args: Omit<MarketPublishingCandidate, "status" | "source" | "score" | "citation" | "warnings"> & { unavailableReason: string; warnings?: string[] }): MarketPublishingCandidate {
   return {
     ...args,
     status: "unavailable",
@@ -213,36 +237,45 @@ export function buildMarketPublishingDaily(commandCenter: CommandCenterPayload):
   };
 }
 
-export function buildMarketPublishingCandidates(commandCenter: CommandCenterPayload): MarketPublishingCandidatesPayload {
+/**
+ * @param detectorCandidates Additive output from spec006's material-change
+ *   detectors (`materialChangeDetector.ts`). Merged in regardless of
+ *   `commandCenter`'s own source state — the detector reads different Gold
+ *   tables and fails closed independently, so a Command Center outage
+ *   should not hide a genuinely available detector candidate, and vice
+ *   versa.
+ */
+export function buildMarketPublishingCandidates(
+  commandCenter: CommandCenterPayload,
+  detectorCandidates: MarketPublishingCandidate[] = []
+): MarketPublishingCandidatesPayload {
   const generatedAt = new Date().toISOString();
+  let candidates: MarketPublishingCandidate[];
+  let baseError: string | undefined;
+
   if (commandCenter.source !== "DB") {
-    return {
-      source: "ERR",
-      asOf: commandCenter.asOf,
-      generatedAt,
-      candidates: [
-        unavailableCandidate({
-          id: "daily-scoreboard-unavailable",
-          templateId: "daily_scoreboard",
-          title: "Daily scoreboard unavailable",
-          summary: "Gold/FRED Command Center data is unavailable.",
-          workspace: "Today",
-          packageTypes: ["pre_market", "market_close"],
-          dataAsOf: commandCenter.asOf,
-          seriesIds: [],
-          unavailableReason: commandCenter.error ?? "No approved Gold/FRED observations are available.",
-        }),
-      ],
-      warnings: commandCenter.warnings,
-      error: commandCenter.error,
-    };
-  }
+    candidates = [
+      unavailableCandidate({
+        id: "daily-scoreboard-unavailable",
+        templateId: "daily_scoreboard",
+        title: "Daily scoreboard unavailable",
+        summary: "Gold/FRED Command Center data is unavailable.",
+        workspace: "Today",
+        packageTypes: ["pre_market", "market_close"],
+        dataAsOf: commandCenter.asOf,
+        seriesIds: [],
+        unavailableReason: commandCenter.error ?? "No approved Gold/FRED observations are available.",
+      }),
+    ];
+    baseError = commandCenter.error;
+  } else {
+    candidates = [];
+    baseError = undefined;
 
   const marketMetrics = commandCenter.highLevelMarkets.filter((metric) => metric.source === "DB");
   const rateById = byId(commandCenter.domesticRates);
   const volById = byId(commandCenter.volatility);
   const domesticById = byId(commandCenter.domesticHealth);
-  const candidates: MarketPublishingCandidate[] = [];
 
   if (marketMetrics.length) {
     const spx = marketMetrics.find((metric) => metric.id === "SP500") ?? marketMetrics[0];
@@ -392,18 +425,21 @@ export function buildMarketPublishingCandidates(commandCenter: CommandCenterPayl
     seriesIds: [],
     unavailableReason: "No approved upstream Gold contract exists for complete earnings estimates, revisions, calendar timing, or forward valuation.",
   }));
+  }
 
-  const sorted = candidates.sort((a, b) => {
+  const merged = [...candidates, ...detectorCandidates];
+  const sorted = merged.sort((a, b) => {
     if (a.status !== b.status) return a.status === "ready" ? -1 : 1;
     return b.score - a.score;
   });
+  const anyReady = sorted.some((candidate) => candidate.status === "ready");
 
   return {
-    source: sorted.some((candidate) => candidate.status === "ready") ? "DB" : "ERR",
+    source: anyReady ? "DB" : "ERR",
     asOf: commandCenter.asOf,
     generatedAt,
     candidates: sorted,
     warnings: commandCenter.warnings,
-    error: sorted.some((candidate) => candidate.status === "ready") ? undefined : "No Gold-backed publishing candidates are currently available.",
+    error: anyReady ? undefined : (baseError ?? "No Gold-backed publishing candidates are currently available."),
   };
 }
